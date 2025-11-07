@@ -9,19 +9,8 @@
 
 // Repository factories
 export {
-  createRepositoryFactory,
-  createWebRepositoryFactory
-} from './insieme.js';
-
-// Core actions
-export {
-  set,
-  unset,
-  treePush,
-  treeDelete,
-  treeUpdate,
-  treeMove
-} from './actions.js';
+  createRepository,
+} from './repository.js';
 
 // Helper functions for tree operations
 export {

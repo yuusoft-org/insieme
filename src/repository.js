@@ -1,126 +1,25 @@
-import { createTauriSQLiteRepositoryAdapter } from "./tauriRepositoryAdapter.js";
 import { set, unset, treePush, treeDelete, treeUpdate, treeMove } from "./actions.js";
-
-/**
- * Creates a web repository factory for browser environments.
- * Manages a single repository instance that ignores project IDs.
- *
- * @param {Object} initialState - The initial state for the repository
- * @param {Object} store - Storage adapter for the web environment
- * @returns {Object} Factory object with getByProject method
- *
- * @example
- * const factory = createWebRepositoryFactory(initialState, webStore);
- * const repository = await factory.getByProject('any-project-id');
- */
-export const createWebRepositoryFactory = (initialState, store) => {
-  let repository = null;
-
-  return {
-    async getByProject(_projectId) {
-      // Web version ignores projectId - always returns the same repository
-      if (!repository) {
-        repository = createRepository(initialState, store);
-        await repository.init();
-      }
-      return repository;
-    },
-  };
-};
-
-/**
- * Creates a Tauri repository factory for desktop applications with multi-project support.
- * Manages multiple repository instances with SQLite storage for each project.
- *
- * @param {Object} initialState - The initial state for new repositories
- * @param {Object} keyValueStore - Key-value store for project metadata
- * @returns {Object} Factory object with getByProject and getByPath methods
- *
- * @example
- * const factory = createRepositoryFactory(initialState, keyValueStore);
- * const repo1 = await factory.getByProject('project-123');
- * const repo2 = await factory.getByPath('/path/to/project');
- */
-export const createRepositoryFactory = (initialState, keyValueStore) => {
-  const repositoriesByProject = new Map();
-  const repositoriesByPath = new Map();
-
-  /**
-   * Gets or creates a repository for a specific project path.
-   * Caches repositories by path to avoid duplicate instances.
-   *
-   * @param {string} projectPath - File system path to the project
-   * @returns {Promise<Object>} Repository instance
-   */
-  const getOrCreateRepositoryByPath = async (projectPath) => {
-    if (repositoriesByPath.has(projectPath)) {
-      return repositoriesByPath.get(projectPath);
-    }
-
-    const store = await createTauriSQLiteRepositoryAdapter(projectPath);
-    const repository = createRepository(initialState, store);
-    await repository.init();
-    repositoriesByPath.set(projectPath, repository);
-    return repository;
-  };
-
-  const repositoryFactory = {
-    /**
-     * Gets a repository by project ID.
-     * Looks up project path in the key-value store and creates/returns repository.
-     *
-     * @param {string} projectId - Unique identifier for the project
-     * @returns {Promise<Object>} Repository instance for the project
-     * @throws {Error} If project is not found in the key-value store
-     */
-    getByProject: async (projectId) => {
-      if (repositoriesByProject.has(projectId)) {
-        return repositoriesByProject.get(projectId);
-      }
-
-      const projects = (await keyValueStore.get("projects")) || [];
-      const project = projects.find((project) => project.id === projectId);
-      if (!project) {
-        throw new Error("project not found");
-      }
-
-      const repository = await getOrCreateRepositoryByPath(project.projectPath);
-      repositoriesByProject.set(projectId, repository);
-      return repository;
-    },
-    /**
-     * Gets a repository by file system path.
-     * Creates or returns cached repository for the specified path.
-     *
-     * @param {string} projectPath - File system path to the project
-     * @returns {Promise<Object>} Repository instance
-     */
-    getByPath: async (projectPath) => {
-      return await getOrCreateRepositoryByPath(projectPath);
-    },
-  };
-
-  return repositoryFactory;
-};
 
 /**
  * Creates an internal repository instance with event sourcing and checkpointing.
  * Manages state through an append-only log with periodic checkpoints for performance.
  *
- * @param {Object} initialState - The initial state for the repository
- * @param {Object} store - Storage adapter for persisting events
+ * @param {Object} options - Repository options
+ * @param {Object} options.originStore - Storage adapter for persisting events
  * @returns {Object} Repository instance with state management methods
  *
  * @private This is an internal function used by factory functions
  */
-const createRepository = (initialState, store) => {
+export const createRepository = ({ originStore }) => {
+  const store = originStore;
   const CHECKPOINT_INTERVAL = 50;
 
-  let cachedActionStreams = [];
+  let cachedEvents = [];
   const checkpoints = new Map();
   const checkpointIndexes = [];
 
   let latestComputedIndex = 0;
+  let initialState = {};
   let latestState = structuredClone(initialState);
 
   /**
@@ -159,8 +58,8 @@ const createRepository = (initialState, store) => {
    * @param {Object} action.payload - Action payload containing all action-specific data
    * @returns {Object} New state after applying the action
    */
-  const applyActionToState = (state, action) => {
-    const { actionType, payload } = action;
+  const applyEventToState = (state, event) => {
+    const { actionType, payload } = event;
     if (actionType === "set") {
       return set(state, payload);
     } else if (actionType === "unset") {
@@ -191,12 +90,16 @@ const createRepository = (initialState, store) => {
    *
    * @returns {Promise<void>}
    */
-  const init = async () => {
-    cachedActionStreams = (await store.getAllEvents()) || [];
+  const init = async ({ initialState: providedInitialState } = {}) => {
+    if (providedInitialState) {
+      initialState = providedInitialState;
+      latestState = structuredClone(initialState);
+    }
     resetCheckpoints();
+    cachedEvents = (await store.getEvents()) || [];
 
-    cachedActionStreams.forEach((action, index) => {
-      latestState = applyActionToState(latestState, action);
+    cachedEvents.forEach((event, index) => {
+      latestState = applyEventToState(latestState, event);
       latestComputedIndex = index + 1;
 
       if (latestComputedIndex % CHECKPOINT_INTERVAL === 0) {
@@ -217,16 +120,22 @@ const createRepository = (initialState, store) => {
    * @param {Object} action - The action to add to the event log
    * @returns {Promise<void>}
    */
-  const addAction = async (action) => {
-    cachedActionStreams.push(action);
-    latestState = applyActionToState(latestState, action);
+  const addEvent = async (event) => {
+    // Transform new event format to internal format
+    const internalEvent = {
+      actionType: event.type,
+      payload: event.payload
+    };
+
+    cachedEvents.push(internalEvent);
+    latestState = applyEventToState(latestState, internalEvent);
     latestComputedIndex += 1;
 
     if (latestComputedIndex % CHECKPOINT_INTERVAL === 0) {
       storeCheckpoint(latestComputedIndex, latestState);
     }
 
-    await store.addAction(action);
+    await store.appendEvent(internalEvent);
   };
 
   /**
@@ -256,11 +165,11 @@ const createRepository = (initialState, store) => {
    * const currentState = getState();
    * const historicalState = getState(10); // State after first 10 actions
    */
-  const getState = (untilActionIndex) => {
+  const getState = (untilEventIndex) => {
     const targetIndex =
-      untilActionIndex !== undefined
-        ? Math.max(0, Math.min(untilActionIndex, cachedActionStreams.length))
-        : cachedActionStreams.length;
+      untilEventIndex !== undefined
+        ? Math.max(0, Math.min(untilEventIndex, cachedEvents.length))
+        : cachedEvents.length;
 
     if (targetIndex === latestComputedIndex) {
       return structuredClone(latestState);
@@ -270,7 +179,7 @@ const createRepository = (initialState, store) => {
     let state = structuredClone(checkpoints.get(checkpointIndex));
 
     for (let i = checkpointIndex; i < targetIndex; i++) {
-      state = applyActionToState(state, cachedActionStreams[i]);
+      state = applyEventToState(state, cachedEvents[i]);
     }
 
     return state;
@@ -282,20 +191,15 @@ const createRepository = (initialState, store) => {
    *
    * @returns {Array<Object>} Array of all actions in chronological order
    */
-  const getAllEvents = () => {
-    return cachedActionStreams;
+  const getEvents = () => {
+    return cachedEvents;
   };
 
   return {
     init,
-    addAction,
+    addEvent,
     getState,
-    getAllEvents,
-    app: {
-      get: store.app.get,
-      set: store.app.set,
-      remove: store.app.remove,
-    },
+    getEvents,
   };
 };
 
