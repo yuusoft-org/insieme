@@ -64,6 +64,10 @@ console.log(repository.getState());
    - Current: Repository exposes `app` interface for key-value storage
    - Target: Repository focused only on event sourcing
 
+5. **Init action requirement**:
+   - Current: Initial state is set directly during repository initialization
+   - Target: First event should always be an `init` event that sets the entire state
+
 ## Implementation Steps
 
 ### 1. Update createRepository function signature
@@ -87,14 +91,21 @@ console.log(repository.getState());
 - Focus repository purely on event sourcing functionality
 - Update documentation to remove app storage examples
 
-### 5. Update factory exports in index.js
+### 5. Add init action
+- Create `init` action in `src/actions.js` that replaces entire state
+- Update repository to automatically create init event when no events exist and initial state is provided
+- Ensure the first event in any repository is always an `init` event
+- Add spec file for init action
+
+### 6. Update factory exports in index.js
 - Ensure the new `createRepository` is exported correctly
 - Update any related factory functions that might be affected
 
-### 6. Update README.md
+### 7. Update README.md
 - Replace all examples with the correct API
 - Remove references to `draftStore`, `sourceStore`, `remoteAdapter`, and `app` interface
 - Update Quick Start and API Documentation sections to use event terminology
+- Document init event behavior and automatic creation
 
 ## Code Changes Required
 
@@ -142,8 +153,20 @@ const addEvent = async (event) => {
   latestState = applyEventToState(latestState, internalEvent);
 ```
 
+### File: src/actions.js
+- Add `init` action that replaces entire state:
+```js
+export const init = (state, payload) => {
+  const { state: newState } = payload;
+  return structuredClone(newState);
+};
+```
+
 ### File: src/index.js
 - Update export to reference the renamed repository.js file (already done)
+
+### File: spec/actions/
+- Add `init.spec.yaml` with test cases for init action
 
 ### File: README.md
 - Update Quick Start example to use new API

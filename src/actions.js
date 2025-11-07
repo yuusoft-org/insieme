@@ -478,6 +478,29 @@ export const treeUpdate = (state, payload) => {
  *   options: { id: 'file4', parent: 'folder2', position: { before: 'file5' } }
  * });
  */
+/**
+ * Initializes the entire state with the provided data.
+ * Replaces the entire state with the new state object.
+ * This is typically used as the first event to set up the initial state.
+ *
+ * @param {Object} state - The current state object
+ * @param {Object} payload - Action payload
+ * @param {Object} payload.state - The new state to set (will replace entire current state)
+ * @returns {Object} New state object with the entire state replaced
+ *
+ * @example
+ * init(state, {
+ *   state: {
+ *     explorer: { items: {}, tree: [] },
+ *     settings: { theme: 'dark' }
+ *   }
+ * });
+ */
+export const init = (_state, payload) => {
+  const { state: newState } = payload;
+  return structuredClone(newState);
+};
+
 export const treeMove = (state, payload) => {
   const { target, options = {} } = payload;
   const { id, parent = '_root', position = 'first' } = options;

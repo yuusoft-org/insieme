@@ -1,4 +1,4 @@
-import { set, unset, treePush, treeDelete, treeUpdate, treeMove } from "./actions.js";
+import { set, unset, treePush, treeDelete, treeUpdate, treeMove, init } from "./actions.js";
 
 /**
  * Creates an internal repository instance with event sourcing and checkpointing.
@@ -59,27 +59,21 @@ export const createRepository = ({ originStore }) => {
    * @returns {Object} New state after applying the action
    */
   const applyEventToState = (state, event) => {
-    const { actionType, payload } = event;
-    if (actionType === "set") {
+    const { type, payload } = event;
+    if (type === "set") {
       return set(state, payload);
-    } else if (actionType === "unset") {
+    } else if (type === "unset") {
       return unset(state, payload);
-    } else if (actionType === "treePush") {
+    } else if (type === "treePush") {
       return treePush(state, payload);
-    } else if (actionType === "treeDelete") {
+    } else if (type === "treeDelete") {
       return treeDelete(state, payload);
-    } else if (actionType === "treeUpdate") {
+    } else if (type === "treeUpdate") {
       return treeUpdate(state, payload);
-    } else if (actionType === "treeMove") {
+    } else if (type === "treeMove") {
       return treeMove(state, payload);
-    } else if (actionType === "init") {
-      const newState = structuredClone(state);
-      for (const [key, data] of Object.entries(payload)) {
-        if (newState[key] !== undefined) {
-          newState[key] = data;
-        }
-      }
-      return newState;
+    } else if (type === "init") {
+      return init(state, payload);
     }
     return state;
   };
@@ -91,10 +85,6 @@ export const createRepository = ({ originStore }) => {
    * @returns {Promise<void>}
    */
   const init = async ({ initialState: providedInitialState } = {}) => {
-    if (providedInitialState) {
-      initialState = providedInitialState;
-      latestState = structuredClone(initialState);
-    }
     resetCheckpoints();
     cachedEvents = (await store.getEvents()) || [];
 
@@ -111,6 +101,16 @@ export const createRepository = ({ originStore }) => {
     if (latestComputedIndex !== 0 && !checkpoints.has(latestComputedIndex)) {
       storeCheckpoint(latestComputedIndex, latestState);
     }
+
+    // If there are no events and initial state is provided, create an init event
+    if (cachedEvents.length === 0 && providedInitialState) {
+      await addEvent({
+        type: "init",
+        payload: {
+          state: providedInitialState
+        }
+      });
+    }
   };
 
   /**
@@ -123,7 +123,7 @@ export const createRepository = ({ originStore }) => {
   const addEvent = async (event) => {
     // Transform new event format to internal format
     const internalEvent = {
-      actionType: event.type,
+      type: event.type,
       payload: event.payload
     };
 

@@ -1,0 +1,43 @@
+description: Sets the entire state to the provided initial state
+
+input:
+  state:
+    user:
+      profile:
+        name: John Doe
+        email: john@example.com
+    explorer:
+      items:
+        file1: { id: file1, name: "File 1", type: file }
+      tree:
+        - id: file1
+          children: []
+
+payload:
+  state:
+    explorer:
+      items:
+        folder1: { id: folder1, name: "New Folder", type: folder }
+        file1: { id: file1, name: "File 1", type: file }
+      tree:
+        - id: folder1
+          children: []
+        - id: file1
+          children: []
+    settings:
+      theme: dark
+      language: en
+
+expected:
+  explorer:
+    items:
+      folder1: { id: folder1, name: "New Folder", type: folder }
+      file1: { id: file1, name: "File 1", type: file }
+    tree:
+      - id: folder1
+        children: []
+      - id: file1
+        children: []
+  settings:
+    theme: dark
+    language: en
