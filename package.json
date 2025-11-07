@@ -1,5 +1,21 @@
 {
   "name": "insieme",
+  "version": "0.0.1",
+  "description": "An offline-first collaborative library with authoritative server for real-time data synchronization",
+  "keywords": [
+    "offline-first",
+    "collaborative",
+    "real-time",
+    "synchronization",
+    "authoritative-server",
+    "javascript"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yuusoft-org/insieme.git"
+  },
+  "homepage": "https://github.com/yuusoft-org/insieme#readme",
   "type": "module",
   "main": "src/index.js",
   "exports": {
@@ -19,8 +35,7 @@
     "lint": "oxlint && bunx prettier --check src",
     "lint:fix": "bunx prettier --check --write src",
     "test": "vitest --run",
-    "test:coverage": "vitest --run --coverage",
-    "prepare": "husky"
+    "test:coverage": "vitest --run --coverage"
   },
   "lint-staged": {
     "src/**/*.{js}": [
