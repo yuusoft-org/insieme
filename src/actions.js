@@ -97,7 +97,11 @@ const collectDescendantIds = (tree, nodeId) => {
         collectAllChildren(node, descendants);
         return true;
       }
-      if (node && node.children && findNodeAndCollect(node.children, targetId)) {
+      if (
+        node &&
+        node.children &&
+        findNodeAndCollect(node.children, targetId)
+      ) {
         return true;
       }
     }
@@ -174,10 +178,17 @@ export const set = (state, payload) => {
   // Only apply merge logic if replace is false and both values are plain objects (not arrays)
   if (!replace) {
     if (Array.isArray(value)) {
-      throw new Error("set with replace=false requires value to be a plain object, not an array");
+      throw new Error(
+        "set with replace=false requires value to be a plain object, not an array",
+      );
     }
-    if (typeof current[targetKey] === "object" && !Array.isArray(current[targetKey]) &&
-      typeof value === "object" && !Array.isArray(value) && value !== null) {
+    if (
+      typeof current[targetKey] === "object" &&
+      !Array.isArray(current[targetKey]) &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      value !== null
+    ) {
       // Merge new properties with existing object
       current[targetKey] = { ...current[targetKey], ...value };
     } else {
@@ -239,7 +250,6 @@ export const unset = (state, payload) => {
   return newState;
 };
 
-
 /**
  * Adds a new node to the tree structure at the specified target location.
  * Supports positioning options for ordering nodes within parent containers.
@@ -275,7 +285,7 @@ export const unset = (state, payload) => {
  */
 export const treePush = (state, payload) => {
   const { target, value, options = {} } = payload;
-  const { parent = '_root', position = 'first' } = options;
+  const { parent = "_root", position = "first" } = options;
   const newState = structuredClone(state);
   const targetData = get(newState, target);
 
@@ -503,7 +513,7 @@ export const init = (_state, payload) => {
 
 export const treeMove = (state, payload) => {
   const { target, options = {} } = payload;
-  const { id, parent = '_root', position = 'first' } = options;
+  const { id, parent = "_root", position = "first" } = options;
   const newState = structuredClone(state);
   const targetData = get(newState, target);
 

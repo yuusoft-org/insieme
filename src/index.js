@@ -8,13 +8,7 @@
  */
 
 // Repository factories
-export {
-  createRepository,
-} from './repository.js';
+export { createRepository } from "./repository.js";
 
 // Helper functions for tree operations
-export {
-  toFlatItems,
-  toFlatGroups,
-  toTreeStructure
-} from './helpers.js';
+export { toFlatItems, toFlatGroups, toTreeStructure } from "./helpers.js";
