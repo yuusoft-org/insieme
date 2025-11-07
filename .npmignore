@@ -1,0 +1,15 @@
+# Dependencies
+node_modules/
+
+coverage/
+tasks
+docs
+spec/
+vitest.config.js
+puty.test.js
+.github
+
+.claude
+.husky
+.prettierrc.yaml
+
