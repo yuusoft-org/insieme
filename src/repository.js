@@ -1,4 +1,12 @@
-import { set, unset, treePush, treeDelete, treeUpdate, treeMove, init } from "./actions.js";
+import {
+  set,
+  unset,
+  treePush,
+  treeDelete,
+  treeUpdate,
+  treeMove,
+  init,
+} from "./actions.js";
 
 /**
  * Creates an internal repository instance with event sourcing and checkpointing.
@@ -107,8 +115,8 @@ export const createRepository = ({ originStore }) => {
       await addEvent({
         type: "init",
         payload: {
-          state: providedInitialState
-        }
+          state: providedInitialState,
+        },
       });
     }
   };
@@ -124,7 +132,7 @@ export const createRepository = ({ originStore }) => {
     // Transform new event format to internal format
     const internalEvent = {
       type: event.type,
-      payload: event.payload
+      payload: event.payload,
     };
 
     cachedEvents.push(internalEvent);
@@ -202,4 +210,3 @@ export const createRepository = ({ originStore }) => {
     getEvents,
   };
 };
-
