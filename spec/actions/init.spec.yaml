@@ -1,34 +1,33 @@
-description: Sets the entire state to the provided initial state
-
-input:
-  state:
-    user:
+file: "../../src/actions.js"
+group: actions
+suites: [init]
+---
+suite: init
+exportName: init
+---
+case: "replace entire state with new state"
+in:
+  - user:
       profile:
         name: John Doe
         email: john@example.com
-    explorer:
-      items:
-        file1: { id: file1, name: "File 1", type: file }
-      tree:
-        - id: file1
-          children: []
-
-payload:
-  state:
-    explorer:
-      items:
-        folder1: { id: folder1, name: "New Folder", type: folder }
-        file1: { id: file1, name: "File 1", type: file }
-      tree:
-        - id: folder1
-          children: []
-        - id: file1
-          children: []
     settings:
-      theme: dark
+      theme: light
       language: en
-
-expected:
+  - state:
+      explorer:
+        items:
+          folder1: { id: folder1, name: "New Folder", type: folder }
+          file1: { id: file1, name: "File 1", type: file }
+        tree:
+          - id: folder1
+            children: []
+          - id: file1
+            children: []
+      settings:
+        theme: dark
+        language: fr
+out:
   explorer:
     items:
       folder1: { id: folder1, name: "New Folder", type: folder }
@@ -40,4 +39,65 @@ expected:
         children: []
   settings:
     theme: dark
-    language: en
+    language: fr
+---
+case: "replace empty state with complex state"
+in:
+  - {}
+  - state:
+      app:
+        name: "My App"
+        version: "1.0.0"
+        config:
+          api_url: "https://api.example.com"
+          timeout: 5000
+      users:
+        - id: 1
+          name: "Alice"
+          role: "admin"
+        - id: 2
+          name: "Bob"
+          role: "user"
+out:
+  app:
+    name: My App
+    version: 1.0.0
+    config:
+      api_url: https://api.example.com
+      timeout: 5000
+  users:
+    - id: 1
+      name: Alice
+      role: admin
+    - id: 2
+      name: Bob
+      role: user
+---
+case: "replace complex state with simple state"
+in:
+  - database:
+      host: "localhost"
+      port: 5432
+      credentials:
+        username: "admin"
+        password: "secret"
+    cache:
+      type: "redis"
+      ttl: 3600
+  - state:
+      status: "initialized"
+      timestamp: 1234567890
+out:
+  status: initialized
+  timestamp: 1234567890
+---
+case: "replace with empty state"
+in:
+  - user:
+      profile:
+        name: John Doe
+        email: john@example.com
+    settings:
+      theme: light
+  - state: {}
+out: {}
