@@ -8,8 +8,10 @@
     }
   },
   "devDependencies": {
-    "@vitest/coverage-v8": "^4.0.7",
-    "puty": "^0.0.5-rc1"
+    "@vitest/coverage-istanbul": "^4.0.8",
+    "@vitest/coverage-v8": "^4.0.8",
+    "puty": "^0.0.5-rc1",
+    "vitest": "^4.0.8"
   },
   "scripts": {
     "lint": "bunx prettier --check src",

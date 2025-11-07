@@ -258,4 +258,186 @@ out:
         created: "2024-01-01"
         size: 1024
         tags: ["important", "work"]
+---
+case: "add node with undefined position (default to first)"
+in:
+  - fileExplorer:
+      tree:
+        - id: folder1
+          children: []
+      items:
+        folder1:
+          name: "Folder 1"
+          type: "folder"
+  - target: fileExplorer
+    value:
+      id: folder2
+      name: "Folder 2"
+      type: "folder"
+    options:
+      position: undefined
+out:
+  fileExplorer:
+    tree:
+      - id: folder2
+        children: []
+      - id: folder1
+        children: []
+    items:
+      folder1:
+        name: Folder 1
+        type: folder
+      folder2:
+        name: Folder 2
+        type: folder
+---
+case: "add node after sibling when sibling exists"
+in:
+  - fileExplorer:
+      tree:
+        - id: folder1
+          children: []
+        - id: folder2
+          children: []
+      items:
+        folder1:
+          name: "Folder 1"
+          type: "folder"
+        folder2:
+          name: "Folder 2"
+          type: "folder"
+  - target: fileExplorer
+    value:
+      id: folder3
+      name: "Folder 3"
+      type: "folder"
+    options:
+      position:
+        after: folder1
+out:
+  fileExplorer:
+    tree:
+      - id: folder1
+        children: []
+      - id: folder3
+        children: []
+      - id: folder2
+        children: []
+    items:
+      folder1:
+        name: Folder 1
+        type: folder
+      folder2:
+        name: Folder 2
+        type: folder
+      folder3:
+        name: Folder 3
+        type: folder
+---
+case: "add node before sibling when sibling exists"
+in:
+  - fileExplorer:
+      tree:
+        - id: folder1
+          children: []
+        - id: folder2
+          children: []
+      items:
+        folder1:
+          name: "Folder 1"
+          type: "folder"
+        folder2:
+          name: "Folder 2"
+          type: "folder"
+  - target: fileExplorer
+    value:
+      id: folder3
+      name: "Folder 3"
+      type: "folder"
+    options:
+      position:
+        before: folder2
+out:
+  fileExplorer:
+    tree:
+      - id: folder1
+        children: []
+      - id: folder3
+        children: []
+      - id: folder2
+        children: []
+    items:
+      folder1:
+        name: Folder 1
+        type: folder
+      folder2:
+        name: Folder 2
+        type: folder
+      folder3:
+        name: Folder 3
+        type: folder
+---
+case: "add node with position last explicit"
+in:
+  - fileExplorer:
+      tree:
+        - id: folder1
+          children: []
+      items:
+        folder1:
+          name: "Folder 1"
+          type: "folder"
+  - target: fileExplorer
+    value:
+      id: folder2
+      name: "Folder 2"
+      type: "folder"
+    options:
+      position: "last"
+out:
+  fileExplorer:
+    tree:
+      - id: folder1
+        children: []
+      - id: folder2
+        children: []
+    items:
+      folder1:
+        name: Folder 1
+        type: folder
+      folder2:
+        name: Folder 2
+        type: folder
+---
+case: "add node with invalid position (else branch)"
+in:
+  - fileExplorer:
+      tree:
+        - id: folder1
+          children: []
+      items:
+        folder1:
+          name: "Folder 1"
+          type: "folder"
+  - target: fileExplorer
+    value:
+      id: folder2
+      name: "Folder 2"
+      type: "folder"
+    options:
+      position: ""
+out:
+  fileExplorer:
+    tree:
+      - id: folder2
+        children: []
+      - id: folder1
+        children: []
+    items:
+      folder1:
+        name: Folder 1
+        type: folder
+      folder2:
+        name: Folder 2
+        type: folder
 
