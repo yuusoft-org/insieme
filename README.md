@@ -19,23 +19,31 @@ It provides a deterministic, event-based core for syncing application state acro
 ```js
 import { createRepository } from "insieme";
 
+const store = {
+  async getEvents() { return []; },
+  async appendEvent(event) { console.log("saved", event); },
+};
+
+const repository = createRepository({
+  originStore: store
+});
+
 const initialState = {
   explorer: { items: {}, tree: [] },
 };
 
-const repository = createRepository({
-  initialState,
-  draftStore: ...,
-  sourceStore: ...,
-  remoteAdapater: ...,
-})
+await repository.init({
+  initialState
+});
 
-// apply an action
-await repository.addAction({
-  actionType: "treePush",
-  target: "explorer",
-  value: { id: "1", name: "New Folder", type: "folder" },
-  options: { parent: "_root" }
+// apply an event
+await repository.addEvent({
+  type: "treePush",
+  payload: {
+    target: "explorer",
+    value: { id: "1", name: "New Folder", type: "folder" },
+    options: { parent: "_root" }
+  }
 });
 
 // read the current state
@@ -76,46 +84,30 @@ server
 import { createRepository } from "insieme";
 
 const store = {
-  async getAllEvents() { return []; },
-  async addAction(action) { console.log("saved", action); },
-  app: {
-    get: async (k) => localStorage.getItem(k),
-    set: async (k, v) => localStorage.setItem(k, v),
-    remove: async (k) => localStorage.removeItem(k),
-  },
+  async getEvents() { return []; },
+  async appendEvent(event) { console.log("saved", event); },
 };
+
+const repository = createRepository({
+  originStore: store
+});
 
 const initialState = {
   explorer: { items: {}, tree: [] },
 };
 
-const adapter = (subject) => {
-  const ws = new Websockert(...)
+await repository.init({
+  initialState
+});
 
-  ws.on('...', () => {
-    subject.receivedFromRemote(...)
-  })
-
-  return {
-    sendToRemote: (payload) => {
-      ws.send(payload)
-    },
+// apply an event
+await repository.addEvent({
+  type: "treePush",
+  payload: {
+    target: "explorer",
+    value: { id: "1", name: "New Folder", type: "folder" },
+    options: { parent: "_root" }
   }
-}
-
-const repository = createRepository({
-  initialState,
-  draftStore: ...,
-  sourceStore: ...,
-  sourceMode: true
-})
-
-// apply an action
-await repository.addAction({
-  actionType: "treePush",
-  target: "explorer",
-  value: { id: "1", name: "New Folder", type: "folder" },
-  options: { parent: "_root" }
 });
 
 // read the current state
@@ -165,12 +157,14 @@ Each tree contains two parts:
 Sets a value at a specific path in the state.
 
 ```js
-await repository.set({
-  target: 'user.profile.name',
-  value: 'Alice Smith',
-  options: { replace: false }
+await repository.addEvent({
+  type: "set",
+  payload: {
+    target: 'user.profile.name',
+    value: 'Alice Smith',
+    options: { replace: false }
+  }
 })
-```
 
 **Options:**
 - `replace: boolean` (default: false) - When true, replaces the entire value. When false, merges with existing objects.
@@ -203,8 +197,11 @@ await repository.set({
 Removes a value at a specific path in the state.
 
 ```js
-await repository.unset({
-  target: 'user.profile.email'
+await repository.addEvent({
+  type: "unset",
+  payload: {
+    target: 'user.profile.email'
+  }
 })
 ```
 
@@ -237,16 +234,19 @@ await repository.unset({
 Adds a new item to the tree at a specified parent.
 
 ```js
-await repository.treePush({
-  target: 'explorer',
-  value: {
-    id: 'folder1',
-    name: 'New Folder',
-    type: 'folder'
-  },
-  options: {
-    parent: '_root',
-    position: 'last'
+await repository.addEvent({
+  type: "treePush",
+  payload: {
+    target: 'explorer',
+    value: {
+      id: 'folder1',
+      name: 'New Folder',
+      type: 'folder'
+    },
+    options: {
+      parent: '_root',
+      position: 'last'
+    }
   }
 })
 ```
@@ -292,10 +292,13 @@ await repository.treePush({
 Removes an item and all its children from the tree.
 
 ```js
-await repository.treeDelete({
-  target: 'explorer',
-  options: {
-    id: 'folder1'
+await repository.addEvent({
+  type: "treeDelete",
+  payload: {
+    target: 'explorer',
+    options: {
+      id: 'folder1'
+    }
   }
 })
 ```
@@ -341,15 +344,18 @@ await repository.treeDelete({
 Updates properties of an existing item in the tree.
 
 ```js
-await repository.treeUpdate({
-  target: 'explorer',
-  value: {
-    name: 'Renamed Folder',
-    type: 'folder'
-  },
-  options: {
-    id: 'folder1',
-    replace: false
+await repository.addEvent({
+  type: "treeUpdate",
+  payload: {
+    target: 'explorer',
+    value: {
+      name: 'Renamed Folder',
+      type: 'folder'
+    },
+    options: {
+      id: 'folder1',
+      replace: false
+    }
   }
 })
 ```
@@ -400,12 +406,15 @@ await repository.treeUpdate({
 Moves an item to a new parent in the tree.
 
 ```js
-await repository.treeMove({
-  target: 'explorer',
-  options: {
-    id: 'file1',
-    parent: 'folder2',
-    position: 'first'
+await repository.addEvent({
+  type: "treeMove",
+  payload: {
+    target: 'explorer',
+    options: {
+      id: 'file1',
+      parent: 'folder2',
+      position: 'first'
+    }
   }
 })
 ```
