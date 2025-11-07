@@ -9,6 +9,8 @@
   },
   "devDependencies": {
     "@vitest/coverage-v8": "^4.0.8",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.2.6",
     "puty": "^0.0.5-rc1",
     "vitest": "^4.0.8"
   },
@@ -16,6 +18,12 @@
     "lint": "bunx prettier --check src",
     "lint:fix": "bunx prettier --check --write src",
     "test": "vitest --run",
-    "test:coverage": "vitest --run --coverage"
+    "test:coverage": "vitest --run --coverage",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "src/**/*.{js}": [
+      "oxlint && bunx prettier --write"
+    ]
   }
 }
