@@ -1,6 +1,6 @@
 ---
 title: lint and format
-status: todo
+status: done
 priority: low
 ---
 
