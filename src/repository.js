@@ -5,7 +5,7 @@ import {
   treeDelete,
   treeUpdate,
   treeMove,
-  init,
+  init as initAction,
 } from "./actions.js";
 
 /**
@@ -81,7 +81,7 @@ export const createRepository = ({ originStore }) => {
     } else if (type === "treeMove") {
       return treeMove(state, payload);
     } else if (type === "init") {
-      return init(state, payload);
+      return initAction(state, payload);
     }
     return state;
   };
