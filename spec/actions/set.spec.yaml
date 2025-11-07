@@ -1,0 +1,409 @@
+file: "../../src/actions.js"
+group: actions
+suites: [set]
+---
+suite: set
+exportName: set
+---
+case: "set primitive value"
+in:
+  - name: "hello"
+    age: 12
+  - target: age
+    value: 15
+out:
+  name: hello
+  age: 15
+---
+case: "set object value"
+in:
+  - name: "hello"
+    age: 12
+  - target: age
+    value:
+      num: 1
+out:
+  name: hello
+  age:
+    num: 1
+---
+case: "set string value"
+in:
+  - name: "hello"
+    age: 12
+  - target: name
+    value: "world"
+out:
+  name: world
+  age: 12
+---
+case: "set boolean value"
+in:
+  - name: "hello"
+    active: false
+  - target: active
+    value: true
+out:
+  name: hello
+  active: true
+---
+case: "set null value"
+in:
+  - name: "hello"
+    age: 12
+  - target: age
+    value: null
+out:
+  name: hello
+  age: null
+---
+case: "set undefined value"
+in:
+  - name: "hello"
+    age: 12
+  - target: age
+    value: undefined
+out:
+  name: hello
+  age: undefined
+---
+case: "nested path set"
+in:
+  - user:
+      profile:
+        name: "john"
+        age: 25
+  - target: user.profile.age
+    value: 30
+out:
+  user:
+    profile:
+      name: john
+      age: 30
+---
+case: "deep nested path set"
+in:
+  - app:
+      config:
+        database:
+          host: "localhost"
+          port: 5432
+  - target: app.config.database.port
+    value: 3306
+out:
+  app:
+    config:
+      database:
+        host: localhost
+        port: 3306
+---
+case: "create new nested path"
+in:
+  - user:
+      name: "john"
+  - target: user.profile.age
+    value: 25
+out:
+  user:
+    name: john
+    profile:
+      age: 25
+---
+case: "replace: true with object"
+in:
+  - user:
+      profile:
+        name: "john"
+        age: 25
+  - target: user.profile
+    value:
+      name: "jane"
+      email: "jane@example.com"
+    options:
+      replace: true
+out:
+  user:
+    profile:
+      name: jane
+      email: jane@example.com
+---
+case: "replace: false with objects (merge)"
+in:
+  - user:
+      profile:
+        name: "john"
+        age: 25
+  - target: user.profile
+    value:
+      email: "john@example.com"
+      city: "New York"
+    options:
+      replace: false
+out:
+  user:
+    profile:
+      name: john
+      age: 25
+      email: john@example.com
+      city: New York
+---
+case: "replace: false with primitive (should replace)"
+in:
+  - user:
+      profile:
+        name: "john"
+        age: 25
+  - target: user.profile
+    value: "replaced"
+    options:
+      replace: false
+out:
+  user:
+    profile: replaced
+---
+case: "replace: false with null (should replace)"
+in:
+  - user:
+      profile:
+        name: "john"
+        age: 25
+  - target: user.profile
+    value: null
+    options:
+      replace: false
+out:
+  user:
+    profile: null
+---
+case: "replace: false when current is array and value is object (should replace)"
+in:
+  - user:
+      profile: [1, 2, 3]
+  - target: user.profile
+    value:
+      name: "john"
+    options:
+      replace: false
+out:
+  user:
+    profile:
+      name: john
+---
+case: "replace: false with array (should throw error)"
+in:
+  - user:
+      profile:
+        name: "john"
+        age: 25
+  - target: user.profile
+    value: [1, 2, 3]
+    options:
+      replace: false
+throws: "set with replace=false requires value to be a plain object, not an array"
+---
+case: "replace: true with array (should replace)"
+in:
+  - user:
+      profile:
+        name: "john"
+        age: 25
+  - target: user.profile
+    value: [1, 2, 3]
+    options:
+      replace: true
+out:
+  user:
+    profile: [1, 2, 3]
+---
+case: "merge with existing object and new object"
+in:
+  - user:
+      profile:
+        name: "john"
+        age: 25
+        active: true
+  - target: user.profile
+    value:
+      email: "john@example.com"
+      age: 26
+    options:
+      replace: false
+out:
+  user:
+    profile:
+      name: john
+      age: 26
+      active: true
+      email: john@example.com
+---
+case: "replace: true default behavior"
+in:
+  - user:
+      profile:
+        name: "john"
+        age: 25
+  - target: user.profile
+    value:
+      email: "john@example.com"
+    options:
+      replace: true
+out:
+  user:
+    profile:
+      email: john@example.com
+---
+case: "no options (default replace: false)"
+in:
+  - user:
+      profile:
+        name: "john"
+        age: 25
+  - target: user.profile
+    value:
+      email: "john@example.com"
+out:
+  user:
+    profile:
+      name: john
+      age: 25
+      email: john@example.com
+---
+case: "empty options object"
+in:
+  - user:
+      profile:
+        name: "john"
+        age: 25
+  - target: user.profile
+    value:
+      email: "john@example.com"
+    options: {}
+out:
+  user:
+    profile:
+      name: john
+      age: 25
+      email: john@example.com
+---
+case: "set on non-existent root property"
+in:
+  - existing: "value"
+  - target: newProperty
+    value: "newValue"
+out:
+  existing: value
+  newProperty: newValue
+---
+case: "set on deeply nested non-existent path"
+in:
+  - existing: "value"
+  - target: new.nested.deep.path
+    value: "deepValue"
+out:
+  existing: value
+  new:
+    nested:
+      deep:
+        path: deepValue
+---
+case: "replace true with empty object"
+in:
+  - user:
+      profile:
+        name: "john"
+        age: 25
+        active: true
+  - target: user.profile
+    value: {}
+    options:
+      replace: true
+out:
+  user:
+    profile: {}
+---
+case: "replace false with empty object (merge)"
+in:
+  - user:
+      profile:
+        name: "john"
+        age: 25
+        active: true
+  - target: user.profile
+    value: {}
+    options:
+      replace: false
+out:
+  user:
+    profile:
+      name: john
+      age: 25
+      active: true
+---
+case: "set number zero"
+in:
+  - count: 5
+  - target: count
+    value: 0
+out:
+  count: 0
+---
+case: "set empty string"
+in:
+  - name: "john"
+  - target: name
+    value: ""
+out:
+  name: ""
+---
+case: "set false boolean"
+in:
+  - active: true
+  - target: active
+    value: false
+out:
+  active: false
+---
+case: "path with array index notation"
+in:
+  - users:
+      - name: "john"
+      - name: "jane"
+  - target: users.0.name
+    value: "johnny"
+out:
+  users:
+    "0":
+      name: johnny
+    "1":
+      name: jane
+---
+case: "complex object merge"
+in:
+  - user:
+      profile:
+        personal:
+          name: "john"
+          age: 25
+        contact:
+          email: "john@example.com"
+          phone: "123-456-7890"
+  - target: user.profile
+    value:
+      personal:
+        city: "New York"
+        age: 26
+      preferences:
+        theme: "dark"
+    options:
+      replace: false
+out:
+  user:
+    profile:
+      personal:
+        age: 26
+        city: New York
+      contact:
+        email: john@example.com
+        phone: 123-456-7890
+      preferences:
+        theme: dark

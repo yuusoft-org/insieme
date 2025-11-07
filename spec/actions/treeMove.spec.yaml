@@ -1,0 +1,593 @@
+file: "../../src/actions.js"
+group: actions
+suites: [treeMove]
+---
+suite: treeMove
+exportName: treeMove
+---
+case: "move node to root level first"
+in:
+  - fileExplorer:
+      tree:
+        - id: folder1
+          children:
+            - id: file1
+              children: []
+        - id: folder2
+          children: []
+      items:
+        folder1:
+          name: "Folder 1"
+          type: "folder"
+        folder2:
+          name: "Folder 2"
+          type: "folder"
+        file1:
+          name: "File 1.txt"
+          type: "file"
+  - target: fileExplorer
+    options:
+      id: file1
+      parent: "_root"
+      position: "first"
+out:
+  fileExplorer:
+    tree:
+      - id: file1
+        children: []
+      - id: folder1
+        children: []
+      - id: folder2
+        children: []
+    items:
+      folder1:
+        name: Folder 1
+        type: folder
+      folder2:
+        name: Folder 2
+        type: folder
+      file1:
+        name: File 1.txt
+        type: file
+---
+case: "move node to root level last"
+in:
+  - fileExplorer:
+      tree:
+        - id: folder1
+          children:
+            - id: file1
+              children: []
+        - id: folder2
+          children: []
+      items:
+        folder1:
+          name: "Folder 1"
+          type: "folder"
+        folder2:
+          name: "Folder 2"
+          type: "folder"
+        file1:
+          name: "File 1.txt"
+          type: "file"
+  - target: fileExplorer
+    options:
+      id: file1
+      parent: "_root"
+      position: "last"
+out:
+  fileExplorer:
+    tree:
+      - id: folder1
+        children: []
+      - id: folder2
+        children: []
+      - id: file1
+        children: []
+    items:
+      folder1:
+        name: Folder 1
+        type: folder
+      folder2:
+        name: Folder 2
+        type: folder
+      file1:
+        name: File 1.txt
+        type: file
+---
+case: "move node to different parent"
+in:
+  - fileExplorer:
+      tree:
+        - id: folder1
+          children:
+            - id: file1
+              children: []
+        - id: folder2
+          children: []
+      items:
+        folder1:
+          name: "Folder 1"
+          type: "folder"
+        folder2:
+          name: "Folder 2"
+          type: "folder"
+        file1:
+          name: "File 1.txt"
+          type: "file"
+  - target: fileExplorer
+    options:
+      id: file1
+      parent: folder2
+      position: "first"
+out:
+  fileExplorer:
+    tree:
+      - id: folder1
+        children: []
+      - id: folder2
+        children:
+          - id: file1
+            children: []
+    items:
+      folder1:
+        name: Folder 1
+        type: folder
+      folder2:
+        name: Folder 2
+        type: folder
+      file1:
+        name: File 1.txt
+        type: file
+---
+case: "move node after specific sibling"
+in:
+  - fileExplorer:
+      tree:
+        - id: folder1
+          children:
+            - id: file1
+              children: []
+        - id: folder2
+          children: []
+      items:
+        folder1:
+          name: "Folder 1"
+          type: "folder"
+        folder2:
+          name: "Folder 2"
+          type: "folder"
+        file1:
+          name: "File 1.txt"
+          type: "file"
+  - target: fileExplorer
+    options:
+      id: file1
+      parent: "_root"
+      position:
+        after: folder1
+out:
+  fileExplorer:
+    tree:
+      - id: folder1
+        children: []
+      - id: file1
+        children: []
+      - id: folder2
+        children: []
+    items:
+      folder1:
+        name: Folder 1
+        type: folder
+      folder2:
+        name: Folder 2
+        type: folder
+      file1:
+        name: File 1.txt
+        type: file
+---
+case: "move node before specific sibling"
+in:
+  - fileExplorer:
+      tree:
+        - id: folder1
+          children:
+            - id: file1
+              children: []
+        - id: folder2
+          children: []
+      items:
+        folder1:
+          name: "Folder 1"
+          type: "folder"
+        folder2:
+          name: "Folder 2"
+          type: "folder"
+        file1:
+          name: "File 1.txt"
+          type: "file"
+  - target: fileExplorer
+    options:
+      id: file1
+      parent: "_root"
+      position:
+        before: folder2
+out:
+  fileExplorer:
+    tree:
+      - id: folder1
+        children: []
+      - id: file1
+        children: []
+      - id: folder2
+        children: []
+    items:
+      folder1:
+        name: Folder 1
+        type: folder
+      folder2:
+        name: Folder 2
+        type: folder
+      file1:
+        name: File 1.txt
+        type: file
+---
+case: "move non-existent node"
+in:
+  - fileExplorer:
+      tree:
+        - id: folder1
+          children: []
+      items:
+        folder1:
+          name: "Folder 1"
+          type: "folder"
+  - target: fileExplorer
+    options:
+      id: nonExistent
+      parent: "_root"
+      position: "first"
+out:
+  fileExplorer:
+    tree:
+      - id: folder1
+        children: []
+    items:
+      folder1:
+        name: Folder 1
+        type: folder
+---
+case: "move node to non-existent parent"
+in:
+  - fileExplorer:
+      tree:
+        - id: folder1
+          children:
+            - id: file1
+              children: []
+      items:
+        folder1:
+          name: "Folder 1"
+          type: "folder"
+        file1:
+          name: "File 1.txt"
+          type: "file"
+  - target: fileExplorer
+    options:
+      id: file1
+      parent: nonExistent
+      position: "first"
+out:
+  fileExplorer:
+    tree:
+      - id: folder1
+        children: []
+    items:
+      folder1:
+        name: Folder 1
+        type: folder
+      file1:
+        name: File 1.txt
+        type: file
+---
+case: "position after fallback - sibling not found"
+in:
+  - fileExplorer:
+      tree:
+        - id: folder1
+          children:
+            - id: file1
+              children: []
+        - id: folder2
+          children: []
+      items:
+        folder1:
+          name: "Folder 1"
+          type: "folder"
+        folder2:
+          name: "Folder 2"
+          type: "folder"
+        file1:
+          name: "File 1.txt"
+          type: "file"
+  - target: fileExplorer
+    options:
+      id: file1
+      parent: "_root"
+      position:
+        after: nonExistent
+out:
+  fileExplorer:
+    tree:
+      - id: folder1
+        children: []
+      - id: folder2
+        children: []
+      - id: file1
+        children: []
+    items:
+      folder1:
+        name: Folder 1
+        type: folder
+      folder2:
+        name: Folder 2
+        type: folder
+      file1:
+        name: File 1.txt
+        type: file
+---
+case: "position before fallback - sibling not found"
+in:
+  - fileExplorer:
+      tree:
+        - id: folder1
+          children:
+            - id: file1
+              children: []
+        - id: folder2
+          children: []
+      items:
+        folder1:
+          name: "Folder 1"
+          type: "folder"
+        folder2:
+          name: "Folder 2"
+          type: "folder"
+        file1:
+          name: "File 1.txt"
+          type: "file"
+  - target: fileExplorer
+    options:
+      id: file1
+      parent: "_root"
+      position:
+        before: nonExistent
+out:
+  fileExplorer:
+    tree:
+      - id: file1
+        children: []
+      - id: folder1
+        children: []
+      - id: folder2
+        children: []
+    items:
+      folder1:
+        name: Folder 1
+        type: folder
+      folder2:
+        name: Folder 2
+        type: folder
+      file1:
+        name: File 1.txt
+        type: file
+---
+case: "move complex nested structure"
+in:
+  - fileExplorer:
+      tree:
+        - id: folder1
+          children:
+            - id: subfolder1
+              children:
+                - id: file1
+                  children: []
+        - id: folder2
+          children: []
+      items:
+        folder1:
+          name: "Folder 1"
+          type: "folder"
+        folder2:
+          name: "Folder 2"
+          type: "folder"
+        subfolder1:
+          name: "Subfolder 1"
+          type: "folder"
+        file1:
+          name: "File 1.txt"
+          type: "file"
+  - target: fileExplorer
+    options:
+      id: subfolder1
+      parent: folder2
+      position: "first"
+out:
+  fileExplorer:
+    tree:
+      - id: folder1
+        children: []
+      - id: folder2
+        children:
+          - id: subfolder1
+            children:
+              - id: file1
+                children: []
+    items:
+      folder1:
+        name: Folder 1
+        type: folder
+      folder2:
+        name: Folder 2
+        type: folder
+      subfolder1:
+        name: Subfolder 1
+        type: folder
+      file1:
+        name: File 1.txt
+        type: file
+---
+case: "move node with children within same parent"
+in:
+  - fileExplorer:
+      tree:
+        - id: folder1
+          children:
+            - id: subfolder1
+              children:
+                - id: file1
+                  children: []
+            - id: subfolder2
+              children: []
+      items:
+        folder1:
+          name: "Folder 1"
+          type: "folder"
+        subfolder1:
+          name: "Subfolder 1"
+          type: "folder"
+        subfolder2:
+          name: "Subfolder 2"
+          type: "folder"
+        file1:
+          name: "File 1.txt"
+          type: "file"
+  - target: fileExplorer
+    options:
+      id: subfolder1
+      parent: folder1
+      position:
+        after: subfolder2
+out:
+  fileExplorer:
+    tree:
+      - id: folder1
+        children:
+          - id: subfolder2
+            children: []
+          - id: subfolder1
+            children:
+              - id: file1
+                children: []
+    items:
+      folder1:
+        name: Folder 1
+        type: folder
+      subfolder1:
+        name: Subfolder 1
+        type: folder
+      subfolder2:
+        name: Subfolder 2
+        type: folder
+      file1:
+        name: File 1.txt
+        type: file
+---
+case: "move to new parent with position last"
+in:
+  - fileExplorer:
+      tree:
+        - id: folder1
+          children:
+            - id: file1
+              children: []
+        - id: folder2
+          children:
+            - id: file2
+              children: []
+      items:
+        folder1:
+          name: "Folder 1"
+          type: "folder"
+        folder2:
+          name: "Folder 2"
+          type: "folder"
+        file1:
+          name: "File 1.txt"
+          type: "file"
+        file2:
+          name: "File 2.txt"
+          type: "file"
+  - target: fileExplorer
+    options:
+      id: file1
+      parent: folder2
+      position: "last"
+out:
+  fileExplorer:
+    tree:
+      - id: folder1
+        children: []
+      - id: folder2
+        children:
+          - id: file2
+            children: []
+          - id: file1
+            children: []
+    items:
+      folder1:
+        name: Folder 1
+        type: folder
+      folder2:
+        name: Folder 2
+        type: folder
+      file1:
+        name: File 1.txt
+        type: file
+      file2:
+        name: File 2.txt
+        type: file
+---
+case: "move node with default position"
+in:
+  - fileExplorer:
+      tree:
+        - id: folder1
+          children:
+            - id: file1
+              children: []
+        - id: folder2
+          children: []
+      items:
+        folder1:
+          name: "Folder 1"
+          type: "folder"
+        folder2:
+          name: "Folder 2"
+          type: "folder"
+        file1:
+          name: "File 1.txt"
+          type: "file"
+  - target: fileExplorer
+    options:
+      id: file1
+      parent: folder2
+out:
+  fileExplorer:
+    tree:
+      - id: folder1
+        children: []
+      - id: folder2
+        children:
+          - id: file1
+            children: []
+    items:
+      folder1:
+        name: Folder 1
+        type: folder
+      folder2:
+        name: Folder 2
+        type: folder
+      file1:
+        name: File 1.txt
+        type: file
