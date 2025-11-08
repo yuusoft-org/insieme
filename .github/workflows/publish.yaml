@@ -12,27 +12,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Setup Bun
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.2.2
+          bun-version: 1.2.15
 
-      # Install dependencies from root
       - name: Install Dependencies
         run: bun install --frozen-lockfile
 
       - name: Build
         run: bun run types
 
-      # Setup .npmrc file to publish to npm
-      - uses: actions/setup-node@v3
+      - uses: actions/setup-node@v5
         with:
-          node-version: "20.x"
+          node-version: "24"
           registry-url: "https://registry.npmjs.org"
 
-      # Publish to npm
-      - name: Publish to npm
-        run: bun publish
-        env:
-          NPM_CONFIG_TOKEN: ${{ secrets.NPM_PUBLISH_TOKEN }}
-
+      - name: Publish to npm (Trusted)
+        run: npm publish --access public
