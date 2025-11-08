@@ -1,11 +1,37 @@
 /**
+ * @typedef {Object} HelperTreeNode
+ * @property {string} id
+ * @property {HelperTreeNode[]} [children]
+ */
+
+/**
+ * @typedef {Record<string, unknown>} HelperItemMetadata
+ */
+
+/**
+ * @typedef {Object} TreeDataInput
+ * @property {Record<string, HelperItemMetadata>} items
+ * @property {HelperTreeNode[]} tree
+ */
+
+/**
+ * @typedef {HelperItemMetadata & { id: string, _level: number, fullLabel: string, parentId: string|null, hasChildren: boolean }} FlatItem
+ */
+
+/**
+ * @typedef {HelperItemMetadata & { id: string, _level: number, fullLabel: string, parentId: string|null, hasChildren: boolean, children: FlatItem[] }} FlatGroup
+ */
+
+/**
+ * @typedef {HelperItemMetadata & { id: string, _level: number, fullLabel: string, parentId: string|null, hasChildren: boolean, children: TreeItemNode[] }} TreeItemNode
+ */
+
+/**
  * Flattens a tree structure into an array of items with metadata.
  * Includes level, parent information, and full labels for each item.
  *
- * @param {Object} data - Tree data object containing items and tree
- * @param {Object} data.items - Map of item IDs to item data
- * @param {Array} data.tree - Tree structure with nodes containing id and children
- * @returns {Array} Flat array of items with metadata
+ * @param {TreeDataInput} data - Tree data object containing items and tree
+ * @returns {FlatItem[]} Flat array of items with metadata
  *
  * @example
  * const flatItems = toFlatItems(treeData);
@@ -55,10 +81,8 @@ export const toFlatItems = (data) => {
  * Groups tree items by their parent folders.
  * Creates flat groups where folders contain their non-folder children.
  *
- * @param {Object} data - Tree data object containing items and tree
- * @param {Object} data.items - Map of item IDs to item data
- * @param {Array} data.tree - Tree structure with nodes containing id and children
- * @returns {Array} Array of folder groups with their children
+ * @param {TreeDataInput} data - Tree data object containing items and tree
+ * @returns {FlatGroup[]} Array of folder groups with their children
  *
  * @example
  * const groups = toFlatGroups(treeData);
@@ -125,10 +149,8 @@ export const toFlatGroups = (data) => {
  * Converts the tree structure to a hierarchical format where each node contains
  * its full item data and children are nested with their data
  *
- * @param {Object} data - Object containing items and tree
- * @param {Object} data.items - Map of item IDs to item data
- * @param {Array} data.tree - Tree structure with nodes containing id and children
- * @returns {Array} Hierarchical tree with full item data at each node
+ * @param {TreeDataInput} data - Object containing items and tree
+ * @returns {TreeItemNode[]} Hierarchical tree with full item data at each node
  *
  * @example
  * // Input: { items: { 'f1': { name: 'Folder' }, 'f2': { name: 'File' } }, tree: [{ id: 'f1', children: [{ id: 'f2', children: [] }] }] }
