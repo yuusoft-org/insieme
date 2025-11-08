@@ -1,10 +1,87 @@
 /**
+ * @typedef {Record<string, unknown>} JsonObject
+ */
+
+/**
+ * @typedef {Object} TreeNode
+ * @property {string} id
+ * @property {TreeNode[]} [children]
+ */
+
+/**
+ * @typedef {Object} TreeInsertRelativePosition
+ * @property {string} [after]
+ * @property {string} [before]
+ */
+
+/**
+ * @typedef {"first"|"last"|TreeInsertRelativePosition} TreeInsertPosition
+ */
+
+/**
+ * @typedef {JsonObject} TreeItemMetadata
+ */
+
+/**
+ * @typedef {TreeItemMetadata & { id: string }} TreeItemInput
+ */
+
+/**
+ * @typedef {Object} TreeData
+ * @property {Record<string, TreeItemMetadata>} items
+ * @property {TreeNode[]} tree
+ */
+
+/**
+ * @typedef {Object} SetPayload
+ * @property {string} target
+ * @property {unknown} value
+ * @property {{ replace?: boolean }} [options]
+ */
+
+/**
+ * @typedef {Object} UnsetPayload
+ * @property {string} target
+ */
+
+/**
+ * @typedef {Object} TreePushPayload
+ * @property {string} target
+ * @property {TreeItemInput} value
+ * @property {{ parent?: string, position?: TreeInsertPosition }} [options]
+ */
+
+/**
+ * @typedef {Object} TreeDeletePayload
+ * @property {string} target
+ * @property {{ id: string }} options
+ */
+
+/**
+ * @typedef {Object} TreeUpdatePayload
+ * @property {string} target
+ * @property {TreeItemMetadata} value
+ * @property {{ id: string, replace?: boolean }} options
+ */
+
+/**
+ * @typedef {Object} TreeMovePayload
+ * @property {string} target
+ * @property {{ id: string, parent?: string, position?: TreeInsertPosition }} options
+ */
+
+/**
+ * @typedef {Object} InitPayload
+ * @property {JsonObject} state
+ */
+
+/**
  * Gets a value at a specific path from the state object.
  * Returns undefined if the path doesn't exist.
  *
- * @param {Object} state - The current state object
+ * @param {JsonObject} state - The current state object
  * @param {string} path - Dot-separated path to the target location (e.g., 'user.profile.name')
- * @returns {*} The value at the specified path, or undefined if not found
+ * @returns {unknown} The value at the specified path, or undefined if not found
  *
  * @example
  * get(state, 'user.profile.name'); // Returns 'Alice' or undefined
@@ -26,6 +103,11 @@ const get = (state, path) => {
  * @example
  * const result = findNodeInTree(tree, 'folder1');
  * // Returns: { node: { id: 'folder1', children: [] }, parent: null, parentArray: tree }
+ */
+/**
+ * @param {TreeNode[]} tree
+ * @param {string} nodeId
+ * @returns {{ node: TreeNode, parent: TreeNode|null, parentArray: TreeNode[] } | null}
  */
 const findNodeInTree = (tree, nodeId) => {
   if (!tree || !Array.isArray(tree)) return null;
@@ -55,6 +137,11 @@ const findNodeInTree = (tree, nodeId) => {
  * @example
  * const removed = removeNodeFromTree(tree, 'folder1');
  * // Returns: true if 'folder1' was found and removed
+ */
+/**
+ * @param {TreeNode[]} tree
+ * @param {string} nodeId
+ * @returns {boolean}
  */
 const removeNodeFromTree = (tree, nodeId) => {
   if (!tree || !Array.isArray(tree)) return false;
@@ -86,6 +173,11 @@ const removeNodeFromTree = (tree, nodeId) => {
  * @example
  * const descendants = collectDescendantIds(tree, 'folder1');
  * // Returns: ['file1', 'subfolder1', 'file2']
+ */
+/**
+ * @param {TreeNode[]} tree
+ * @param {string} nodeId
+ * @returns {string[]}
  */
 const collectDescendantIds = (tree, nodeId) => {
   const descendants = [];
@@ -160,6 +252,11 @@ const collectDescendantIds = (tree, nodeId) => {
  * // Before: { user: { profile: { name: 'John', age: 25 } } }
  * // After:  { user: { profile: { name: 'Bob', age: 30 } } }
  */
+/**
+ * @param {JsonObject} state
+ * @param {SetPayload} payload
+ * @returns {JsonObject}
+ */
 export const set = (state, payload) => {
   const { target, value, options = {} } = payload;
   const newState = structuredClone(state);
@@ -228,6 +325,11 @@ export const set = (state, payload) => {
  * // Before: { user: { profile: { name: 'John', age: 25 } }, settings: { theme: 'dark' } }
  * // After:  { user: { }, settings: { theme: 'dark' } }
  */
+/**
+ * @param {JsonObject} state
+ * @param {UnsetPayload} payload
+ * @returns {JsonObject}
+ */
 export const unset = (state, payload) => {
   const { target } = payload;
   const newState = structuredClone(state);
@@ -282,6 +384,11 @@ export const unset = (state, payload) => {
  *   value: { id: 'file1', name: 'File.txt', type: 'file' },
  *   options: { parent: 'folder1', position: { after: 'existingFile' } }
  * });
+ */
+/**
+ * @param {JsonObject} state
+ * @param {TreePushPayload} payload
+ * @returns {JsonObject}
  */
 export const treePush = (state, payload) => {
   const { target, value, options = {} } = payload;
@@ -367,6 +474,11 @@ export const treePush = (state, payload) => {
  * treeDelete(state, { target: 'fileExplorer', options: { id: 'folder1' } });
  * // This will delete 'folder1' and all its children from both tree and items
  */
+/**
+ * @param {JsonObject} state
+ * @param {TreeDeletePayload} payload
+ * @returns {JsonObject}
+ */
 export const treeDelete = (state, payload) => {
   const { target, options = {} } = payload;
   const { id } = options;
@@ -424,6 +536,11 @@ export const treeDelete = (state, payload) => {
  *   value: { name: 'New Folder', type: 'folder', created: '2024-01-01' },
  *   options: { id: 'folder1', replace: true }
  * });
+ */
+/**
+ * @param {JsonObject} state
+ * @param {TreeUpdatePayload} payload
+ * @returns {JsonObject}
  */
 export const treeUpdate = (state, payload) => {
   const { target, value, options = {} } = payload;
@@ -506,11 +623,21 @@ export const treeUpdate = (state, payload) => {
  *   }
  * });
  */
+/**
+ * @param {JsonObject} _state
+ * @param {InitPayload} payload
+ * @returns {JsonObject}
+ */
 export const init = (_state, payload) => {
   const { state: newState } = payload;
   return structuredClone(newState);
 };
 
+/**
+ * @param {JsonObject} state
+ * @param {TreeMovePayload} payload
+ * @returns {JsonObject}
+ */
 export const treeMove = (state, payload) => {
   const { target, options = {} } = payload;
   const { id, parent = "_root", position = "first" } = options;

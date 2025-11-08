@@ -9,25 +9,64 @@ import {
 } from "./actions.js";
 
 /**
+ * @typedef {import("./actions.js").SetPayload} SetPayload
+ * @typedef {import("./actions.js").UnsetPayload} UnsetPayload
+ * @typedef {import("./actions.js").TreePushPayload} TreePushPayload
+ * @typedef {import("./actions.js").TreeDeletePayload} TreeDeletePayload
+ * @typedef {import("./actions.js").TreeUpdatePayload} TreeUpdatePayload
+ * @typedef {import("./actions.js").TreeMovePayload} TreeMovePayload
+ * @typedef {import("./actions.js").InitPayload} InitPayload
+ */
+
+/**
+ * @typedef {SetPayload | UnsetPayload | TreePushPayload | TreeDeletePayload | TreeUpdatePayload | TreeMovePayload | InitPayload} RepositoryEventPayload
+ */
+
+/**
+ * @typedef {"set"|"unset"|"treePush"|"treeDelete"|"treeUpdate"|"treeMove"|"init"} RepositoryEventType
+ */
+
+/**
+ * @typedef {Object} RepositoryEvent
+ * @property {RepositoryEventType} type
+ * @property {RepositoryEventPayload} payload
+ */
+
+/**
+ * @typedef {Record<string, unknown>} RepositoryState
+ */
+
+/**
+ * @typedef {Object} RepositoryStore
+ * @property {() => Promise<RepositoryEvent[]|undefined>} getEvents
+ * @property {(event: RepositoryEvent) => Promise<void>} appendEvent
+ */
+
+/**
  * Creates an internal repository instance with event sourcing and checkpointing.
  * Manages state through an append-only log with periodic checkpoints for performance.
  *
- * @param {Object} options - Repository options
- * @param {Object} options.originStore - Storage adapter for persisting events
- * @returns {Object} Repository instance with state management methods
+ * @param {{ originStore: RepositoryStore }} options - Repository options
+ * @returns {{ init: (options?: { initialState?: RepositoryState }) => Promise<void>, addEvent: (event: RepositoryEvent) => Promise<void>, getState: (untilEventIndex?: number) => RepositoryState, getEvents: () => RepositoryEvent[] }} Repository API
  *
  * @private This is an internal function used by factory functions
  */
 export const createRepository = ({ originStore }) => {
+  /** @type {RepositoryStore} */
   const store = originStore;
   const CHECKPOINT_INTERVAL = 50;
 
+  /** @type {RepositoryEvent[]} */
   let cachedEvents = [];
+  /** @type {Map<number, RepositoryState>} */
   const checkpoints = new Map();
+  /** @type {number[]} */
   const checkpointIndexes = [];
 
   let latestComputedIndex = 0;
+  /** @type {RepositoryState} */
   let initialState = {};
+  /** @type {RepositoryState} */
   let latestState = structuredClone(initialState);
 
   /**
@@ -36,6 +75,11 @@ export const createRepository = ({ originStore }) => {
    *
    * @param {number} index - The action index to checkpoint
    * @param {Object} state - The state to checkpoint
+   */
+  /**
+   * @param {number} index
+   * @param {RepositoryState} state
+   * @returns {void}
    */
   const storeCheckpoint = (index, state) => {
     if (!checkpoints.has(index)) {
@@ -48,6 +92,7 @@ export const createRepository = ({ originStore }) => {
    * Resets all checkpoints and recomputed state.
    * Used during initialization to start from a clean state.
    */
+  /** @returns {void} */
   const resetCheckpoints = () => {
     checkpoints.clear();
     checkpointIndexes.length = 0;
@@ -65,6 +110,11 @@ export const createRepository = ({ originStore }) => {
    * @param {string} action.actionType - Type of action (set, unset, treePush, etc.)
    * @param {Object} action.payload - Action payload containing all action-specific data
    * @returns {Object} New state after applying the action
+   */
+  /**
+   * @param {RepositoryState} state
+   * @param {RepositoryEvent} event
+   * @returns {RepositoryState}
    */
   const applyEventToState = (state, event) => {
     const { type, payload } = event;
@@ -90,6 +140,10 @@ export const createRepository = ({ originStore }) => {
    * Initializes the repository by loading all events from storage.
    * Replays events to reconstruct current state and creates checkpoints.
    *
+   * @returns {Promise<void>}
+   */
+  /**
+   * @param {{ initialState?: RepositoryState }} [options]
    * @returns {Promise<void>}
    */
   const init = async ({ initialState: providedInitialState } = {}) => {
@@ -128,6 +182,10 @@ export const createRepository = ({ originStore }) => {
    * @param {Object} action - The action to add to the event log
    * @returns {Promise<void>}
    */
+  /**
+   * @param {RepositoryEvent} event
+   * @returns {Promise<void>}
+   */
   const addEvent = async (event) => {
     // Transform new event format to internal format
     const internalEvent = {
@@ -153,6 +211,10 @@ export const createRepository = ({ originStore }) => {
    * @param {number} targetIndex - The target action index
    * @returns {number} The checkpoint index to start from
    */
+  /**
+   * @param {number} targetIndex
+   * @returns {number}
+   */
   const findCheckpointIndex = (targetIndex) => {
     for (let i = checkpointIndexes.length - 1; i >= 0; i--) {
       if (checkpointIndexes[i] <= targetIndex) {
@@ -172,6 +234,10 @@ export const createRepository = ({ originStore }) => {
    * @example
    * const currentState = getState();
    * const historicalState = getState(10); // State after first 10 actions
+   */
+  /**
+   * @param {number} [untilEventIndex]
+   * @returns {RepositoryState}
    */
   const getState = (untilEventIndex) => {
     const targetIndex =
@@ -199,6 +265,7 @@ export const createRepository = ({ originStore }) => {
    *
    * @returns {Array<Object>} Array of all actions in chronological order
    */
+  /** @returns {RepositoryEvent[]} */
   const getEvents = () => {
     return cachedEvents;
   };
