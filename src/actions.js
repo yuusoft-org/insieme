@@ -72,7 +72,7 @@
 
 /**
  * @typedef {Object} InitPayload
- * @property {JsonObject} state
+ * @property {JsonObject} value
  */
 
 /**
@@ -612,12 +612,12 @@ export const treeUpdate = (state, payload) => {
  *
  * @param {Object} state - The current state object
  * @param {Object} payload - Action payload
- * @param {Object} payload.state - The new state to set (will replace entire current state)
+ * @param {Object} payload.value - The new state to set (will replace entire current state)
  * @returns {Object} New state object with the entire state replaced
  *
  * @example
  * init(state, {
- *   state: {
+ *   value: {
  *     explorer: { items: {}, tree: [] },
  *     settings: { theme: 'dark' }
  *   }
@@ -629,8 +629,8 @@ export const treeUpdate = (state, payload) => {
  * @returns {JsonObject}
  */
 export const init = (_state, payload) => {
-  const { state: newState } = payload;
-  return structuredClone(newState);
+  const { value } = payload;
+  return structuredClone(value);
 };
 
 /**
