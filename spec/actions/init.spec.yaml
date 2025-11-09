@@ -14,7 +14,7 @@ in:
     settings:
       theme: light
       language: en
-  - state:
+  - value:
       explorer:
         items:
           folder1: { id: folder1, name: "New Folder", type: folder }
@@ -44,7 +44,7 @@ out:
 case: "replace empty state with complex state"
 in:
   - {}
-  - state:
+  - value:
       app:
         name: "My App"
         version: "1.0.0"
@@ -84,7 +84,7 @@ in:
     cache:
       type: "redis"
       ttl: 3600
-  - state:
+  - value:
       status: "initialized"
       timestamp: 1234567890
 out:
@@ -99,5 +99,5 @@ in:
         email: john@example.com
     settings:
       theme: light
-  - state: {}
+  - value: {}
 out: {}

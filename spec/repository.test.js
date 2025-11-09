@@ -10,7 +10,7 @@ import { createRepository } from './src/repository.js';
 const createMockStore = () => {
   let events = [];
   return {
-    getEvents: vi.fn().mockResolvedValue(events),
+    getEvents: vi.fn().mockImplementation(() => Promise.resolve([...events])), // Return a fresh copy each time
     appendEvent: vi.fn().mockImplementation((event) => {
       events.push(event);
       return Promise.resolve();
@@ -49,6 +49,38 @@ describe('createRepository', () => {
       expect(state).toEqual({});
     });
 
+    it('should initialize with provided initial state and getState should return correct value', async () => {
+      const initialState = {
+        explorer: {
+          items: {
+            folder1: { id: 'folder1', name: 'Documents', type: 'folder' },
+            file1: { id: 'file1', name: 'readme.txt', type: 'file' }
+          },
+          tree: [
+            { id: 'folder1', children: [] },
+            { id: 'file1', children: [] }
+          ]
+        },
+        settings: {
+          theme: 'dark',
+          language: 'en'
+        }
+      };
+
+      await repository.init({ initialState });
+
+      const state = repository.getState();
+      expect(state).toEqual(initialState);
+
+      // Verify that an init event was created and stored
+      const events = repository.getEvents();
+      expect(events).toHaveLength(1);
+      expect(events[0]).toEqual({
+        type: 'init',
+        payload: { value: initialState }
+      });
+    });
+
     it('should replay existing events during initialization', async () => {
       const events = [
         { type: 'set', payload: { target: 'counter', value: 1 } },
@@ -61,6 +93,70 @@ describe('createRepository', () => {
 
       const state = repository.getState();
       expect(state).toEqual({ counter: 2, name: 'test' });
+    });
+
+    it('should not create init event when events already exist, even with initial state provided', async () => {
+      const existingEvents = [
+        { type: 'set', payload: { target: 'existing', value: 'data' } }
+      ];
+      mockStore.getEvents.mockResolvedValue(existingEvents);
+
+      const initialState = {
+        new: { state: 'should not be used' }
+      };
+
+      await repository.init({ initialState });
+
+      const state = repository.getState();
+      // Should replay existing events, not use provided initial state
+      expect(state).toEqual({ existing: 'data' });
+
+      // Should not have created a new init event
+      const events = repository.getEvents();
+      expect(events).toHaveLength(1);
+      expect(events[0]).toEqual(existingEvents[0]);
+    });
+
+    it('should throw error when trying to add init event through addEvent (even when no events exist)', async () => {
+      await repository.init();
+
+      // Try to add an init event through addEvent - should throw
+      await expect(repository.addEvent({
+        type: 'init',
+        payload: { value: { new: 'state' } }
+      })).rejects.toThrow('Init events can only be created through repository.init()');
+    });
+
+    it('should throw error when trying to add init event through addEvent after other events exist', async () => {
+      await repository.init();
+
+      // Add a regular event first
+      await repository.addEvent({
+        type: 'set',
+        payload: { target: 'counter', value: 1 }
+      });
+
+      // Try to add an init event through addEvent - should throw
+      await expect(repository.addEvent({
+        type: 'init',
+        payload: { value: { new: 'state' } }
+      })).rejects.toThrow('Init events can only be created through repository.init()');
+    });
+
+    it('should throw error when trying to add init event through addEvent to repository with existing events', async () => {
+      // Mock repository with existing events
+      const existingEvents = [
+        { type: 'set', payload: { target: 'existing', value: 'data' } }
+      ];
+      mockStore.getEvents.mockResolvedValue(existingEvents);
+
+      await repository.init();
+
+      // Try to add an init event through addEvent - should throw
+      await expect(repository.addEvent({
+        type: 'init',
+        payload: { value: { new: 'state' } }
+      })).rejects.toThrow('Init events can only be created through repository.init()');
     });
 
     it('should load events from store during initialization', async () => {
@@ -191,9 +287,8 @@ describe('createRepository', () => {
 
       const state = repository.getState();
       expect(state.fileExplorer.items).toEqual({ folder1: { name: 'My Folder', type: 'folder' } });
-      expect(state.fileExplorer.tree).toHaveLength(2);
+      expect(state.fileExplorer.tree).toHaveLength(1);
       expect(state.fileExplorer.tree[0].id).toBe('folder1');
-      expect(state.fileExplorer.tree[1].id).toBe('folder1');
       expect(state.fileExplorer.tree[0].children).toEqual([]);
     });
 
@@ -401,7 +496,7 @@ describe('createRepository', () => {
 
       // Get state after checkpoint but before next checkpoint
       const state = repository.getState(53);
-      expect(state).toEqual({ counter: 26 });
+      expect(state).toEqual({ counter: 52 });
     });
 
     it('should maintain performance with larger event logs', async () => {

@@ -166,12 +166,20 @@ export const createRepository = ({ originStore }) => {
 
     // If there are no events and initial state is provided, create an init event
     if (cachedEvents.length === 0 && providedInitialState) {
-      await addEvent({
+      const initEvent = {
         type: "init",
         payload: {
-          state: providedInitialState,
+          value: providedInitialState,
         },
-      });
+      };
+
+      // Directly handle init event creation without going through addEvent
+      cachedEvents.push(initEvent);
+      latestState = applyEventToState(latestState, initEvent);
+      latestComputedIndex += 1;
+
+      storeCheckpoint(latestComputedIndex, latestState);
+      await store.appendEvent(initEvent);
     }
   };
 
@@ -187,6 +195,13 @@ export const createRepository = ({ originStore }) => {
    * @returns {Promise<void>}
    */
   const addEvent = async (event) => {
+    // Validate that init events are not allowed through addEvent
+    if (event.type === "init") {
+      throw new Error(
+        "Init events can only be created through repository.init()",
+      );
+    }
+
     // Transform new event format to internal format
     const internalEvent = {
       type: event.type,
