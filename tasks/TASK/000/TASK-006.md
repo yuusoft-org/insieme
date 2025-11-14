@@ -18,41 +18,24 @@ to solve memory limit for a big state:
 
 ## Implementation Plan
 
-### 1. Modify RepositoryEvent interface (src/repository.js)
+### 1. Modify RepositoryStore interface (src/repository.js)
 
-Add partition field to RepositoryEvent type definition:
-
-```javascript
-/**
- * @typedef {Object} RepositoryEvent
- * @property {RepositoryEventType} type
- * @property {RepositoryEventPayload} payload
- * @property {string} [partitionId] - Optional partition identifier
- */
-```
-
-### 2. Modify RepositoryStore interface (src/repository.js)
-
-Add partition support methods to RepositoryStore:
+Add partition parameter to existing getEvents function:
 
 ```javascript
 /**
  * @typedef {Object} RepositoryStore
- * @property {() => Promise<RepositoryEvent[]|undefined>} getEvents
+ * @property {(partitionId?: string) => Promise<RepositoryEvent[]|undefined>} getEvents
  * @property {(event: RepositoryEvent) => Promise<void>} appendEvent
- * @property {(partitionId: string) => Promise<RepositoryEvent[]>} getEventsByPartition
- * @property {(partitionId: string, state: RepositoryState) => Promise<void>} savePartitionState
  */
 ```
 
-### 3. Modify addEvent function (src/repository.js)
+### 2. Modify addEvent function (src/repository.js)
 
 Add partition support to the existing addEvent function:
 
 ```javascript
-const addEvent = async (event, options = {}) => {
-  const { partitionId } = options;
-
+const addEvent = async (event, partitionId) => {
   // Validate init events are not allowed through addEvent
   if (event.type === "init") {
     throw new Error(
@@ -63,8 +46,10 @@ const addEvent = async (event, options = {}) => {
   // Transform new event format to internal format
   const internalEvent = {
     type: event.type,
-    payload: event.payload,
-    ...(partitionId && { partitionId })
+    payload: {
+      ...event.payload,
+      ...(partitionId && { partitionId })
+    }
   };
 
   cachedEvents.push(internalEvent);
@@ -75,49 +60,61 @@ const addEvent = async (event, options = {}) => {
     storeCheckpoint(latestComputedIndex, latestState);
   }
 
-  // Generate materialized view for partition if partitionId provided
-  if (partitionId) {
-    await generateMaterializedView(partitionId);
-  }
-
   await store.appendEvent(internalEvent);
 };
 ```
 
-### 4. Add generateMaterializedView function (src/repository.js)
+### 3. Modify getEvents function (src/repository.js)
 
-Implement materialized view generation:
+Add partition support to existing getEvents function:
 
 ```javascript
-const generateMaterializedView = async (partitionId) => {
-  // Fetch all events in the partition
-  const partitionEvents = await store.getEventsByPartition(partitionId);
-
-  // Compute final state from partition events
-  let finalState = {};
-  for (const event of partitionEvents) {
-    finalState = applyEventToState(finalState, event);
+const getEvents = (partitionId) => {
+  if (partitionId) {
+    return cachedEvents.filter(event => event.payload.partitionId === partitionId);
   }
-
-  // Save final state into the materialized view
-  await store.savePartitionState(partitionId, finalState);
+  return cachedEvents;
 };
 ```
 
-### 5. Add getPartitionState function (src/repository.js)
+### 4. Modify init function (src/repository.js)
 
-Add function to get partition materialized view state:
+Update init to support partition-aware event loading:
 
 ```javascript
-const getPartitionState = async (partitionId) => {
-  const partitionEvents = await store.getEventsByPartition(partitionId);
+const init = async ({ initialState: providedInitialState } = {}) => {
+  resetCheckpoints();
+  cachedEvents = (await store.getEvents()) || [];
 
-  let finalState = {};
-  for (const event of partitionEvents) {
-    finalState = applyEventToState(finalState, event);
+  cachedEvents.forEach((event, index) => {
+    latestState = applyEventToState(latestState, event);
+    latestComputedIndex = index + 1;
+
+    if (latestComputedIndex % CHECKPOINT_INTERVAL === 0) {
+      storeCheckpoint(latestComputedIndex, latestState);
+    }
+  });
+
+  if (latestComputedIndex !== 0 && !checkpoints.has(latestComputedIndex)) {
+    storeCheckpoint(latestComputedIndex, latestState);
   }
 
-  return finalState;
+  // If there are no events and initial state is provided, create an init event
+  if (cachedEvents.length === 0 && providedInitialState) {
+    const initEvent = {
+      type: "init",
+      payload: {
+        value: providedInitialState,
+      },
+    };
+
+    cachedEvents.push(initEvent);
+    latestState = applyEventToState(latestState, initEvent);
+    latestComputedIndex += 1;
+
+    storeCheckpoint(latestComputedIndex, latestState);
+    await store.appendEvent(initEvent);
+  }
 };
 
 return {
@@ -125,6 +122,30 @@ return {
   addEvent,
   getState,
   getEvents,
-  getPartitionState, // New function
 };
+```
+
+## Usage Example
+
+```javascript
+// Add event to specific partition
+await repository.addEvent(event, 'user_123');
+
+// Get all events
+const allEvents = repository.getEvents();
+
+// Get events from specific partition
+const userEvents = repository.getEvents('user_123');
+
+// Compute partition state (application layer responsibility)
+const computePartitionState = (partitionId) => {
+  const partitionEvents = repository.getEvents(partitionId);
+  let state = {};
+  for (const event of partitionEvents) {
+    state = applyEventToState(state, event);
+  }
+  return state;
+};
+
+const userState = computePartitionState('user_123');
 ```
