@@ -20,8 +20,13 @@ It provides a deterministic, event-based core for syncing application state acro
 import { createRepository } from "insieme";
 
 const store = {
-  async getEvents() { return []; },
-  async appendEvent(event) { console.log("saved", event); },
+  async getEvents(payload) {  
+    console.log(payload);  // should be {} or { partition: ... }
+    return []; 
+  },
+  async appendEvent(event) { 
+    console.log("saved", event);  // should be { type: ..., payload: {...} } or { type: ..., partition: ..., payload: {...} }
+  },
 };
 
 const repository = createRepository({
@@ -48,6 +53,30 @@ await repository.addEvent({
 
 // read the current state
 console.log(repository.getState());
+
+const repositoryWithPartition = createRepository({
+  originStore: store,
+  usingCachedEvents: false  // this default true, should be false when need partition
+});
+
+await repositoryWithPartition.init({
+  initialState
+});
+
+// apply an event with partition
+await repository.addEvent({
+  type: "treePush",
+  partition: "session-1",
+  payload: {
+    target: "explorer",
+    value: { id: "1", name: "New Folder", type: "folder" },
+    options: { parent: "_root" }
+  }
+});
+
+// read the current state with partition
+const stateWithPartition = await repository.getState({ partition: "session-1" })
+console.log(stateWithPartition);
 ```
 
 ## 🔄 How Insieme Differs from CRDTs
@@ -497,4 +526,3 @@ await repository.addEvent({
   }
 }
 ```
-
