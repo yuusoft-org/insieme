@@ -287,7 +287,7 @@ export const createRepository = ({ originStore }) => {
 
   const getEventsAsync = async (payload) => {
     return await store.getEvents(payload);
-  }
+  };
 
   return {
     init,
