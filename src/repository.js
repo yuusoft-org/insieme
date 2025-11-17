@@ -39,7 +39,7 @@ import {
 
 /**
  * @typedef {Object} RepositoryStore
- * @property {(payload?: object) => Promise<RepositoryEvent[]|undefined>} getEvents
+ * @property {(payload?: { partition?: string }) => Promise<RepositoryEvent[]|undefined>} getEvents
  * @property {(event: RepositoryEvent) => Promise<void>} appendEvent
  */
 
@@ -216,7 +216,7 @@ export const createRepository = ({ originStore, usingCachedEvents = true }) => {
     const internalEvent = {
       type: event.type,
       payload: event.payload,
-      ...(event.partition && { partition: event.partition }),
+      partition: event.partition
     };
 
     if (usingCachedEvents) {
@@ -257,24 +257,24 @@ export const createRepository = ({ originStore, usingCachedEvents = true }) => {
    * Uses checkpoints for efficient state reconstruction.
    * Only available when usingCachedEvents=true.
    *
-   * @param {number} [untilEventIndex] - Optional index to get state up to (exclusive)
-   * @returns {RepositoryState} The state at the specified point in time
+   * @param {{partition?: string, untilEventIndex?: number}} [options] - State options
+   * @param {number} [options.untilEventIndex] - Get state up to specific action index (exclusive)
    *
    * @example
    * const currentState = getState();
    * const historicalState = getState(10); // State after first 10 actions
-   */
-  /**
-   * @param {number} [untilEventIndex] - Optional index to get state up to (exclusive)
+   *
    * @returns {RepositoryState}
    */
-  const getState = (untilEventIndex) => {
+  const getState = (options = {}) => {
     if (!usingCachedEvents) {
       throw new Error(
         "getState is only available when usingCachedEvents=true. " +
           "Use getStateAsync() instead.",
       );
     }
+
+    const { untilEventIndex } = options;
 
     const targetIndex =
       untilEventIndex !== undefined
@@ -305,7 +305,6 @@ export const createRepository = ({ originStore, usingCachedEvents = true }) => {
   const getEvents = () => {
     return cachedEvents;
   };
-
 
   /**
    * Gets events asynchronously from the origin store.

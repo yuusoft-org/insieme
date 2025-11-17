@@ -371,23 +371,23 @@ describe('createRepository', () => {
     });
 
     it('should return state at specific index', () => {
-      const state = repository.getState(2);
+      const state = repository.getState({ untilEventIndex: 2 });
       expect(state).toEqual({ counter: 2 });
     });
 
     it('should return empty state for index 0', () => {
-      const state = repository.getState(0);
+      const state = repository.getState({ untilEventIndex: 0 });
       expect(state).toEqual({});
     });
 
     it('should clamp index to valid range', () => {
       // Test index beyond range
-      const state = repository.getState(100);
+      const state = repository.getState({ untilEventIndex: 100 });
       expect(state).toEqual({ counter: 3, name: 'test' });
     });
 
     it('should handle negative indices', () => {
-      const state = repository.getState(-1);
+      const state = repository.getState({ untilEventIndex: -1 });
       expect(state).toEqual({});
     });
   });
@@ -455,7 +455,7 @@ describe('createRepository', () => {
       }
 
       // Should have created a checkpoint at index 50
-      const state = repository.getState(50);
+      const state = repository.getState({ untilEventIndex: 50 });
       expect(state).toEqual({ counter: 49 });
     });
 
@@ -471,7 +471,7 @@ describe('createRepository', () => {
       }
 
       // Getting state at checkpoint should be efficient
-      const state = repository.getState(50);
+      const state = repository.getState({ untilEventIndex: 50 });
       expect(state).toEqual({ counter: 49 });
     });
 
@@ -495,7 +495,7 @@ describe('createRepository', () => {
       }
 
       // Get state after checkpoint but before next checkpoint
-      const state = repository.getState(53);
+      const state = repository.getState({ untilEventIndex: 53 });
       expect(state).toEqual({ counter: 52 });
     });
 
@@ -535,8 +535,8 @@ describe('createRepository', () => {
       }
 
       // Query different historical states to verify checkpoint functionality
-      const earlyState = repository.getState(10);
-      const middleState = repository.getState(30);
+      const earlyState = repository.getState({ untilEventIndex: 10 });
+      const middleState = repository.getState({ untilEventIndex: 30 });
       const currentState = repository.getState();
 
       // Verify that historical states are accessible and different
@@ -631,8 +631,8 @@ describe('createRepository', () => {
       }
 
       // Verify state at different checkpoints
-      const stateAt50 = repository.getState(50);
-      const stateAt100 = repository.getState(100);
+      const stateAt50 = repository.getState({ untilEventIndex: 50 });
+      const stateAt100 = repository.getState({ untilEventIndex: 100 });
       const finalState = repository.getState();
 
       expect(stateAt50).toBeDefined();
