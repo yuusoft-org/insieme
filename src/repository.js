@@ -216,7 +216,7 @@ export const createRepository = ({ originStore, usingCachedEvents = true }) => {
     const internalEvent = {
       type: event.type,
       payload: event.payload,
-      ...(event.partition && { partition: event.partition })
+      ...(event.partition && { partition: event.partition }),
     };
 
     if (usingCachedEvents) {
@@ -272,7 +272,7 @@ export const createRepository = ({ originStore, usingCachedEvents = true }) => {
     if (!usingCachedEvents) {
       throw new Error(
         "getState is only available when usingCachedEvents=true. " +
-        "Use getStateAsync() instead."
+          "Use getStateAsync() instead.",
       );
     }
 
@@ -323,7 +323,7 @@ export const createRepository = ({ originStore, usingCachedEvents = true }) => {
   const getStateAsync = async (options = {}) => {
     if (usingCachedEvents) {
       throw new Error(
-        "getStateAsync is only available when usingCachedEvents=false. Use getState() instead."
+        "getStateAsync is only available when usingCachedEvents=false. Use getState() instead.",
       );
     }
 
@@ -339,9 +339,10 @@ export const createRepository = ({ originStore, usingCachedEvents = true }) => {
     }
 
     // Apply untilEventIndex filter if specified
-    const targetIndex = untilEventIndex !== undefined
-      ? Math.max(0, Math.min(untilEventIndex, events.length))
-      : events.length;
+    const targetIndex =
+      untilEventIndex !== undefined
+        ? Math.max(0, Math.min(untilEventIndex, events.length))
+        : events.length;
 
     const limitedEvents = events.slice(0, targetIndex);
 
