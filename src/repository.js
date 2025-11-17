@@ -306,6 +306,21 @@ export const createRepository = ({ originStore, usingCachedEvents = true }) => {
     return cachedEvents;
   };
 
+
+  /**
+   * Gets events asynchronously from the origin store.
+   * Delegates to the store's getEvents method for fetching events with optional filtering.
+   *
+   * @param {object} [payload] - Optional payload for filtering events
+   * @param {string} [payload.partition] - Partition identifier to get events for specific partition
+   * @returns {Promise<RepositoryEvent[]>} Array of events from the store
+   * @example
+   * // Get all events
+   * const allEvents = await getEventsAsync();
+   *
+   * // Get events for specific partition
+   * const partitionEvents = await getEventsAsync({ partition: "user-123" });
+   */
   const getEventsAsync = async (payload) => {
     return await store.getEvents(payload);
   };
