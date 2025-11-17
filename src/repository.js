@@ -30,6 +30,7 @@ import {
  * @typedef {Object} RepositoryEvent
  * @property {RepositoryEventType} type
  * @property {RepositoryEventPayload} payload
+ * @property {string} [partition] - Optional partition identifier
  */
 
 /**
@@ -38,7 +39,7 @@ import {
 
 /**
  * @typedef {Object} RepositoryStore
- * @property {() => Promise<RepositoryEvent[]|undefined>} getEvents
+ * @property {(payload?: { partition?: string }) => Promise<RepositoryEvent[]|undefined>} getEvents
  * @property {(event: RepositoryEvent) => Promise<void>} appendEvent
  */
 
@@ -46,12 +47,14 @@ import {
  * Creates an internal repository instance with event sourcing and checkpointing.
  * Manages state through an append-only log with periodic checkpoints for performance.
  *
- * @param {{ originStore: RepositoryStore }} options - Repository options
- * @returns {{ init: (options?: { initialState?: RepositoryState }) => Promise<void>, addEvent: (event: RepositoryEvent) => Promise<void>, getState: (untilEventIndex?: number) => RepositoryState, getEvents: () => RepositoryEvent[] }} Repository API
+ * @param {{ originStore: RepositoryStore, usingCachedEvents?: boolean }} options - Repository options
+ * @param {RepositoryStore} options.originStore - The store for persisting events
+ * @param {boolean} [options.usingCachedEvents=true] - Whether to use cached events in memory
+ * @returns {{ init: (options?: { initialState?: RepositoryState }) => Promise<void>, addEvent: (event: RepositoryEvent) => Promise<void>, getState: (untilEventIndex?: number) => RepositoryState, getEvents: () => RepositoryEvent[], getEventsAsync: (payload?: object) => Promise<RepositoryEvent[]>, getStateAsync: (options?: {partition?: string, untilEventIndex?: number}) => Promise<RepositoryState> }} Repository API
  *
  * @private This is an internal function used by factory functions
  */
-export const createRepository = ({ originStore }) => {
+export const createRepository = ({ originStore, usingCachedEvents = true }) => {
   /** @type {RepositoryStore} */
   const store = originStore;
   const CHECKPOINT_INTERVAL = 50;
@@ -148,17 +151,24 @@ export const createRepository = ({ originStore }) => {
    */
   const init = async ({ initialState: providedInitialState } = {}) => {
     resetCheckpoints();
-    cachedEvents = (await store.getEvents()) || [];
 
-    cachedEvents.forEach((event, index) => {
-      latestState = applyEventToState(latestState, event);
-      latestComputedIndex = index + 1;
+    if (usingCachedEvents) {
+      cachedEvents = (await store.getEvents()) || [];
 
-      if (latestComputedIndex % CHECKPOINT_INTERVAL === 0) {
-        // Store reference to current latestState as checkpoint
-        storeCheckpoint(latestComputedIndex, latestState);
-      }
-    });
+      // Process cached events to rebuild state
+      cachedEvents.forEach((event, index) => {
+        latestState = applyEventToState(latestState, event);
+        latestComputedIndex = index + 1;
+
+        if (latestComputedIndex % CHECKPOINT_INTERVAL === 0) {
+          // Store reference to current latestState as checkpoint
+          storeCheckpoint(latestComputedIndex, latestState);
+        }
+      });
+    } else {
+      // For partition mode, don't cache events in memory
+      cachedEvents = null;
+    }
 
     if (latestComputedIndex !== 0 && !checkpoints.has(latestComputedIndex)) {
       storeCheckpoint(latestComputedIndex, latestState);
@@ -202,18 +212,21 @@ export const createRepository = ({ originStore }) => {
       );
     }
 
-    // Transform new event format to internal format
+    // Event now includes partition field directly
     const internalEvent = {
       type: event.type,
       payload: event.payload,
+      partition: event.partition
     };
 
-    cachedEvents.push(internalEvent);
-    latestState = applyEventToState(latestState, internalEvent);
-    latestComputedIndex += 1;
+    if (usingCachedEvents) {
+      cachedEvents.push(internalEvent);
+      latestState = applyEventToState(latestState, internalEvent);
+      latestComputedIndex += 1;
 
-    if (latestComputedIndex % CHECKPOINT_INTERVAL === 0) {
-      storeCheckpoint(latestComputedIndex, latestState);
+      if (latestComputedIndex % CHECKPOINT_INTERVAL === 0) {
+        storeCheckpoint(latestComputedIndex, latestState);
+      }
     }
 
     await store.appendEvent(internalEvent);
@@ -242,19 +255,27 @@ export const createRepository = ({ originStore }) => {
   /**
    * Gets the state at a specific point in time, or the current state.
    * Uses checkpoints for efficient state reconstruction.
+   * Only available when usingCachedEvents=true.
    *
-   * @param {number} [untilActionIndex] - Optional index to get state up to (exclusive)
-   * @returns {Object} The state at the specified point in time
+   * @param {{partition?: string, untilEventIndex?: number}} [options] - State options
+   * @param {number} [options.untilEventIndex] - Get state up to specific action index (exclusive)
    *
    * @example
    * const currentState = getState();
    * const historicalState = getState(10); // State after first 10 actions
-   */
-  /**
-   * @param {number} [untilEventIndex]
+   *
    * @returns {RepositoryState}
    */
-  const getState = (untilEventIndex) => {
+  const getState = (options = {}) => {
+    if (!usingCachedEvents) {
+      throw new Error(
+        "getState is only available when usingCachedEvents=true. " +
+          "Use getStateAsync() instead.",
+      );
+    }
+
+    const { untilEventIndex } = options;
+
     const targetIndex =
       untilEventIndex !== undefined
         ? Math.max(0, Math.min(untilEventIndex, cachedEvents.length))
@@ -285,8 +306,67 @@ export const createRepository = ({ originStore }) => {
     return cachedEvents;
   };
 
+  /**
+   * Gets events asynchronously from the origin store.
+   * Delegates to the store's getEvents method for fetching events with optional filtering.
+   *
+   * @param {object} [payload] - Optional payload for filtering events
+   * @param {string} [payload.partition] - Partition identifier to get events for specific partition
+   * @returns {Promise<RepositoryEvent[]>} Array of events from the store
+   * @example
+   * // Get all events
+   * const allEvents = await getEventsAsync();
+   *
+   * // Get events for specific partition
+   * const partitionEvents = await getEventsAsync({ partition: "user-123" });
+   */
   const getEventsAsync = async (payload) => {
     return await store.getEvents(payload);
+  };
+
+  /**
+   * Gets the state asynchronously, designed for non-cached mode.
+   * This is memory-efficient for large datasets as it doesn't require caching all events.
+   *
+   * @param {{partition?: string, untilEventIndex?: number}} [options] - State options
+   * @param {string} [options.partition] - Partition identifier for partition-specific state
+   * @param {number} [options.untilEventIndex] - Get state up to specific action index (exclusive)
+   * @returns {Promise<RepositoryState>} The computed state
+   * @throws {Error} If usingCachedEvents=true - use getState() instead
+   */
+  const getStateAsync = async (options = {}) => {
+    if (usingCachedEvents) {
+      throw new Error(
+        "getStateAsync is only available when usingCachedEvents=false. Use getState() instead.",
+      );
+    }
+
+    const { partition, untilEventIndex } = options;
+
+    let events;
+    if (partition) {
+      // Get partition events
+      events = await getEventsAsync({ partition });
+    } else {
+      // Get all events
+      events = await getEventsAsync();
+    }
+
+    // Apply untilEventIndex filter if specified
+    const targetIndex =
+      untilEventIndex !== undefined
+        ? Math.max(0, Math.min(untilEventIndex, events.length))
+        : events.length;
+
+    const limitedEvents = events.slice(0, targetIndex);
+
+    // Compute state from events
+    let state = {};
+    for (const event of limitedEvents) {
+      state = applyEventToState(state, event);
+    }
+
+    return state;
   };
 
   return {
@@ -295,5 +375,6 @@ export const createRepository = ({ originStore }) => {
     getState,
     getEvents,
     getEventsAsync,
+    getStateAsync,
   };
 };

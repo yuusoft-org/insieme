@@ -75,7 +75,7 @@ await repository.addEvent({
 });
 
 // read the current state with partition
-const stateWithPartition = await repository.getState({ partition: "session-1" })
+const stateWithPartition = await repository.getStateAsync({ partition: "session-1" })
 console.log(stateWithPartition);
 ```
 
