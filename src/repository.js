@@ -332,10 +332,10 @@ export const createRepository = ({ originStore, usingCachedEvents = true }) => {
     let events;
     if (partition) {
       // Get partition events
-      events = await store.getEvents({ partition });
+      events = await getEventsAsync({ partition });
     } else {
       // Get all events
-      events = await store.getEvents();
+      events = await getEventsAsync();
     }
 
     // Apply untilEventIndex filter if specified
