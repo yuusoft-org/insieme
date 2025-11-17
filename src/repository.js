@@ -285,10 +285,15 @@ export const createRepository = ({ originStore }) => {
     return cachedEvents;
   };
 
+  const getEventsAsync = async (payload) => {
+    return await store.getEvents(payload);
+  }
+
   return {
     init,
     addEvent,
     getState,
     getEvents,
+    getEventsAsync,
   };
 };

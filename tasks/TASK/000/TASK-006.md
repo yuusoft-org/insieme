@@ -16,26 +16,81 @@ to solve memory limit for a big state:
       - save final state into the materialized view,
       - all this can be done without getting all the events or having the full state.
 
+## Target Implementation
+
+The README shows the target functionality we need to implement:
+
+### Target API Usage:
+```javascript
+// Target repository creation
+const repositoryWithPartition = createRepository({
+  originStore: store,
+  usingCachedEvents: false  // should be false for partition support
+});
+
+// Target event addition
+await repository.addEvent({
+  type: "treePush",
+  partition: "session-1",  // partition field at event level
+  payload: {
+    target: "explorer",
+    value: { id: "1", name: "New Folder", type: "folder" },
+    options: { parent: "_root" }
+  }
+});
+
+// Target state retrieval
+const stateWithPartition = await repository.getState({ partition: "session-1" })
+```
+
+### Target Store Interface:
+```javascript
+const store = {
+  async getEvents(payload) {
+    // should handle {} for all events or { partition: ... } for partition events
+    console.log(payload);
+    return [];
+  },
+  async appendEvent(event) {
+    // should receive { type: ..., partition: ..., payload: {...} }
+    console.log("saved", event);
+  },
+};
+```
+
 ## Implementation Plan
 
-### 1. Modify RepositoryStore interface (src/repository.js)
+### 1. Modify RepositoryEvent interface (src/repository.js)
 
-Add partition parameter to existing getEvents function:
+Add partition field to RepositoryEvent type definition:
+
+```javascript
+/**
+ * @typedef {Object} RepositoryEvent
+ * @property {RepositoryEventType} type
+ * @property {RepositoryEventPayload} payload
+ * @property {string} [partition] - Optional partition identifier
+ */
+```
+
+### 2. Modify RepositoryStore interface (src/repository.js)
+
+Update RepositoryStore to support partition filtering:
 
 ```javascript
 /**
  * @typedef {Object} RepositoryStore
- * @property {(partitionId?: string) => Promise<RepositoryEvent[]|undefined>} getEvents
+ * @property {(payload?: object) => Promise<RepositoryEvent[]|undefined>} getEvents
  * @property {(event: RepositoryEvent) => Promise<void>} appendEvent
  */
 ```
 
-### 2. Modify addEvent function (src/repository.js)
+### 3. Modify addEvent function (src/repository.js)
 
-Add partition support to the existing addEvent function:
+Update addEvent to handle event-level partition field:
 
 ```javascript
-const addEvent = async (event, partitionId) => {
+const addEvent = async (event) => {
   // Validate init events are not allowed through addEvent
   if (event.type === "init") {
     throw new Error(
@@ -43,13 +98,11 @@ const addEvent = async (event, partitionId) => {
     );
   }
 
-  // Transform new event format to internal format
+  // Event now includes partition field directly
   const internalEvent = {
     type: event.type,
-    payload: {
-      ...event.payload,
-      ...(partitionId && { partitionId })
-    }
+    payload: event.payload,
+    ...(event.partition && { partition: event.partition })
   };
 
   cachedEvents.push(internalEvent);
@@ -64,20 +117,57 @@ const addEvent = async (event, partitionId) => {
 };
 ```
 
-### 3. Modify getEvents function (src/repository.js)
+### 4. Modify getEvents function (src/repository.js)
 
-Add partition support to existing getEvents function:
+Add partition filtering support:
 
 ```javascript
-const getEvents = (partitionId) => {
-  if (partitionId) {
-    return cachedEvents.filter(event => event.payload.partitionId === partitionId);
-  }
+const getEvents = () => {
   return cachedEvents;
 };
 ```
 
-### 4. Modify init function (src/repository.js)
+### 5. Modify getState function (src/repository.js)
+
+Add partition support for state computation:
+
+```javascript
+const getState = (options = {}) => {
+  const { partition } = options;
+
+  const targetIndex = options.untilActionIndex !== undefined
+    ? Math.max(0, Math.min(options.untilActionIndex, cachedEvents.length))
+    : cachedEvents.length;
+
+  if (partition) {
+    // Filter events by partition for memory efficiency
+    const partitionEvents = cachedEvents.filter(event => event.partition === partition);
+
+    // Compute state only from partition events
+    let partitionState = {};
+    for (const event of partitionEvents) {
+      partitionState = applyEventToState(partitionState, event);
+    }
+
+    return partitionState;
+  }
+
+  if (targetIndex === latestComputedIndex) {
+    return structuredClone(latestState);
+  }
+
+  const checkpointIndex = findCheckpointIndex(targetIndex);
+  let state = structuredClone(checkpoints.get(checkpointIndex));
+
+  for (let i = checkpointIndex; i < targetIndex; i++) {
+    state = applyEventToState(state, cachedEvents[i]);
+  }
+
+  return state;
+};
+```
+
+### 6. Modify init function (src/repository.js)
 
 Update init to support partition-aware event loading:
 
@@ -116,36 +206,40 @@ const init = async ({ initialState: providedInitialState } = {}) => {
     await store.appendEvent(initEvent);
   }
 };
-
-return {
-  init,
-  addEvent,
-  getState,
-  getEvents,
-};
 ```
 
-## Usage Example
+### 7. Update createRepository function (src/repository.js)
+
+Add usingCachedEvents parameter to support partition mode:
 
 ```javascript
-// Add event to specific partition
-await repository.addEvent(event, 'user_123');
+export const createRepository = ({ originStore, usingCachedEvents = true }) => {
+  const store = originStore;
+  const CHECKPOINT_INTERVAL = 50;
 
-// Get all events
-const allEvents = repository.getEvents();
+  let cachedEvents = [];
 
-// Get events from specific partition
-const userEvents = repository.getEvents('user_123');
-
-// Compute partition state (application layer responsibility)
-const computePartitionState = (partitionId) => {
-  const partitionEvents = repository.getEvents(partitionId);
-  let state = {};
-  for (const event of partitionEvents) {
-    state = applyEventToState(state, event);
+  // Only use cached events if usingCachedEvents is true
+  // For partition support, this should be false
+  if (usingCachedEvents) {
+    // Load events from store
+    // ... existing cache loading logic
   }
-  return state;
-};
 
-const userState = computePartitionState('user_123');
+  return {
+    init,
+    addEvent,
+    getState,
+    getEvents,
+  };
+};
 ```
+
+## Implementation Order
+
+1. **RepositoryEvent interface** - Add partition field
+2. **addEvent function** - Support partition field in events
+3. **getState function** - Support partition parameter
+4. **RepositoryStore interface** - Support partition filtering
+5. **init function** - Handle partition-aware event loading
+6. **createRepository** - Add usingCachedEvents parameter
