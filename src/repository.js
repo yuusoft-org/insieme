@@ -253,7 +253,7 @@ export const createRepository = ({ originStore, usingCachedEvents = true }) => {
    * @returns {number}
    */
   const findCheckpointIndex = (targetIndex) => {
-    if (!checkpointIndexes) return 0; // Should not be called in non-cached mode
+    if (!checkpointIndexes) return 0;
     for (let i = checkpointIndexes.length - 1; i >= 0; i--) {
       if (checkpointIndexes[i] <= targetIndex) {
         return checkpointIndexes[i];
