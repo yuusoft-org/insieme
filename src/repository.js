@@ -98,7 +98,12 @@ export const createRepository = ({ originStore, usingCachedEvents = true }) => {
    */
   /** @returns {void} */
   const resetCheckpoints = () => {
-    if (checkpoints) return;
+    if (!checkpoints) {
+      latestComputedIndex = 0;
+      latestState = structuredClone(initialState);
+      return;
+    }
+
     checkpoints.clear();
     checkpointIndexes.length = 0;
     latestComputedIndex = 0;
