@@ -62,9 +62,9 @@ export const createRepository = ({ originStore, usingCachedEvents = true }) => {
   /** @type {RepositoryEvent[]} */
   let cachedEvents = [];
   /** @type {Map<number, RepositoryState>} */
-  const checkpoints = new Map();
+  const checkpoints = usingCachedEvents ? new Map() : null;
   /** @type {number[]} */
-  const checkpointIndexes = [];
+  const checkpointIndexes = usingCachedEvents ? [] : null;
 
   let latestComputedIndex = 0;
   /** @type {RepositoryState} */
@@ -85,6 +85,7 @@ export const createRepository = ({ originStore, usingCachedEvents = true }) => {
    * @returns {void}
    */
   const storeCheckpoint = (index, state) => {
+    if (!checkpoints) return;
     if (!checkpoints.has(index)) {
       checkpointIndexes.push(index);
     }
@@ -97,6 +98,7 @@ export const createRepository = ({ originStore, usingCachedEvents = true }) => {
    */
   /** @returns {void} */
   const resetCheckpoints = () => {
+    if (checkpoints) return;
     checkpoints.clear();
     checkpointIndexes.length = 0;
     latestComputedIndex = 0;
@@ -166,16 +168,18 @@ export const createRepository = ({ originStore, usingCachedEvents = true }) => {
         }
       });
     } else {
-      // For partition mode, don't cache events in memory
+      // For non-cached mode, don't load or cache events in memory
       cachedEvents = null;
     }
 
-    if (latestComputedIndex !== 0 && !checkpoints.has(latestComputedIndex)) {
+    if (checkpoints && latestComputedIndex !== 0 && !checkpoints.has(latestComputedIndex)) {
       storeCheckpoint(latestComputedIndex, latestState);
     }
 
     // If there are no events and initial state is provided, create an init event
-    if (cachedEvents.length === 0 && providedInitialState) {
+    const hasEvents = usingCachedEvents ? cachedEvents.length > 0 : false;
+
+    if (!hasEvents && providedInitialState) {
       const initEvent = {
         type: "init",
         payload: {
@@ -183,8 +187,9 @@ export const createRepository = ({ originStore, usingCachedEvents = true }) => {
         },
       };
 
-      // Directly handle init event creation without going through addEvent
-      cachedEvents.push(initEvent);
+      if (usingCachedEvents) {
+        cachedEvents.push(initEvent);
+      }
       latestState = applyEventToState(latestState, initEvent);
       latestComputedIndex += 1;
 
@@ -244,6 +249,7 @@ export const createRepository = ({ originStore, usingCachedEvents = true }) => {
    * @returns {number}
    */
   const findCheckpointIndex = (targetIndex) => {
+    if (!checkpointIndexes) return 0; // Should not be called in non-cached mode
     for (let i = checkpointIndexes.length - 1; i >= 0; i--) {
       if (checkpointIndexes[i] <= targetIndex) {
         return checkpointIndexes[i];
