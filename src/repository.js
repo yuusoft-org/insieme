@@ -172,7 +172,11 @@ export const createRepository = ({ originStore, usingCachedEvents = true }) => {
       cachedEvents = null;
     }
 
-    if (checkpoints && latestComputedIndex !== 0 && !checkpoints.has(latestComputedIndex)) {
+    if (
+      checkpoints &&
+      latestComputedIndex !== 0 &&
+      !checkpoints.has(latestComputedIndex)
+    ) {
       storeCheckpoint(latestComputedIndex, latestState);
     }
 
@@ -221,7 +225,7 @@ export const createRepository = ({ originStore, usingCachedEvents = true }) => {
     const internalEvent = {
       type: event.type,
       payload: event.payload,
-      partition: event.partition
+      partition: event.partition,
     };
 
     if (usingCachedEvents) {
