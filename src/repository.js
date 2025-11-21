@@ -50,7 +50,7 @@ import {
  * @param {{ originStore: RepositoryStore, usingCachedEvents?: boolean }} options - Repository options
  * @param {RepositoryStore} options.originStore - The store for persisting events
  * @param {boolean} [options.usingCachedEvents=true] - Whether to use cached events in memory
- * @returns {{ init: (options?: { initialState?: RepositoryState }) => Promise<void>, addEvent: (event: RepositoryEvent) => Promise<void>, getState: (untilEventIndex?: number) => RepositoryState, getEvents: () => RepositoryEvent[], getEventsAsync: (payload?: object) => Promise<RepositoryEvent[]>, getStateAsync: (options?: {partition?: string, untilEventIndex?: number}) => Promise<RepositoryState> }} Repository API
+ * @returns {{ init: (options?: { initialState?: RepositoryState, partition?: string }) => Promise<void>, addEvent: (event: RepositoryEvent) => Promise<void>, getState: (untilEventIndex?: number) => RepositoryState, getEvents: () => RepositoryEvent[], getEventsAsync: (payload?: object) => Promise<RepositoryEvent[]>, getStateAsync: (options?: {partition?: string, untilEventIndex?: number}) => Promise<RepositoryState> }} Repository API
  *
  * @private This is an internal function used by factory functions
  */
@@ -150,13 +150,12 @@ export const createRepository = ({ originStore, usingCachedEvents = true }) => {
    * Initializes the repository by loading all events from storage.
    * Replays events to reconstruct current state and creates checkpoints.
    *
+   * @param {{ initialState?: RepositoryState, partition?: string }} [options] - Initialization options
+   * @param {RepositoryState} [options.initialState] - Optional initial state to set if no events exist
+   * @param {string} [options.partition] - Optional partition identifier for the repository
    * @returns {Promise<void>}
    */
-  /**
-   * @param {{ initialState?: RepositoryState }} [options]
-   * @returns {Promise<void>}
-   */
-  const init = async ({ initialState: providedInitialState } = {}) => {
+  const init = async ({ initialState: providedInitialState, partition } = {}) => {
     resetCheckpoints();
 
     if (usingCachedEvents) {
@@ -191,6 +190,7 @@ export const createRepository = ({ originStore, usingCachedEvents = true }) => {
     if (!hasEvents && providedInitialState) {
       const initEvent = {
         type: "init",
+        partition,
         payload: {
           value: providedInitialState,
         },
