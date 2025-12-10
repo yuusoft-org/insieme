@@ -155,7 +155,10 @@ export const createRepository = ({ originStore, usingCachedEvents = true }) => {
    * @param {string} [options.partition] - Optional partition identifier for the repository
    * @returns {Promise<void>}
    */
-  const init = async ({ initialState: providedInitialState, partition } = {}) => {
+  const init = async ({
+    initialState: providedInitialState,
+    partition,
+  } = {}) => {
     resetCheckpoints();
 
     if (usingCachedEvents) {
