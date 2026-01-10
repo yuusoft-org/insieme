@@ -131,3 +131,17 @@ export const validateEventPayload = (eventType, payload) => {
     throw new EventValidationError(eventType, validator.errors);
   }
 };
+
+/**
+ * Test helper for validating event payloads
+ * Returns true if valid, throws EventValidationError if invalid
+ *
+ * @param {string} eventType - The type of event (set, unset, treePush, etc.)
+ * @param {unknown} payload - The event payload to validate
+ * @returns {boolean} true if validation passes
+ * @throws {EventValidationError} If the payload does not match the schema
+ */
+export const testValidateEventPayload = (eventType, payload) => {
+  validateEventPayload(eventType, payload);
+  return true;
+};
