@@ -1,6 +1,6 @@
 {
   "name": "insieme",
-  "version": "0.0.6",
+  "version": "0.0.7-rc1",
   "description": "An offline-first collaborative library with authoritative server for real-time data synchronization",
   "keywords": [
     "offline-first",
@@ -17,6 +17,9 @@
   },
   "homepage": "https://github.com/yuusoft-org/insieme#readme",
   "type": "module",
+  "dependencies": {
+    "ajv": "^8.17.1"
+  },
   "main": "./src/index.js",
   "exports": {
     ".": {
