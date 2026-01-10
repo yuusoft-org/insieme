@@ -7,6 +7,7 @@ import {
   treeMove,
   init as initAction,
 } from "./actions.js";
+import { validateEventPayload } from "./validation.js";
 
 /**
  * @typedef {import("./actions.js").SetPayload} SetPayload
@@ -228,6 +229,9 @@ export const createRepository = ({ originStore, usingCachedEvents = true }) => {
         "Init events can only be created through repository.init()",
       );
     }
+
+    // Validate event payload against schema
+    validateEventPayload(event.type, event.payload);
 
     // Event now includes partition field directly
     const internalEvent = {

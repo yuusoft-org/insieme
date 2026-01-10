@@ -10,5 +10,8 @@
 // Repository factories
 export { createRepository } from "./repository.js";
 
+// Validation utilities
+export { EventValidationError } from "./validation.js";
+
 // Helper functions for tree operations
 export { toFlatItems, toFlatGroups, toTreeStructure } from "./helpers.js";
