@@ -40,25 +40,36 @@ import { validateEventPayload } from "./validation.js";
 
 /**
  * @typedef {Object} RepositoryStore
- * @property {(payload?: { partition?: string }) => Promise<RepositoryEvent[]|undefined>} getEvents
+ * @property {(payload?: { partition?: string, since?: number }) => Promise<RepositoryEvent[]|undefined>} getEvents
  * @property {(event: RepositoryEvent) => Promise<void>} appendEvent
+ * @property {() => Promise<Snapshot|null>} [getSnapshot] - Optional snapshot retrieval
+ * @property {(snapshot: Snapshot) => Promise<void>} [setSnapshot] - Optional snapshot persistence
+ */
+
+/**
+ * @typedef {Object} Snapshot
+ * @property {RepositoryState} state - The state at the time of snapshot
+ * @property {number} eventIndex - Number of events included in this snapshot
+ * @property {number} createdAt - Timestamp when snapshot was created
  */
 
 /**
  * Creates an internal repository instance with event sourcing and checkpointing.
  * Manages state through an append-only log with periodic checkpoints for performance.
  *
- * @param {{ originStore: RepositoryStore, usingCachedEvents?: boolean }} options - Repository options
+ * @param {{ originStore: RepositoryStore, usingCachedEvents?: boolean, snapshotInterval?: number }} options - Repository options
  * @param {RepositoryStore} options.originStore - The store for persisting events
  * @param {boolean} [options.usingCachedEvents=true] - Whether to use cached events in memory
- * @returns {{ init: (options?: { initialState?: RepositoryState, partition?: string }) => Promise<void>, addEvent: (event: RepositoryEvent) => Promise<void>, getState: (untilEventIndex?: number) => RepositoryState, getEvents: () => RepositoryEvent[], getEventsAsync: (payload?: object) => Promise<RepositoryEvent[]>, getStateAsync: (options?: {partition?: string, untilEventIndex?: number}) => Promise<RepositoryState> }} Repository API
+ * @param {number} [options.snapshotInterval=1000] - Number of events between automatic snapshots
+ * @returns {{ init: (options?: { initialState?: RepositoryState, partition?: string }) => Promise<void>, addEvent: (event: RepositoryEvent) => Promise<void>, getState: (untilEventIndex?: number) => RepositoryState, getEvents: () => RepositoryEvent[], getEventsAsync: (payload?: object) => Promise<RepositoryEvent[]>, getStateAsync: (options?: {partition?: string, untilEventIndex?: number}) => Promise<RepositoryState>, saveSnapshot: () => Promise<void> }} Repository API
  *
  * @private This is an internal function used by factory functions
  */
-export const createRepository = ({ originStore, usingCachedEvents = true }) => {
+export const createRepository = ({ originStore, usingCachedEvents = true, snapshotInterval = 1000 }) => {
   /** @type {RepositoryStore} */
   const store = originStore;
   const CHECKPOINT_INTERVAL = 50;
+  const SNAPSHOT_INTERVAL = snapshotInterval;
 
   /** @type {RepositoryEvent[]} */
   let cachedEvents = [];
@@ -72,6 +83,9 @@ export const createRepository = ({ originStore, usingCachedEvents = true }) => {
   let initialState = {};
   /** @type {RepositoryState} */
   let latestState = structuredClone(initialState);
+
+  // Track the event index of the last saved snapshot
+  let snapshotEventIndex = 0;
 
   /**
    * Stores a checkpoint at the specified action index.
@@ -161,14 +175,45 @@ export const createRepository = ({ originStore, usingCachedEvents = true }) => {
     partition,
   } = {}) => {
     resetCheckpoints();
+    snapshotEventIndex = 0;
 
     if (usingCachedEvents) {
-      cachedEvents = (await store.getEvents()) || [];
+      // Try to load snapshot first (if store supports it)
+      let snapshot = null;
+      if (store.getSnapshot) {
+        snapshot = await store.getSnapshot();
+      }
 
-      // Process cached events to rebuild state
+      if (snapshot) {
+        // Clear checkpoints from reset and start fresh from snapshot
+        checkpoints.clear();
+        checkpointIndexes.length = 0;
+
+        // Initialize from snapshot
+        latestState = structuredClone(snapshot.state);
+        snapshotEventIndex = snapshot.eventIndex;
+        latestComputedIndex = snapshot.eventIndex;
+        storeCheckpoint(latestComputedIndex, latestState);
+
+        // Load only events since snapshot (if store supports 'since' parameter)
+        const newEvents = (await store.getEvents({ since: snapshot.eventIndex })) || [];
+
+        // If store doesn't support 'since' parameter, fallback to loading all and slicing
+        if (newEvents.length === 0 && snapshot.eventIndex > 0) {
+          const allEvents = (await store.getEvents()) || [];
+          cachedEvents = allEvents.slice(snapshot.eventIndex);
+        } else {
+          cachedEvents = newEvents;
+        }
+      } else {
+        // No snapshot - load all events (existing behavior)
+        cachedEvents = (await store.getEvents()) || [];
+      }
+
+      // Process cached events to rebuild state (either all, or just since snapshot)
       cachedEvents.forEach((event, index) => {
         latestState = applyEventToState(latestState, event);
-        latestComputedIndex = index + 1;
+        latestComputedIndex = snapshotEventIndex + index + 1;
 
         if (latestComputedIndex % CHECKPOINT_INTERVAL === 0) {
           // Store reference to current latestState as checkpoint
@@ -188,10 +233,11 @@ export const createRepository = ({ originStore, usingCachedEvents = true }) => {
       storeCheckpoint(latestComputedIndex, latestState);
     }
 
-    // If there are no events and initial state is provided, create an init event
+    // If there are no events and no snapshot and initial state is provided, create an init event
     const hasEvents = usingCachedEvents ? cachedEvents.length > 0 : false;
+    const hasSnapshot = snapshotEventIndex > 0;
 
-    if (!hasEvents && providedInitialState) {
+    if (!hasEvents && !hasSnapshot && providedInitialState) {
       const initEvent = {
         type: "init",
         partition,
@@ -209,6 +255,9 @@ export const createRepository = ({ originStore, usingCachedEvents = true }) => {
       storeCheckpoint(latestComputedIndex, latestState);
       await store.appendEvent(initEvent);
     }
+
+    // Check if we should save a snapshot after init
+    await maybeSaveSnapshot();
   };
 
   /**
@@ -251,6 +300,44 @@ export const createRepository = ({ originStore, usingCachedEvents = true }) => {
     }
 
     await store.appendEvent(internalEvent);
+
+    // Check if we should save a snapshot
+    await maybeSaveSnapshot();
+  };
+
+  /**
+   * Checks if a snapshot should be saved based on the interval.
+   * Only saves if the store supports snapshots.
+   *
+   * @returns {Promise<void>}
+   */
+  const maybeSaveSnapshot = async () => {
+    if (!store.setSnapshot) return;
+
+    const eventsSinceSnapshot = latestComputedIndex - snapshotEventIndex;
+
+    if (eventsSinceSnapshot >= SNAPSHOT_INTERVAL) {
+      await saveSnapshot();
+    }
+  };
+
+  /**
+   * Saves a snapshot of the current state.
+   * Only saves if the store supports snapshots.
+   *
+   * @returns {Promise<void>}
+   */
+  const saveSnapshot = async () => {
+    if (!store.setSnapshot) return;
+
+    const snapshot = {
+      state: structuredClone(latestState),
+      eventIndex: latestComputedIndex,
+      createdAt: Date.now(),
+    };
+
+    await store.setSnapshot(snapshot);
+    snapshotEventIndex = latestComputedIndex;
   };
 
   /**
@@ -265,13 +352,14 @@ export const createRepository = ({ originStore, usingCachedEvents = true }) => {
    * @returns {number}
    */
   const findCheckpointIndex = (targetIndex) => {
-    if (!checkpointIndexes) return 0;
+    if (!checkpointIndexes || checkpointIndexes.length === 0) return 0;
     for (let i = checkpointIndexes.length - 1; i >= 0; i--) {
       if (checkpointIndexes[i] <= targetIndex) {
         return checkpointIndexes[i];
       }
     }
-    return 0;
+    // No checkpoint at or before targetIndex, return earliest available
+    return checkpointIndexes[0];
   };
 
   /**
@@ -298,10 +386,11 @@ export const createRepository = ({ originStore, usingCachedEvents = true }) => {
 
     const { untilEventIndex } = options;
 
+    // Use latestComputedIndex as the max (accounts for snapshot offset)
     const targetIndex =
       untilEventIndex !== undefined
-        ? Math.max(0, Math.min(untilEventIndex, cachedEvents.length))
-        : cachedEvents.length;
+        ? Math.max(0, Math.min(untilEventIndex, latestComputedIndex))
+        : latestComputedIndex;
 
     if (targetIndex === latestComputedIndex) {
       return structuredClone(latestState);
@@ -310,8 +399,13 @@ export const createRepository = ({ originStore, usingCachedEvents = true }) => {
     const checkpointIndex = findCheckpointIndex(targetIndex);
     let state = structuredClone(checkpoints.get(checkpointIndex));
 
+    // Events in cachedEvents are offset by snapshotEventIndex
+    // Event at absolute index i is at cachedEvents[i - snapshotEventIndex]
     for (let i = checkpointIndex; i < targetIndex; i++) {
-      state = applyEventToState(state, cachedEvents[i]);
+      const eventArrayIndex = i - snapshotEventIndex;
+      if (eventArrayIndex >= 0 && eventArrayIndex < cachedEvents.length) {
+        state = applyEventToState(state, cachedEvents[eventArrayIndex]);
+      }
     }
 
     return state;
@@ -398,5 +492,6 @@ export const createRepository = ({ originStore, usingCachedEvents = true }) => {
     getEvents,
     getEventsAsync,
     getStateAsync,
+    saveSnapshot,
   };
 };
