@@ -65,7 +65,11 @@ import { validateEventPayload } from "./validation.js";
  *
  * @private This is an internal function used by factory functions
  */
-export const createRepository = ({ originStore, usingCachedEvents = true, snapshotInterval = 1000 }) => {
+export const createRepository = ({
+  originStore,
+  usingCachedEvents = true,
+  snapshotInterval = 1000,
+}) => {
   /** @type {RepositoryStore} */
   const store = originStore;
   const CHECKPOINT_INTERVAL = 50;
@@ -196,7 +200,8 @@ export const createRepository = ({ originStore, usingCachedEvents = true, snapsh
         storeCheckpoint(latestComputedIndex, latestState);
 
         // Load only events since snapshot (if store supports 'since' parameter)
-        const newEvents = (await store.getEvents({ since: snapshot.eventIndex })) || [];
+        const newEvents =
+          (await store.getEvents({ since: snapshot.eventIndex })) || [];
 
         // If store doesn't support 'since' parameter, fallback to loading all and slicing
         if (newEvents.length === 0 && snapshot.eventIndex > 0) {
