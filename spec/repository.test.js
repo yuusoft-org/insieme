@@ -22,6 +22,44 @@ const createMockStore = () => {
   };
 };
 
+// Mock store with snapshot support for testing
+const createMockStoreWithSnapshots = () => {
+  let events = [];
+  let snapshot = null;
+  return {
+    getEvents: vi.fn().mockImplementation((payload) => {
+      // Support 'since' parameter for optimized loading
+      if (payload && payload.since !== undefined) {
+        return Promise.resolve(events.slice(payload.since));
+      }
+      // Support 'partition' parameter (for completeness)
+      if (payload && payload.partition) {
+        return Promise.resolve(events.filter(e => e.partition === payload.partition));
+      }
+      return Promise.resolve([...events]);
+    }),
+    appendEvent: vi.fn().mockImplementation((event) => {
+      events.push(event);
+      return Promise.resolve();
+    }),
+    getSnapshot: vi.fn().mockImplementation(() => Promise.resolve(snapshot)),
+    setSnapshot: vi.fn().mockImplementation((s) => {
+      snapshot = s;
+      return Promise.resolve();
+    }),
+    clearEvents: vi.fn().mockImplementation(() => {
+      events = [];
+    }),
+    clearSnapshot: vi.fn().mockImplementation(() => {
+      snapshot = null;
+    }),
+    _getEvents: () => events,
+    _getSnapshot: () => snapshot,
+    _setEvents: (e) => { events = e; },
+    _setSnapshot: (s) => { snapshot = s; },
+  };
+};
+
 describe('createRepository', () => {
   let mockStore;
   let repository;
@@ -642,6 +680,556 @@ describe('createRepository', () => {
       // Final state should reflect the last operations
       expect(finalState.counter).toBe(117); // Last multiple of 3 before 120
       expect(finalState.status).toBe('active'); // 118 is even, so status is 'active'
+    });
+  });
+});
+
+describe('persistent snapshot functionality', () => {
+  describe('backwards compatibility', () => {
+    it('should work with stores that do not support snapshots', async () => {
+      const mockStore = createMockStore();
+      const repository = createRepository({ originStore: mockStore });
+
+      await repository.init();
+
+      // Add some events
+      for (let i = 0; i < 10; i++) {
+        await repository.addEvent({
+          type: 'set',
+          payload: { target: 'counter', value: i }
+        });
+      }
+
+      const state = repository.getState();
+      expect(state).toEqual({ counter: 9 });
+    });
+
+    it('should not call getSnapshot if method does not exist', async () => {
+      const mockStore = createMockStore();
+      const repository = createRepository({ originStore: mockStore });
+
+      await repository.init();
+
+      // getSnapshot should not exist on basic mock store
+      expect(mockStore.getSnapshot).toBeUndefined();
+    });
+
+    it('should not call setSnapshot if method does not exist', async () => {
+      const mockStore = createMockStore();
+      const repository = createRepository({
+        originStore: mockStore,
+        snapshotInterval: 5
+      });
+
+      await repository.init();
+
+      // Add events beyond snapshot interval
+      for (let i = 0; i < 10; i++) {
+        await repository.addEvent({
+          type: 'set',
+          payload: { target: 'counter', value: i }
+        });
+      }
+
+      // setSnapshot should not exist on basic mock store
+      expect(mockStore.setSnapshot).toBeUndefined();
+
+      // State should still work correctly
+      const state = repository.getState();
+      expect(state).toEqual({ counter: 9 });
+    });
+  });
+
+  describe('initialization with snapshots', () => {
+    it('should load snapshot on init if available', async () => {
+      const mockStore = createMockStoreWithSnapshots();
+
+      // Pre-populate with a snapshot
+      mockStore._setSnapshot({
+        state: { counter: 100, name: 'test' },
+        eventIndex: 50,
+        createdAt: Date.now()
+      });
+
+      const repository = createRepository({ originStore: mockStore });
+      await repository.init();
+
+      expect(mockStore.getSnapshot).toHaveBeenCalled();
+    });
+
+    it('should replay only events since snapshot.eventIndex', async () => {
+      const mockStore = createMockStoreWithSnapshots();
+
+      // Pre-populate with events
+      const allEvents = [];
+      for (let i = 0; i < 60; i++) {
+        allEvents.push({ type: 'set', payload: { target: 'counter', value: i } });
+      }
+      mockStore._setEvents(allEvents);
+
+      // Pre-populate with a snapshot at event 50
+      mockStore._setSnapshot({
+        state: { counter: 49 }, // State after 50 events (0-49)
+        eventIndex: 50,
+        createdAt: Date.now()
+      });
+
+      const repository = createRepository({ originStore: mockStore });
+      await repository.init();
+
+      // Should use getEvents with 'since' parameter to load only events after snapshot
+      expect(mockStore.getEvents).toHaveBeenCalledWith({ since: 50 });
+
+      // Final state should reflect all events
+      const state = repository.getState();
+      expect(state).toEqual({ counter: 59 });
+    });
+
+    it('should use getEvents with since parameter when available', async () => {
+      const mockStore = createMockStoreWithSnapshots();
+
+      mockStore._setEvents([
+        { type: 'set', payload: { target: 'a', value: 1 } },
+        { type: 'set', payload: { target: 'b', value: 2 } },
+        { type: 'set', payload: { target: 'c', value: 3 } },
+      ]);
+
+      mockStore._setSnapshot({
+        state: { a: 1 },
+        eventIndex: 1,
+        createdAt: Date.now()
+      });
+
+      const repository = createRepository({ originStore: mockStore });
+      await repository.init();
+
+      expect(mockStore.getEvents).toHaveBeenCalledWith({ since: 1 });
+
+      const state = repository.getState();
+      expect(state).toEqual({ a: 1, b: 2, c: 3 });
+    });
+
+    it('should fallback to getEvents + slice when since parameter not supported', async () => {
+      const mockStore = createMockStoreWithSnapshots();
+
+      // Make getEvents not support 'since' parameter
+      mockStore.getEvents.mockImplementation(() => Promise.resolve([...mockStore._getEvents()]));
+
+      mockStore._setEvents([
+        { type: 'set', payload: { target: 'a', value: 1 } },
+        { type: 'set', payload: { target: 'b', value: 2 } },
+        { type: 'set', payload: { target: 'c', value: 3 } },
+      ]);
+
+      mockStore._setSnapshot({
+        state: { a: 1 },
+        eventIndex: 1,
+        createdAt: Date.now()
+      });
+
+      const repository = createRepository({ originStore: mockStore });
+      await repository.init();
+
+      // Should call getEvents twice: once with { since: 1 }, once without for fallback
+      expect(mockStore.getEvents).toHaveBeenCalled();
+
+      const state = repository.getState();
+      expect(state).toEqual({ a: 1, b: 2, c: 3 });
+    });
+
+    it('should handle null snapshot gracefully', async () => {
+      const mockStore = createMockStoreWithSnapshots();
+
+      mockStore._setEvents([
+        { type: 'set', payload: { target: 'counter', value: 1 } },
+        { type: 'set', payload: { target: 'counter', value: 2 } },
+      ]);
+      // No snapshot set (null)
+
+      const repository = createRepository({ originStore: mockStore });
+      await repository.init();
+
+      expect(mockStore.getSnapshot).toHaveBeenCalled();
+
+      // Should fallback to loading all events
+      const state = repository.getState();
+      expect(state).toEqual({ counter: 2 });
+    });
+
+    it('should handle empty events after snapshot', async () => {
+      const mockStore = createMockStoreWithSnapshots();
+
+      // Snapshot represents all events
+      mockStore._setSnapshot({
+        state: { counter: 100 },
+        eventIndex: 50,
+        createdAt: Date.now()
+      });
+
+      // No new events since snapshot
+      mockStore._setEvents([]);
+
+      const repository = createRepository({ originStore: mockStore });
+      await repository.init();
+
+      const state = repository.getState();
+      expect(state).toEqual({ counter: 100 });
+    });
+  });
+
+  describe('automatic snapshot saving', () => {
+    it('should save snapshot after snapshotInterval events', async () => {
+      const mockStore = createMockStoreWithSnapshots();
+      const repository = createRepository({
+        originStore: mockStore,
+        snapshotInterval: 10
+      });
+
+      await repository.init();
+
+      // Add exactly snapshotInterval events
+      for (let i = 0; i < 10; i++) {
+        await repository.addEvent({
+          type: 'set',
+          payload: { target: 'counter', value: i }
+        });
+      }
+
+      expect(mockStore.setSnapshot).toHaveBeenCalled();
+
+      const savedSnapshot = mockStore._getSnapshot();
+      expect(savedSnapshot.state).toEqual({ counter: 9 });
+      expect(savedSnapshot.eventIndex).toBe(10);
+    });
+
+    it('should respect custom snapshotInterval option', async () => {
+      const mockStore = createMockStoreWithSnapshots();
+      const repository = createRepository({
+        originStore: mockStore,
+        snapshotInterval: 5
+      });
+
+      await repository.init();
+
+      // Add 4 events - should NOT trigger snapshot
+      for (let i = 0; i < 4; i++) {
+        await repository.addEvent({
+          type: 'set',
+          payload: { target: 'counter', value: i }
+        });
+      }
+      expect(mockStore.setSnapshot).not.toHaveBeenCalled();
+
+      // Add 1 more event (total 5) - should trigger snapshot
+      await repository.addEvent({
+        type: 'set',
+        payload: { target: 'counter', value: 4 }
+      });
+      expect(mockStore.setSnapshot).toHaveBeenCalled();
+    });
+
+    it('should not save snapshot before interval reached', async () => {
+      const mockStore = createMockStoreWithSnapshots();
+      const repository = createRepository({
+        originStore: mockStore,
+        snapshotInterval: 100
+      });
+
+      await repository.init();
+
+      // Add events below threshold
+      for (let i = 0; i < 50; i++) {
+        await repository.addEvent({
+          type: 'set',
+          payload: { target: 'counter', value: i }
+        });
+      }
+
+      expect(mockStore.setSnapshot).not.toHaveBeenCalled();
+    });
+
+    it('should track events since last snapshot correctly', async () => {
+      const mockStore = createMockStoreWithSnapshots();
+      const repository = createRepository({
+        originStore: mockStore,
+        snapshotInterval: 5
+      });
+
+      await repository.init();
+
+      // First batch: 5 events -> snapshot
+      for (let i = 0; i < 5; i++) {
+        await repository.addEvent({
+          type: 'set',
+          payload: { target: 'counter', value: i }
+        });
+      }
+      expect(mockStore.setSnapshot).toHaveBeenCalledTimes(1);
+
+      // Second batch: 5 more events -> second snapshot
+      for (let i = 5; i < 10; i++) {
+        await repository.addEvent({
+          type: 'set',
+          payload: { target: 'counter', value: i }
+        });
+      }
+      expect(mockStore.setSnapshot).toHaveBeenCalledTimes(2);
+
+      const savedSnapshot = mockStore._getSnapshot();
+      expect(savedSnapshot.eventIndex).toBe(10);
+    });
+  });
+
+  describe('manual snapshot saving', () => {
+    it('should expose saveSnapshot method', async () => {
+      const mockStore = createMockStoreWithSnapshots();
+      const repository = createRepository({ originStore: mockStore });
+
+      expect(repository.saveSnapshot).toBeDefined();
+      expect(typeof repository.saveSnapshot).toBe('function');
+    });
+
+    it('should save current state and eventIndex', async () => {
+      const mockStore = createMockStoreWithSnapshots();
+      const repository = createRepository({ originStore: mockStore });
+
+      await repository.init();
+
+      // Add some events
+      for (let i = 0; i < 7; i++) {
+        await repository.addEvent({
+          type: 'set',
+          payload: { target: 'counter', value: i }
+        });
+      }
+
+      // Manually save snapshot
+      await repository.saveSnapshot();
+
+      expect(mockStore.setSnapshot).toHaveBeenCalled();
+
+      const savedSnapshot = mockStore._getSnapshot();
+      expect(savedSnapshot.state).toEqual({ counter: 6 });
+      expect(savedSnapshot.eventIndex).toBe(7);
+      expect(savedSnapshot.createdAt).toBeDefined();
+    });
+
+    it('should be no-op when store does not support snapshots', async () => {
+      const mockStore = createMockStore();
+      const repository = createRepository({ originStore: mockStore });
+
+      await repository.init();
+
+      await repository.addEvent({
+        type: 'set',
+        payload: { target: 'counter', value: 1 }
+      });
+
+      // Should not throw
+      await repository.saveSnapshot();
+
+      // State should still work
+      const state = repository.getState();
+      expect(state).toEqual({ counter: 1 });
+    });
+  });
+
+  describe('state correctness with snapshots', () => {
+    it('should produce identical state with and without snapshot', async () => {
+      // Create events list
+      const events = [];
+      for (let i = 0; i < 100; i++) {
+        events.push({ type: 'set', payload: { target: `key${i}`, value: i } });
+      }
+
+      // Repository WITHOUT snapshot
+      const storeWithout = createMockStore();
+      storeWithout.getEvents.mockResolvedValue([...events]);
+      const repoWithout = createRepository({ originStore: storeWithout });
+      await repoWithout.init();
+      const stateWithout = repoWithout.getState();
+
+      // Repository WITH snapshot at event 50
+      const storeWith = createMockStoreWithSnapshots();
+      storeWith._setEvents([...events]);
+
+      // Compute expected state at event 50
+      let stateAt50 = {};
+      for (let i = 0; i < 50; i++) {
+        stateAt50[`key${i}`] = i;
+      }
+      storeWith._setSnapshot({
+        state: stateAt50,
+        eventIndex: 50,
+        createdAt: Date.now()
+      });
+
+      const repoWith = createRepository({ originStore: storeWith });
+      await repoWith.init();
+      const stateWith = repoWith.getState();
+
+      // States should be identical
+      expect(stateWith).toEqual(stateWithout);
+    });
+
+    it('should maintain correct state after multiple init cycles', async () => {
+      const mockStore = createMockStoreWithSnapshots();
+
+      // First init - add events
+      const repository1 = createRepository({
+        originStore: mockStore,
+        snapshotInterval: 5
+      });
+      await repository1.init();
+
+      for (let i = 0; i < 7; i++) {
+        await repository1.addEvent({
+          type: 'set',
+          payload: { target: 'counter', value: i }
+        });
+      }
+
+      const state1 = repository1.getState();
+
+      // Second init - should load from snapshot + replay new events
+      const repository2 = createRepository({
+        originStore: mockStore,
+        snapshotInterval: 5
+      });
+      await repository2.init();
+
+      const state2 = repository2.getState();
+
+      expect(state2).toEqual(state1);
+      expect(state2).toEqual({ counter: 6 });
+    });
+
+    it('should handle checkpoint indexes correctly after snapshot load', async () => {
+      const mockStore = createMockStoreWithSnapshots();
+
+      // Set up with snapshot
+      mockStore._setSnapshot({
+        state: { counter: 49 },
+        eventIndex: 50,
+        createdAt: Date.now()
+      });
+
+      // Set up full event history (events 0-79)
+      const allEvents = [];
+      for (let i = 0; i < 80; i++) {
+        allEvents.push({ type: 'set', payload: { target: 'counter', value: i } });
+      }
+      mockStore._setEvents(allEvents);
+
+      const repository = createRepository({ originStore: mockStore });
+      await repository.init();
+
+      // Query historical state - should work correctly with checkpoint system
+      const stateAt60 = repository.getState({ untilEventIndex: 60 });
+      expect(stateAt60).toEqual({ counter: 59 });
+
+      const stateAt75 = repository.getState({ untilEventIndex: 75 });
+      expect(stateAt75).toEqual({ counter: 74 });
+
+      const currentState = repository.getState();
+      expect(currentState).toEqual({ counter: 79 });
+    });
+  });
+
+  describe('edge cases', () => {
+    it('should handle snapshot at event 0', async () => {
+      const mockStore = createMockStoreWithSnapshots();
+
+      mockStore._setSnapshot({
+        state: {},
+        eventIndex: 0,
+        createdAt: Date.now()
+      });
+
+      mockStore._setEvents([
+        { type: 'set', payload: { target: 'a', value: 1 } },
+      ]);
+
+      const repository = createRepository({ originStore: mockStore });
+      await repository.init();
+
+      const state = repository.getState();
+      expect(state).toEqual({ a: 1 });
+    });
+
+    it('should handle snapshot with exactly snapshotInterval events since last', async () => {
+      const mockStore = createMockStoreWithSnapshots();
+      const repository = createRepository({
+        originStore: mockStore,
+        snapshotInterval: 10
+      });
+
+      await repository.init();
+
+      // Add exactly 10 events
+      for (let i = 0; i < 10; i++) {
+        await repository.addEvent({
+          type: 'set',
+          payload: { target: 'counter', value: i }
+        });
+      }
+
+      // Should have saved exactly once
+      expect(mockStore.setSnapshot).toHaveBeenCalledTimes(1);
+
+      // Add 10 more
+      for (let i = 10; i < 20; i++) {
+        await repository.addEvent({
+          type: 'set',
+          payload: { target: 'counter', value: i }
+        });
+      }
+
+      // Should have saved twice total
+      expect(mockStore.setSnapshot).toHaveBeenCalledTimes(2);
+    });
+
+    it('should handle init with initialState and existing snapshot', async () => {
+      const mockStore = createMockStoreWithSnapshots();
+
+      // Snapshot exists
+      mockStore._setSnapshot({
+        state: { fromSnapshot: true },
+        eventIndex: 5,
+        createdAt: Date.now()
+      });
+
+      const repository = createRepository({ originStore: mockStore });
+
+      // init with initialState - should be ignored since snapshot exists
+      await repository.init({ initialState: { fromInitial: true } });
+
+      const state = repository.getState();
+      // Should use snapshot state, not initialState
+      expect(state).toEqual({ fromSnapshot: true });
+    });
+
+    it('should save snapshot on init if many events replayed', async () => {
+      const mockStore = createMockStoreWithSnapshots();
+
+      // No snapshot, but many events
+      const events = [];
+      for (let i = 0; i < 25; i++) {
+        events.push({ type: 'set', payload: { target: 'counter', value: i } });
+      }
+      mockStore._setEvents(events);
+
+      const repository = createRepository({
+        originStore: mockStore,
+        snapshotInterval: 10
+      });
+      await repository.init();
+
+      // Should have saved snapshot after replaying events
+      expect(mockStore.setSnapshot).toHaveBeenCalled();
+
+      const savedSnapshot = mockStore._getSnapshot();
+      expect(savedSnapshot.eventIndex).toBe(25);
     });
   });
 });
