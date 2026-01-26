@@ -325,12 +325,27 @@ const messageHandlers = {
  */
 
 // Validation rules
-class EventValidatorImpl {
-  // 1. Schema validation (using existing Insieme validation)
-  // 2. Business logic validation
-  // 3. Permission validation
-  // 4. Idempotency checks
-  // 5. Conflict detection
+/**
+ * Create event validator
+ * @returns {EventValidator} Event validator instance
+ */
+function createEventValidator() {
+  return {
+    /**
+     * Validate event
+     * @param {RepositoryEvent} event - Event to validate
+     * @param {ValidationContext} context - Validation context
+     * @returns {ValidationResult} Validation result
+     */
+    validate(event, context) {
+      // 1. Schema validation (using existing Insieme validation)
+      // 2. Business logic validation
+      // 3. Permission validation
+      // 4. Idempotency checks
+      // 5. Conflict detection
+      return { valid: true };
+    }
+  };
 }
 ```
 
@@ -539,14 +554,14 @@ function validateTreePush(event, state) {
 ```sql
 -- Events table (append-only log)
 CREATE TABLE events (
-  id BIGSERIAL PRIMARY KEY,
-  event_id VARCHAR(255) UNIQUE NOT NULL,  -- Global event ID (evt-1501)
-  event_type VARCHAR(50) NOT NULL,
-  payload JSONB NOT NULL,
-  partition VARCHAR(255),
-  client_id VARCHAR(255) NOT NULL,
-  timestamp BIGINT NOT NULL,
-  created_at TIMESTAMP DEFAULT NOW()
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id TEXT UNIQUE NOT NULL,  -- Global event ID (evt-1501)
+  event_type TEXT NOT NULL,
+  payload TEXT NOT NULL,           -- JSON string
+  partition TEXT,
+  client_id TEXT NOT NULL,
+  timestamp INTEGER NOT NULL,
+  created_at INTEGER DEFAULT (strftime('%s', 'now'))
 );
 
 -- Indexes for queries
@@ -557,69 +572,156 @@ CREATE INDEX idx_events_event_id ON events(event_id);
 
 -- Snapshots table (for performance)
 CREATE TABLE snapshots (
-  id SERIAL PRIMARY KEY,
-  partition VARCHAR(255),
-  state JSONB NOT NULL,
-  event_index BIGINT NOT NULL,
-  created_at TIMESTAMP DEFAULT NOW(),
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  partition TEXT,
+  state TEXT NOT NULL,             -- JSON string
+  event_index INTEGER NOT NULL,
+  created_at INTEGER DEFAULT (strftime('%s', 'now')),
   UNIQUE(partition)
 );
 
 -- Clients table (for connection tracking)
 CREATE TABLE clients (
-  id VARCHAR(255) PRIMARY KEY,
-  metadata JSONB,
-  connected_at TIMESTAMP,
-  last_heartbeat TIMESTAMP,
-  partition VARCHAR(255)
+  id TEXT PRIMARY KEY,
+  metadata TEXT,                   -- JSON string
+  connected_at INTEGER,
+  last_heartbeat INTEGER,
+  partition TEXT
 );
 ```
 
 #### Store Implementation
 
 ```javascript
-// PostgreSQL Store using existing Insieme interface
+// SQLite Store using existing Insieme interface
+import Database from 'better-sqlite3';
+
 /**
- * PostgreSQL store implementation
- * @class
+ * Create SQLite store
+ * @param {string} [dbPath=':memory:'] - Database path
+ * @returns {RepositoryStore} Store instance
  */
-class PostgresStore {
-  /**
-   * Get events from store
-   * @param {{partition?: string, since?: number}} [payload] - Optional filters
-   * @returns {Promise<RepositoryEvent[]>} Array of events
-   */
-  async getEvents(payload) {
-    // Query events table with optional filters
-    // Support pagination for large datasets
-  }
+function createSQLiteStore(dbPath = ':memory:') {
+  const db = new Database(dbPath);
 
-  /**
-   * Append event to store
-   * @param {RepositoryEvent} event - Event to append
-   * @returns {Promise<void>}
-   */
-  async appendEvent(event) {
-    // Insert event into events table
-    // Return with server-assigned ID
-  }
+  // Initialize schema
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_id TEXT UNIQUE NOT NULL,
+      event_type TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      partition TEXT,
+      client_id TEXT NOT NULL,
+      timestamp INTEGER NOT NULL,
+      created_at INTEGER DEFAULT (strftime('%s', 'now'))
+    );
 
-  /**
-   * Get snapshot from store
-   * @returns {Promise<Snapshot|null>} Snapshot or null
-   */
-  async getSnapshot() {
-    // Query latest snapshot from snapshots table
-  }
+    CREATE TABLE IF NOT EXISTS snapshots (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      partition TEXT,
+      state TEXT NOT NULL,
+      event_index INTEGER NOT NULL,
+      created_at INTEGER DEFAULT (strftime('%s', 'now')),
+      UNIQUE(partition)
+    );
 
-  /**
-   * Set snapshot in store
-   * @param {Snapshot} snapshot - Snapshot to save
-   * @returns {Promise<void>}
-   */
-  async setSnapshot(snapshot) {
-    // Upsert snapshot into snapshots table
-  }
+    CREATE INDEX IF NOT EXISTS idx_events_partition ON events(partition);
+    CREATE INDEX IF NOT EXISTS idx_events_client_id ON events(client_id);
+    CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_events_event_id ON events(event_id);
+  `);
+
+  // Prepare statements
+  const getEventsStmt = db.prepare(`
+    SELECT event_id as id, event_type as type, payload, partition, client_id, timestamp
+    FROM events
+    WHERE (?1 IS NULL OR partition = ?1)
+    AND (?2 IS NULL OR id > ?2)
+    ORDER BY id ASC
+  `);
+
+  const appendEventStmt = db.prepare(`
+    INSERT INTO events (event_id, event_type, payload, partition, client_id, timestamp)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+
+  const getSnapshotStmt = db.prepare(`
+    SELECT state, event_index as eventIndex, created_at as createdAt
+    FROM snapshots
+    ORDER BY created_at DESC
+    LIMIT 1
+  `);
+
+  const setSnapshotStmt = db.prepare(`
+    INSERT OR REPLACE INTO snapshots (partition, state, event_index, created_at)
+    VALUES ((SELECT partition FROM snapshots LIMIT 1), ?, ?, ?)
+  `);
+
+  return {
+    /**
+     * Get events from store
+     * @param {{partition?: string, since?: number}} [payload] - Optional filters
+     * @returns {Promise<RepositoryEvent[]>} Array of events
+     */
+    async getEvents(payload) {
+      const { partition, since } = payload || {};
+      const rows = getEventsStmt.all(partition || null, since || null);
+
+      return rows.map(row => ({
+        id: row.id,
+        type: row.type,
+        payload: JSON.parse(row.payload),
+        partition: row.partition,
+        clientId: row.client_id,
+        timestamp: row.timestamp
+      }));
+    },
+
+    /**
+     * Append event to store
+     * @param {RepositoryEvent} event - Event to append
+     * @returns {Promise<void>}
+     */
+    async appendEvent(event) {
+      appendEventStmt.run(
+        event.id || `evt-${Date.now()}`,
+        event.type,
+        JSON.stringify(event.payload),
+        event.partition || null,
+        event.clientId || 'unknown',
+        event.timestamp || Date.now()
+      );
+    },
+
+    /**
+     * Get snapshot from store
+     * @returns {Promise<Snapshot|null>} Snapshot or null
+     */
+    async getSnapshot() {
+      const row = getSnapshotStmt.get();
+      if (!row) return null;
+
+      return {
+        state: JSON.parse(row.state),
+        eventIndex: row.eventIndex,
+        createdAt: row.createdAt
+      };
+    },
+
+    /**
+     * Set snapshot in store
+     * @param {Snapshot} snapshot - Snapshot to save
+     * @returns {Promise<void>}
+     */
+    async setSnapshot(snapshot) {
+      setSnapshotStmt.run(
+        JSON.stringify(snapshot.state),
+        snapshot.eventIndex,
+        snapshot.createdAt
+      );
+    }
+  };
 }
 ```
 
@@ -661,82 +763,104 @@ function resolveConflict(events, state) {
 
 ```javascript
 // Client-side error handling
-class InsiemeClient {
-  /**
-   * Handle submit error
-   * @param {Error} error - Error to handle
-   */
-  async handleSubmitError(error) {
-    if (error.message.includes("validation_failed")) {
-      // Rollback optimistic update
-      this.rollbackDraft(error.draftId);
+/**
+ * Create Insieme client
+ * @param {Repository} repository - Repository instance
+ * @returns {Object} Client instance
+ */
+function createInsiemeClient(repository) {
+  let mode = "online";
+  const drafts = new Map();
+  let websocket = null;
 
-      // Show user-friendly error
-      this.showValidationError(error.errors);
+  return {
+    /**
+     * Handle submit error
+     * @param {Error} error - Error to handle
+     */
+    async handleSubmitError(error) {
+      if (error.message.includes("validation_failed")) {
+        // Rollback optimistic update
+        this.rollbackDraft(error.draftId);
+
+        // Show user-friendly error
+        this.showValidationError(error.errors);
+      }
+    },
+
+    /**
+     * Handle disconnect
+     */
+    async handleDisconnect() {
+      // Enter offline mode
+      mode = "offline";
+
+      // Queue events for later submission
+      this.queuePendingEvents();
+
+      // Attempt reconnection with exponential backoff
+      this.reconnect();
+    },
+
+    /**
+     * Handle reconnect
+     */
+    async handleReconnect() {
+      // Request sync to get missed events
+      const syncResponse = await this.requestSync();
+
+      // Apply missed events
+      this.applyEvents(syncResponse.events);
+
+      // Submit queued events
+      await this.submitQueuedEvents();
+
+      // Return to online mode
+      mode = "online";
+    },
+
+    getMode() {
+      return mode;
     }
-  }
-
-  /**
-   * Handle disconnect
-   */
-  async handleDisconnect() {
-    // Enter offline mode
-    this.mode = "offline";
-
-    // Queue events for later submission
-    this.queuePendingEvents();
-
-    // Attempt reconnection with exponential backoff
-    this.reconnect();
-  }
-
-  /**
-   * Handle reconnect
-   */
-  async handleReconnect() {
-    // Request sync to get missed events
-    const syncResponse = await this.requestSync();
-
-    // Apply missed events
-    this.applyEvents(syncResponse.events);
-
-    // Submit queued events
-    await this.submitQueuedEvents();
-
-    // Return to online mode
-    this.mode = "online";
-  }
+  };
 }
 ```
 
 #### Server-Side Error Handling
 
 ```javascript
-class MessageHandlerImpl {
-  /**
-   * Handle message
-   * @param {IncomingMessage} message - Message to handle
-   * @param {Connection} connection - Connection instance
-   */
-  async handle(message, connection) {
-    try {
-      // Process message
-      await this.processMessage(message, connection);
-    } catch (error) {
-      // Log error
-      this.logger.error("Message handling error", error);
+/**
+ * Create message handler
+ * @param {Object} logger - Logger instance
+ * @returns {MessageHandler} Message handler instance
+ */
+function createMessageHandler(logger) {
+  return {
+    /**
+     * Handle message
+     * @param {IncomingMessage} message - Message to handle
+     * @param {Connection} connection - Connection instance
+     */
+    async handle(message, connection) {
+      try {
+        // Process message
+        await this.processMessage(message, connection);
+      } catch (error) {
+        // Log error
+        logger.error("Message handling error", error);
 
-      // Send error response to client
-      connection.send({
-        type: "error",
-        payload: {
-          code: error.code,
-          message: error.message,
-          details: error.details
-        }
-      });
+        // Send error response to client
+        connection.send({
+          type: "error",
+          payload: {
+            code: error.code,
+            message: error.message,
+            details: error.details
+          }
+        });
+      }
     }
-  }
+  };
 }
 ```
 
@@ -748,20 +872,26 @@ class MessageHandlerImpl {
 // Use existing Insieme snapshot functionality
 const snapshotInterval = 1000; // Create snapshot every 1000 events
 
-class SnapshotScheduler {
-  /**
-   * Schedule snapshot creation
-   * @param {StateManager} stateManager - State manager instance
-   */
-  async scheduleSnapshot(stateManager) {
-    setInterval(async () => {
-      const currentIndex = stateManager.getCurrentEventIndex();
+/**
+ * Create snapshot scheduler
+ * @returns {Object} Snapshot scheduler instance
+ */
+function createSnapshotScheduler() {
+  return {
+    /**
+     * Schedule snapshot creation
+     * @param {StateManager} stateManager - State manager instance
+     */
+    async scheduleSnapshot(stateManager) {
+      setInterval(async () => {
+        const currentIndex = stateManager.getCurrentEventIndex();
 
-      if (currentIndex % snapshotInterval === 0) {
-        await stateManager.createSnapshot();
-      }
-    }, 60000); // Check every minute
-  }
+        if (currentIndex % snapshotInterval === 0) {
+          await stateManager.createSnapshot();
+        }
+      }, 60000); // Check every minute
+    }
+  };
 }
 ```
 
@@ -769,48 +899,59 @@ class SnapshotScheduler {
 
 ```javascript
 // Batch events for broadcasting to reduce overhead
-class BroadcastManagerImpl {
-  constructor() {
-    /** @type {CommittedEvent[]} */
-    this.eventQueue = [];
-    /** @type {NodeJS.Timeout|null} */
-    this.batchTimeout = null;
-  }
+/**
+ * Create broadcast manager with batching
+ * @returns {BroadcastManager} Broadcast manager instance
+ */
+function createBroadcastManager() {
+  const eventQueue = [];
+  let batchTimeout = null;
+  let broadcastBatch = () => {}; // To be implemented
 
-  /**
-   * Broadcast event
-   * @param {CommittedEvent} event - Event to broadcast
-   */
-  broadcast(event) {
-    this.eventQueue.push(event);
+  return {
+    /**
+     * Broadcast event
+     * @param {CommittedEvent} event - Event to broadcast
+     */
+    broadcast(event) {
+      eventQueue.push(event);
 
-    // Send batch after 50ms or when queue reaches 10 events
-    if (!this.batchTimeout) {
-      this.batchTimeout = setTimeout(() => {
-        this.flushBatch();
-      }, 50);
+      // Send batch after 50ms or when queue reaches 10 events
+      if (!batchTimeout) {
+        batchTimeout = setTimeout(() => {
+          flushBatch();
+        }, 50);
+      }
+
+      if (eventQueue.length >= 10) {
+        flushBatch();
+      }
+    },
+
+    /**
+     * Set batch broadcast handler
+     * @param {function} handler - Broadcast handler
+     */
+    setBroadcastBatch(handler) {
+      broadcastBatch = handler;
+    },
+
+    /**
+     * Flush batch
+     * @private
+     */
+    flushBatch() {
+      if (eventQueue.length === 0) return;
+
+      const events = eventQueue.splice(0);
+      broadcastBatch(events);
+
+      if (batchTimeout) {
+        clearTimeout(batchTimeout);
+        batchTimeout = null;
+      }
     }
-
-    if (this.eventQueue.length >= 10) {
-      this.flushBatch();
-    }
-  }
-
-  /**
-   * Flush batch
-   * @private
-   */
-  flushBatch() {
-    if (this.eventQueue.length === 0) return;
-
-    const events = this.eventQueue.splice(0);
-    this.broadcastBatch(events);
-
-    if (this.batchTimeout) {
-      clearTimeout(this.batchTimeout);
-      this.batchTimeout = null;
-    }
-  }
+  };
 }
 ```
 
@@ -887,33 +1028,36 @@ function checkPermission(token, action, target) {
 
 ```javascript
 // Rate limit event submissions per client
-class RateLimiter {
-  constructor() {
-    /** @type {Map<string, number[]>} */
-    this.limits = new Map();
-  }
+/**
+ * Create rate limiter
+ * @returns {Object} Rate limiter instance
+ */
+function createRateLimiter() {
+  const limits = new Map();
 
-  /**
-   * Check if client can submit
-   * @param {string} clientId - Client ID
-   * @returns {boolean} Whether submission is allowed
-   */
-  canSubmit(clientId) {
-    const now = Date.now();
-    const windowMs = 60000; // 1 minute
-    const maxRequests = 100;
+  return {
+    /**
+     * Check if client can submit
+     * @param {string} clientId - Client ID
+     * @returns {boolean} Whether submission is allowed
+     */
+    canSubmit(clientId) {
+      const now = Date.now();
+      const windowMs = 60000; // 1 minute
+      const maxRequests = 100;
 
-    const timestamps = this.limits.get(clientId) || [];
-    const recentTimestamps = timestamps.filter(t => now - t < windowMs);
+      const timestamps = limits.get(clientId) || [];
+      const recentTimestamps = timestamps.filter(t => now - t < windowMs);
 
-    if (recentTimestamps.length >= maxRequests) {
-      return false;
+      if (recentTimestamps.length >= maxRequests) {
+        return false;
+      }
+
+      recentTimestamps.push(now);
+      limits.set(clientId, recentTimestamps);
+      return true;
     }
-
-    recentTimestamps.push(now);
-    this.limits.set(clientId, recentTimestamps);
-    return true;
-  }
+  };
 }
 ```
 
@@ -965,156 +1109,57 @@ function sanitizeInput(event) {
 
 ```javascript
 // Structured logging
-class Logger {
-  /**
-   * Log info message
-   * @param {string} message - Message to log
-   * @param {object} [meta] - Optional metadata
-   */
-  info(message, meta) {
-    console.log(JSON.stringify({
-      level: "info",
-      timestamp: Date.now(),
-      message,
-      ...meta
-    }));
-  }
+/**
+ * Create logger
+ * @returns {Object} Logger instance
+ */
+function createLogger() {
+  return {
+    /**
+     * Log info message
+     * @param {string} message - Message to log
+     * @param {object} [meta] - Optional metadata
+     */
+    info(message, meta) {
+      console.log(JSON.stringify({
+        level: "info",
+        timestamp: Date.now(),
+        message,
+        ...meta
+      }));
+    },
 
-  /**
-   * Log error message
-   * @param {string} message - Message to log
-   * @param {Error} error - Error to log
-   * @param {object} [meta] - Optional metadata
-   */
-  error(message, error, meta) {
-    console.error(JSON.stringify({
-      level: "error",
-      timestamp: Date.now(),
-      message,
-      error: {
-        name: error.name,
-        message: error.message,
-        stack: error.stack
-      },
-      ...meta
-    }));
-  }
-}
-```
-
-### 11. Scalability
-
-#### Horizontal Scaling
-
-```javascript
-// Use Redis Pub/Sub for cross-server broadcasting
-import { Redis } from "ioredis";
-
-class RedisBroadcastManager {
-  constructor() {
-    /** @type {Redis} */
-    this.redis = new Redis();
-    /** @type {Redis} */
-    this.publisher = new Redis();
-    /** @type {Redis} */
-    this.subscriber = new Redis();
-
-    // Subscribe to broadcast channel
-    this.subscriber.subscribe("insieme:broadcast", (err) => {
-      if (err) console.error("Failed to subscribe", err);
-    });
-
-    this.subscriber.on("message", (channel, message) => {
-      if (channel === "insieme:broadcast") {
-        const event = JSON.parse(message);
-        this.broadcastToLocalClients(event);
-      }
-    });
-  }
-
-  /**
-   * Broadcast event
-   * @param {CommittedEvent} event - Event to broadcast
-   */
-  broadcast(event) {
-    // Publish to Redis for all servers
-    this.publisher.publish("insieme:broadcast", JSON.stringify(event));
-
-    // Also broadcast to local clients
-    this.broadcastToLocalClients(event);
-  }
-
-  /**
-   * Broadcast to local clients
-   * @param {CommittedEvent} event - Event to broadcast
-   * @private
-   */
-  broadcastToLocalClients(event) {
-    // Broadcast to clients connected to this server
-  }
-}
-```
-
-#### Partition-Based Sharding
-
-```javascript
-// Shard clients by partition
-class ShardedConnectionManager {
-  constructor() {
-    /** @type {Map<string, ConnectionManager>} */
-    this.shards = new Map();
-  }
-
-  /**
-   * Get shard for partition
-   * @param {string} partition - Partition identifier
-   * @returns {ConnectionManager} Connection manager for partition
-   */
-  getShard(partition) {
-    if (!this.shards.has(partition)) {
-      this.shards.set(partition, new ConnectionManagerImpl());
+    /**
+     * Log error message
+     * @param {string} message - Message to log
+     * @param {Error} error - Error to log
+     * @param {object} [meta] - Optional metadata
+     */
+    error(message, error, meta) {
+      console.error(JSON.stringify({
+        level: "error",
+        timestamp: Date.now(),
+        message,
+        error: {
+          name: error.name,
+          message: error.message,
+          stack: error.stack
+        },
+        ...meta
+      }));
     }
-    return this.shards.get(partition);
-  }
-
-  /**
-   * Connect client
-   * @param {string} clientId - Client ID
-   * @param {WebSocket} ws - WebSocket instance
-   * @param {string} [partition] - Optional partition
-   * @returns {Connection} Connection instance
-   */
-  connect(clientId, ws, partition) {
-    const shard = partition ? this.getShard(partition) : this.getDefaultShard();
-    return shard.connect(clientId, ws);
-  }
+  };
 }
 ```
 
-### 12. Technology Stack Recommendations
+### 11. Technology Stack
 
 #### Core Server
 
-- **Runtime**: Node.js with Bun or Node.js
-- **WebSocket Library**: `ws` (minimal, fast) or `socket.io` (feature-rich)
-- **Framework**: Fastify or Express (for REST endpoints alongside WebSocket)
-
-#### Storage
-
-- **Database**: PostgreSQL (reliable, supports JSONB)
-- **Cache**: Redis (for pub/sub and session management)
-- **Alternative**: MongoDB (for simpler deployments)
-
-#### Validation
-
-- **Schema Validation**: AJV (already used in Insieme)
-- **Business Logic**: Custom validators
-
-#### Monitoring
-
-- **Metrics**: Prometheus + Grafana
-- **Logging**: Winston or Pino
-- **Tracing**: OpenTelemetry
+- **Runtime**: Node.js or Bun
+- **WebSocket Library**: `ws` (minimal, fast, battle-tested)
+- **Storage**: SQLite with `better-sqlite3` (synchronous API, simple deployment)
+- **Validation**: AJV (already used in Insieme)
 
 #### Development
 
@@ -1122,13 +1167,13 @@ class ShardedConnectionManager {
 - **Testing**: Vitest (already used in Insieme)
 - **Code Quality**: ESLint, Prettier
 
-### 13. Implementation Roadmap
+### 12. Implementation Roadmap
 
 #### Phase 1: Core WebSocket Server (MVP)
 - [ ] Basic WebSocket server with connection management
 - [ ] Message routing and handling
 - [ ] Event validation using existing Insieme validation
-- [ ] Event storage in PostgreSQL
+- [ ] Event storage in SQLite
 - [ ] Basic broadcasting to all clients
 
 #### Phase 2: Advanced Features
@@ -1141,15 +1186,9 @@ class ShardedConnectionManager {
 #### Phase 3: Production Readiness
 - [ ] Authentication and authorization
 - [ ] Rate limiting
-- [ ] Monitoring and logging
-- [ ] Performance optimization
+- [ ] Logging
+- [ ] Performance optimization (batching, compression)
 - [ ] Comprehensive testing
-
-#### Phase 4: Scalability
-- [ ] Horizontal scaling with Redis
-- [ ] Load balancing
-- [ ] Sharding strategies
-- [ ] CDN integration for static assets
 
 ### 14. Client Integration
 
@@ -1264,9 +1303,34 @@ class InsiemeClient {
 }
 ```
 
-### 15. Deployment Considerations
+### 13. Deployment
 
-#### Docker Setup
+#### Simple Deployment
+
+```bash
+# Run the server
+node server.js
+
+# Or with Bun
+bun run server.js
+
+# Server will:
+# - Create SQLite database file (insieme.db)
+# - Start WebSocket server on port 3001
+# - Handle connections and events
+```
+
+#### Environment Variables
+
+```bash
+# Optional configuration
+PORT=3001              # WebSocket port (default: 3001)
+DB_PATH=./insieme.db   # SQLite database path (default: :memory:)
+SNAPSHOT_INTERVAL=1000 # Events between snapshots (default: 1000)
+LOG_LEVEL=info         # Log level (default: info)
+```
+
+#### Docker Deployment (Optional)
 
 ```dockerfile
 # Dockerfile
@@ -1275,68 +1339,23 @@ FROM node:20-alpine
 WORKDIR /app
 
 # Install dependencies
-COPY package.json bun.lockb ./
-RUN npm install -g bun && bun install
+COPY package.json ./
+RUN npm install --production
 
 # Copy source
 COPY . .
-
-# Build
-RUN bun run build
 
 # Expose WebSocket port
 EXPOSE 3001
 
 # Start server
-CMD ["node", "dist/server.js"]
+CMD ["node", "server.js"]
 ```
 
-#### Kubernetes Deployment
-
-```yaml
-# deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: insieme-backend
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: insieme-backend
-  template:
-    metadata:
-      labels:
-        app: insieme-backend
-    spec:
-      containers:
-      - name: backend
-        image: insieme-backend:latest
-        ports:
-        - containerPort: 3001
-        env:
-        - name: DATABASE_URL
-          valueFrom:
-            secretKeyRef:
-              name: insieme-secrets
-              key: database-url
-        - name: REDIS_URL
-          valueFrom:
-            secretKeyRef:
-              name: insieme-secrets
-              key: redis-url
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: insieme-backend
-spec:
-  selector:
-    app: insieme-backend
-  ports:
-  - port: 3001
-    targetPort: 3001
-  type: LoadBalancer
+```bash
+# Build and run
+docker build -t insieme-backend .
+docker run -p 3001:3001 -v $(pwd)/data:/app/data insieme-backend
 ```
 
 ## Conclusion
