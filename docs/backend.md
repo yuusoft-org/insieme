@@ -1196,110 +1196,109 @@ function createLogger() {
 
 ```javascript
 // Extend Insieme client to support backend sync
-class InsiemeClient {
-  /**
-   * Constructor
-   * @param {Repository} repository - Repository instance
-   */
-  constructor(repository) {
-    /** @type {Repository} */
-    this.repository = repository;
-    /** @type {WebSocket} */
-    this.websocket = null;
-    /** @type {Map<string, DraftEvent>} */
-    this.drafts = new Map();
-  }
+/**
+ * Create Insieme client with backend sync
+ * @param {Repository} repository - Repository instance
+ * @returns {Object} Client instance
+ */
+function createInsiemeClient(repository) {
+  /** @type {WebSocket|null} */
+  let websocket = null;
+  /** @type {Map<string, DraftEvent>} */
+  const drafts = new Map();
 
-  /**
-   * Connect to server
-   * @param {string} serverUrl - Server WebSocket URL
-   */
-  async connect(serverUrl) {
-    this.websocket = new WebSocket(serverUrl);
+  return {
+    /**
+     * Connect to server
+     * @param {string} serverUrl - Server WebSocket URL
+     */
+    async connect(serverUrl) {
+      websocket = new WebSocket(serverUrl);
 
-    this.websocket.onmessage = (message) => {
-      this.handleServerMessage(JSON.parse(message.data));
-    };
-  }
+      websocket.onmessage = (message) => {
+        this.handleServerMessage(JSON.parse(message.data));
+      };
+    },
 
-  /**
-   * Add event
-   * @param {RepositoryEvent} event - Event to add
-   */
-  async addEvent(event) {
-    // Generate draft ID
-    const draftId = `draft-${Date.now()}-${Math.random()}`;
+    /**
+     * Add event
+     * @param {RepositoryEvent} event - Event to add
+     */
+    async addEvent(event) {
+      // Generate draft ID
+      const draftId = `draft-${Date.now()}-${Math.random()}`;
 
-    // Apply optimistically
-    await this.repository.addEvent(event);
-    this.drafts.set(draftId, { event, state: this.repository.getState() });
+      // Apply optimistically
+      await repository.addEvent(event);
+      drafts.set(draftId, { event, state: repository.getState() });
 
-    // Send to server
-    this.websocket.send(JSON.stringify({
-      type: "submit_event",
-      payload: {
-        draftId,
-        event
+      // Send to server
+      websocket.send(JSON.stringify({
+        type: "submit_event",
+        payload: {
+          draftId,
+          event
+        }
+      }));
+    },
+
+    /**
+     * Handle server message
+     * @param {ServerMessage} message - Server message
+     */
+    handleServerMessage(message) {
+      switch (message.type) {
+        case "event_accepted":
+          this.handleEventAccepted(message.payload);
+          break;
+        case "event_rejected":
+          this.handleEventRejected(message.payload);
+          break;
+        case "broadcast":
+          this.handleBroadcast(message.payload);
+          break;
       }
-    }));
-  }
+    },
 
-  /**
-   * Handle server message
-   * @param {ServerMessage} message - Server message
-   */
-  handleServerMessage(message) {
-    switch (message.type) {
-      case "event_accepted":
-        this.handleEventAccepted(message.payload);
-        break;
-      case "event_rejected":
-        this.handleEventRejected(message.payload);
-        break;
-      case "broadcast":
-        this.handleBroadcast(message.payload);
-        break;
+    /**
+     * Handle event accepted
+     * @param {EventAcceptedPayload} payload - Event accepted payload
+     */
+    handleEventAccepted(payload) {
+      // Remove draft
+      drafts.delete(payload.draftId);
+
+      // Apply committed event (replaces draft)
+      // The event is the same, but now has server ID
+      console.log(`Event accepted: ${payload.eventId}`);
+    },
+
+    /**
+     * Handle event rejected
+     * @param {EventRejectedPayload} payload - Event rejected payload
+     */
+    handleEventRejected(payload) {
+      // Rollback to state before draft
+      const draft = drafts.get(payload.draftId);
+      if (draft) {
+        // Rollback state
+        repository.restoreState(draft.state);
+        drafts.delete(payload.draftId);
+
+        // Show error to user
+        console.error("Event rejected:", payload.reason, payload.errors);
+      }
+    },
+
+    /**
+     * Handle broadcast
+     * @param {BroadcastPayload} payload - Broadcast payload
+     */
+    handleBroadcast(payload) {
+      // Apply committed event from another client
+      repository.addEvent(payload.event);
     }
-  }
-
-  /**
-   * Handle event accepted
-   * @param {EventAcceptedPayload} payload - Event accepted payload
-   */
-  handleEventAccepted(payload) {
-    // Remove draft
-    this.drafts.delete(payload.draftId);
-
-    // Apply committed event (replaces draft)
-    // The event is the same, but now has server ID
-    console.log(`Event accepted: ${payload.eventId}`);
-  }
-
-  /**
-   * Handle event rejected
-   * @param {EventRejectedPayload} payload - Event rejected payload
-   */
-  handleEventRejected(payload) {
-    // Rollback to state before draft
-    const draft = this.drafts.get(payload.draftId);
-    if (draft) {
-      // Rollback state
-      this.repository.restoreState(draft.state);
-      this.drafts.delete(payload.draftId);
-
-      // Show error to user
-      console.error("Event rejected:", payload.reason, payload.errors);
-    }
-  }
-
-  /**
-   * Handle broadcast
-   * @param {BroadcastPayload} payload - Broadcast payload
-   */
-  handleBroadcast(payload) {
-    // Apply committed event from another client
-    this.repository.addEvent(payload.event);
-  }
+  };
 }
 ```
 
@@ -1360,11 +1359,11 @@ docker run -p 3001:3001 -v $(pwd)/data:/app/data insieme-backend
 
 ## Conclusion
 
-This backend design provides a comprehensive architecture for building an authoritative server for Insieme. The design prioritizes:
+This backend design provides a simple, minimal, yet robust architecture for building an authoritative server for Insieme. The design prioritizes:
 
-1. **Correctness**: Central authority ensures consistent state
-2. **Performance**: Optimizations like snapshots, batching, and compression
-3. **Scalability**: Horizontal scaling support with Redis
+1. **Simplicity**: Single server, SQLite storage, factory functions
+2. **Correctness**: Central authority ensures consistent state
+3. **Performance**: Optimizations like snapshots and batching
 4. **Reliability**: Error handling, reconnection, and recovery
 5. **Security**: Authentication, authorization, and input validation
 
@@ -1372,9 +1371,7 @@ The WebSocket-based approach enables real-time collaboration while maintaining t
 
 ## Next Steps
 
-1. Review and refine this design based on team feedback
-2. Choose specific technology stack
-3. Implement Phase 1 (MVP)
-4. Add comprehensive testing
-5. Deploy to staging environment
-6. Iterate based on real-world usage
+1. Implement Phase 1 (MVP) - Basic WebSocket server
+2. Add comprehensive testing
+3. Deploy to staging environment
+4. Iterate based on real-world usage
