@@ -44,31 +44,23 @@ Client A                          Server                          Client B
 
 **Protocol Structure:**
 
-```typescript
-// Message Types
-type MessageType =
-  | "connect"        // Client connects
-  | "connected"      // Server acknowledges connection
-  | "submit_event"   // Client submits draft event
-  | "event_accepted" // Server accepts and commits event
-  | "event_rejected" // Server rejects event
-  | "broadcast"      // Server broadcasts committed event
-  | "sync"           // Client requests state sync
-  | "sync_response"  // Server sends current state
-  | "heartbeat"      // Keep-alive messages
-  | "error";         // Error messages
+```javascript
+/**
+ * @typedef {"connect"|"connected"|"submit_event"|"event_accepted"|"event_rejected"|"broadcast"|"sync"|"sync_response"|"heartbeat"|"error"} MessageType
+ */
 
-// Base Message Structure
-interface BaseMessage {
-  id: string;        // Unique message ID
-  type: MessageType;
-  timestamp: number; // Unix timestamp
-}
+/**
+ * Base message structure
+ * @typedef {Object} BaseMessage
+ * @property {string} id - Unique message ID
+ * @property {MessageType} type - Message type
+ * @property {number} timestamp - Unix timestamp
+ */
 ```
 
 #### Connection Flow
 
-```typescript
+```javascript
 // 1. Client connects
 {
   id: "msg-1",
@@ -77,7 +69,7 @@ interface BaseMessage {
   payload: {
     clientId: "client-uuid",
     version: "0.0.8",
-    partition?: string  // Optional partition identifier
+    partition: "session-1"  // Optional partition identifier
   }
 }
 
@@ -89,15 +81,15 @@ interface BaseMessage {
   payload: {
     serverId: "server-uuid",
     currentEventIndex: 1500,  // Last committed event ID
-    initialState?: object,     // If client needs full state
-    sinceSnapshot?: number     // Events since snapshot
+    initialState: {},         // If client needs full state
+    sinceSnapshot: 1000       // Events since snapshot
   }
 }
 ```
 
 #### Event Submission Flow
 
-```typescript
+```javascript
 // Client submits draft event
 {
   id: "msg-3",
@@ -127,7 +119,7 @@ interface BaseMessage {
     eventId: 1501,              // Server-assigned sequential ID
     event: {
       type: "treePush",
-      payload: { ... },
+      payload: { /* ... */ },
       partition: "session-1",
       id: "evt-1501",           // Global event ID
       timestamp: 1234567893,
@@ -156,7 +148,7 @@ interface BaseMessage {
 
 #### Event Broadcasting
 
-```typescript
+```javascript
 // Server broadcasts to all clients (including submitter)
 {
   id: "msg-5",
@@ -166,7 +158,7 @@ interface BaseMessage {
     eventId: 1501,
     event: {
       type: "treePush",
-      payload: { ... },
+      payload: { /* ... */ },
       partition: "session-1",
       id: "evt-1501",
       timestamp: 1234567893,
@@ -178,7 +170,7 @@ interface BaseMessage {
 
 #### State Synchronization
 
-```typescript
+```javascript
 // Client requests sync (e.g., after reconnection)
 {
   id: "msg-6",
@@ -186,7 +178,7 @@ interface BaseMessage {
   timestamp: 1234567895,
   payload: {
     sinceEventId: 1400,         // Optional: get events since this ID
-    partition?: string
+    partition: "session-1"
   }
 }
 
@@ -196,8 +188,8 @@ interface BaseMessage {
   type: "sync_response",
   timestamp: 1234567896,
   payload: {
-    snapshot?: {
-      state: object,
+    snapshot: {
+      state: { /* ... */ },
       eventIndex: 1500
     },
     events: [ /* events 1401-1500 */ ],
@@ -239,54 +231,58 @@ interface BaseMessage {
 
 ##### 1. Connection Manager
 
-```typescript
-interface ConnectionManager {
-  // Connection lifecycle
-  connect(clientId: string, ws: WebSocket): Connection;
-  disconnect(clientId: string): void;
-  getConnection(clientId: string): Connection | undefined;
+```javascript
+/**
+ * Connection manager interface
+ * @typedef {Object} ConnectionManager
+ * @property {function(string, WebSocket): Connection} connect - Connect a client
+ * @property {function(string): void} disconnect - Disconnect a client
+ * @property {function(string): Connection|undefined} getConnection - Get connection by ID
+ * @property {function(string, ClientMetadata): void} registerClient - Register a client
+ * @property {function(string): void} unregisterClient - Unregister a client
+ * @property {function(): Client[]} getClients - Get all clients
+ * @property {function(string): Client[]} getClientsInPartition - Get clients in partition
+ * @property {function(string): boolean} isConnected - Check if client is connected
+ * @property {function(): number} getConnectionCount - Get connection count
+ */
 
-  // Client registry
-  registerClient(clientId: string, metadata: ClientMetadata): void;
-  unregisterClient(clientId: string): void;
-  getClients(): Client[];
-  getClientsInPartition(partition: string): Client[];
+/**
+ * Connection object
+ * @typedef {Object} Connection
+ * @property {string} id - Connection ID
+ * @property {string} clientId - Client ID
+ * @property {WebSocket} ws - WebSocket instance
+ * @property {string} [partition] - Optional partition
+ * @property {number} connectedAt - Connection timestamp
+ * @property {number} lastHeartbeat - Last heartbeat timestamp
+ * @property {ClientMetadata} metadata - Client metadata
+ */
 
-  // Connection state
-  isConnected(clientId: string): boolean;
-  getConnectionCount(): number;
-}
-
-interface Connection {
-  id: string;
-  clientId: string;
-  ws: WebSocket;
-  partition?: string;
-  connectedAt: number;
-  lastHeartbeat: number;
-  metadata: ClientMetadata;
-}
-
-interface ClientMetadata {
-  version: string;
-  userAgent?: string;
-  partition?: string;
-}
+/**
+ * Client metadata
+ * @typedef {Object} ClientMetadata
+ * @property {string} version - Client version
+ * @property {string} [userAgent] - User agent string
+ * @property {string} [partition] - Partition identifier
+ */
 ```
 
 ##### 2. Message Handler
 
-```typescript
-interface MessageHandler {
-  handle(message: IncomingMessage, connection: Connection): Promise<void>;
-}
+```javascript
+/**
+ * Message handler interface
+ * @typedef {Object} MessageHandler
+ * @property {function(IncomingMessage, Connection): Promise<void>} handle - Handle message
+ */
 
-type IncomingMessage = BaseMessage & {
-  payload: unknown;
-};
+/**
+ * Incoming message
+ * @typedef {BaseMessage & {payload: unknown}} IncomingMessage
+ */
 
 // Message routing
-const messageHandlers: Record<MessageType, MessageHandler> = {
+const messageHandlers = {
   connect: new ConnectHandler(),
   submit_event: new SubmitEventHandler(),
   sync: new SyncHandler(),
@@ -297,31 +293,39 @@ const messageHandlers: Record<MessageType, MessageHandler> = {
 
 ##### 3. Event Validator
 
-```typescript
-interface EventValidator {
-  validate(event: RepositoryEvent, context: ValidationContext): ValidationResult;
-}
+```javascript
+/**
+ * Event validator interface
+ * @typedef {Object} EventValidator
+ * @property {function(RepositoryEvent, ValidationContext): ValidationResult} validate - Validate event
+ */
 
-interface ValidationContext {
-  clientId: string;
-  partition?: string;
-  currentState: RepositoryState;
-  eventHistory: RepositoryEvent[];
-}
+/**
+ * Validation context
+ * @typedef {Object} ValidationContext
+ * @property {string} clientId - Client ID
+ * @property {string} [partition] - Optional partition
+ * @property {RepositoryState} currentState - Current state
+ * @property {RepositoryEvent[]} eventHistory - Event history
+ */
 
-interface ValidationResult {
-  valid: boolean;
-  errors?: ValidationError[];
-}
+/**
+ * Validation result
+ * @typedef {Object} ValidationResult
+ * @property {boolean} valid - Whether validation passed
+ * @property {ValidationError[]} [errors] - Validation errors
+ */
 
-interface ValidationError {
-  field: string;
-  message: string;
-  code: string;
-}
+/**
+ * Validation error
+ * @typedef {Object} ValidationError
+ * @property {string} field - Field with error
+ * @property {string} message - Error message
+ * @property {string} code - Error code
+ */
 
 // Validation rules
-class EventValidatorImpl implements EventValidator {
+class EventValidatorImpl {
   // 1. Schema validation (using existing Insieme validation)
   // 2. Business logic validation
   // 3. Permission validation
@@ -332,42 +336,32 @@ class EventValidatorImpl implements EventValidator {
 
 ##### 4. State Manager
 
-```typescript
-interface StateManager {
-  // State operations
-  getCurrentState(partition?: string): RepositoryState;
-  getCurrentEventIndex(): number;
-
-  // Event application
-  applyEvent(event: CommittedEvent): Promise<void>;
-  applyEvents(events: CommittedEvent[]): Promise<void>;
-
-  // Snapshot management
-  createSnapshot(): Promise<Snapshot>;
-  loadSnapshot(): Promise<Snapshot | null>;
-
-  // State queries
-  getStateAtEventIndex(eventIndex: number): RepositoryState;
-  getEventsRange(start: number, end: number): CommittedEvent[];
-}
+```javascript
+/**
+ * State manager interface
+ * @typedef {Object} StateManager
+ * @property {function(string=): RepositoryState} getCurrentState - Get current state
+ * @property {function(): number} getCurrentEventIndex - Get current event index
+ * @property {function(CommittedEvent): Promise<void>} applyEvent - Apply event
+ * @property {function(CommittedEvent[]): Promise<void>} applyEvents - Apply events
+ * @property {function(): Promise<Snapshot>} createSnapshot - Create snapshot
+ * @property {function(): Promise<Snapshot|null>} loadSnapshot - Load snapshot
+ * @property {function(number): RepositoryState} getStateAtEventIndex - Get state at index
+ * @property {function(number, number): CommittedEvent[]} getEventsRange - Get events range
+ */
 ```
 
 ##### 5. Broadcast Manager
 
-```typescript
-interface BroadcastManager {
-  // Broadcast to all clients
-  broadcast(event: CommittedEvent): void;
-
-  // Broadcast to specific partition
-  broadcastToPartition(partition: string, event: CommittedEvent): void;
-
-  // Broadcast to specific clients
-  broadcastToClients(clientIds: string[], event: CommittedEvent): void;
-
-  // Exclude specific client (e.g., the submitter)
-  broadcastExcept(excludeClientId: string, event: CommittedEvent): void;
-}
+```javascript
+/**
+ * Broadcast manager interface
+ * @typedef {Object} BroadcastManager
+ * @property {function(CommittedEvent): void} broadcast - Broadcast to all
+ * @property {function(string, CommittedEvent): void} broadcastToPartition - Broadcast to partition
+ * @property {function(string[], CommittedEvent): void} broadcastToClients - Broadcast to clients
+ * @property {function(string, CommittedEvent): void} broadcastExcept - Broadcast except client
+ */
 ```
 
 ### 3. Event Lifecycle
@@ -414,11 +408,16 @@ interface BroadcastManager {
 
 #### Multi-Layer Validation
 
-```typescript
+```javascript
 // Layer 1: Schema Validation (already exists in Insieme)
 import { validateEventPayload } from "insieme";
 
-function validateSchema(event: RepositoryEvent) {
+/**
+ * Validate event schema
+ * @param {RepositoryEvent} event - Event to validate
+ * @returns {ValidationResult} Validation result
+ */
+function validateSchema(event) {
   try {
     validateEventPayload(event.type, event.payload);
     return { valid: true };
@@ -435,7 +434,13 @@ function validateSchema(event: RepositoryEvent) {
 }
 
 // Layer 2: Business Logic Validation
-function validateBusinessLogic(event: RepositoryEvent, state: RepositoryState) {
+/**
+ * Validate business logic
+ * @param {RepositoryEvent} event - Event to validate
+ * @param {RepositoryState} state - Current state
+ * @returns {ValidationResult} Validation result
+ */
+function validateBusinessLogic(event, state) {
   switch (event.type) {
     case "treePush":
       return validateTreePush(event, state);
@@ -448,13 +453,25 @@ function validateBusinessLogic(event: RepositoryEvent, state: RepositoryState) {
 }
 
 // Layer 3: Permission Validation
-function validatePermissions(event: RepositoryEvent, clientId: string) {
+/**
+ * Validate permissions
+ * @param {RepositoryEvent} event - Event to validate
+ * @param {string} clientId - Client ID
+ * @returns {ValidationResult} Validation result
+ */
+function validatePermissions(event, clientId) {
   // Check if client has permission to perform this action
   // Implement based on your auth system
 }
 
 // Layer 4: Conflict Detection
-function validateConflicts(event: RepositoryEvent, history: RepositoryEvent[]) {
+/**
+ * Validate conflicts
+ * @param {RepositoryEvent} event - Event to validate
+ * @param {RepositoryEvent[]} history - Event history
+ * @returns {ValidationResult} Validation result
+ */
+function validateConflicts(event, history) {
   // Check for concurrent modifications
   // Implement Last-Write-Wins or other conflict resolution
 }
@@ -462,8 +479,14 @@ function validateConflicts(event: RepositoryEvent, history: RepositoryEvent[]) {
 
 #### Example: treePush Validation
 
-```typescript
-function validateTreePush(event: RepositoryEvent, state: RepositoryState): ValidationResult {
+```javascript
+/**
+ * Validate treePush event
+ * @param {RepositoryEvent} event - Event to validate
+ * @param {RepositoryState} state - Current state
+ * @returns {ValidationResult} Validation result
+ */
+function validateTreePush(event, state) {
   const { target, value, options } = event.payload;
 
   // Check if target exists in state
@@ -554,24 +577,47 @@ CREATE TABLE clients (
 
 #### Store Implementation
 
-```typescript
+```javascript
 // PostgreSQL Store using existing Insieme interface
-class PostgresStore implements RepositoryStore {
-  async getEvents(payload?: { partition?: string, since?: number }): Promise<RepositoryEvent[]> {
+/**
+ * PostgreSQL store implementation
+ * @class
+ */
+class PostgresStore {
+  /**
+   * Get events from store
+   * @param {{partition?: string, since?: number}} [payload] - Optional filters
+   * @returns {Promise<RepositoryEvent[]>} Array of events
+   */
+  async getEvents(payload) {
     // Query events table with optional filters
     // Support pagination for large datasets
   }
 
-  async appendEvent(event: RepositoryEvent): Promise<void> {
+  /**
+   * Append event to store
+   * @param {RepositoryEvent} event - Event to append
+   * @returns {Promise<void>}
+   */
+  async appendEvent(event) {
     // Insert event into events table
     // Return with server-assigned ID
   }
 
-  async getSnapshot(): Promise<Snapshot | null> {
+  /**
+   * Get snapshot from store
+   * @returns {Promise<Snapshot|null>} Snapshot or null
+   */
+  async getSnapshot() {
     // Query latest snapshot from snapshots table
   }
 
-  async setSnapshot(snapshot: Snapshot): Promise<void> {
+  /**
+   * Set snapshot in store
+   * @param {Snapshot} snapshot - Snapshot to save
+   * @returns {Promise<void>}
+   */
+  async setSnapshot(snapshot) {
     // Upsert snapshot into snapshots table
   }
 }
@@ -581,26 +627,29 @@ class PostgresStore implements RepositoryStore {
 
 #### Event Ordering
 
-```typescript
-// Sequential event IDs ensure ordering
-interface CommittedEvent extends RepositoryEvent {
-  id: string;           // Global unique ID (evt-1501)
-  eventId: number;      // Sequential number (1501)
-  clientId: string;     // Submitter's client ID
-  timestamp: number;    // Server timestamp
-  partition?: string;   // Optional partition
-}
+```javascript
+/**
+ * Committed event structure
+ * @typedef {RepositoryEvent & {id: string, eventId: number, clientId: string, timestamp: number, partition?: string}} CommittedEvent
+ */
 
+// Sequential event IDs ensure ordering
 // Event sequence is maintained by database
 // Clients use eventId for ordering and conflict resolution
 ```
 
 #### Last-Write-Wins (LWW)
 
-```typescript
+```javascript
 // For concurrent modifications to same target
 // Higher eventId wins (later event overwrites earlier)
-function resolveConflict(events: RepositoryEvent[], state: RepositoryState) {
+/**
+ * Resolve conflicts between events
+ * @param {RepositoryEvent[]} events - Events to resolve
+ * @param {RepositoryState} state - Current state
+ * @returns {void}
+ */
+function resolveConflict(events, state) {
   // Sort by eventId and apply in order
   // Last write to a specific path wins
 }
@@ -610,10 +659,14 @@ function resolveConflict(events: RepositoryEvent[], state: RepositoryState) {
 
 #### Connection Errors
 
-```typescript
+```javascript
 // Client-side error handling
 class InsiemeClient {
-  async handleSubmitError(error: Error) {
+  /**
+   * Handle submit error
+   * @param {Error} error - Error to handle
+   */
+  async handleSubmitError(error) {
     if (error.message.includes("validation_failed")) {
       // Rollback optimistic update
       this.rollbackDraft(error.draftId);
@@ -623,6 +676,9 @@ class InsiemeClient {
     }
   }
 
+  /**
+   * Handle disconnect
+   */
   async handleDisconnect() {
     // Enter offline mode
     this.mode = "offline";
@@ -634,6 +690,9 @@ class InsiemeClient {
     this.reconnect();
   }
 
+  /**
+   * Handle reconnect
+   */
   async handleReconnect() {
     // Request sync to get missed events
     const syncResponse = await this.requestSync();
@@ -652,9 +711,14 @@ class InsiemeClient {
 
 #### Server-Side Error Handling
 
-```typescript
-class MessageHandlerImpl implements MessageHandler {
-  async handle(message: IncomingMessage, connection: Connection) {
+```javascript
+class MessageHandlerImpl {
+  /**
+   * Handle message
+   * @param {IncomingMessage} message - Message to handle
+   * @param {Connection} connection - Connection instance
+   */
+  async handle(message, connection) {
     try {
       // Process message
       await this.processMessage(message, connection);
@@ -680,12 +744,16 @@ class MessageHandlerImpl implements MessageHandler {
 
 #### Snapshot Strategy
 
-```typescript
+```javascript
 // Use existing Insieme snapshot functionality
 const snapshotInterval = 1000; // Create snapshot every 1000 events
 
 class SnapshotScheduler {
-  async scheduleSnapshot(stateManager: StateManager) {
+  /**
+   * Schedule snapshot creation
+   * @param {StateManager} stateManager - State manager instance
+   */
+  async scheduleSnapshot(stateManager) {
     setInterval(async () => {
       const currentIndex = stateManager.getCurrentEventIndex();
 
@@ -699,13 +767,21 @@ class SnapshotScheduler {
 
 #### Event Batching
 
-```typescript
+```javascript
 // Batch events for broadcasting to reduce overhead
-class BroadcastManagerImpl implements BroadcastManager {
-  private eventQueue: CommittedEvent[] = [];
-  private batchTimeout: NodeJS.Timeout | null = null;
+class BroadcastManagerImpl {
+  constructor() {
+    /** @type {CommittedEvent[]} */
+    this.eventQueue = [];
+    /** @type {NodeJS.Timeout|null} */
+    this.batchTimeout = null;
+  }
 
-  broadcast(event: CommittedEvent) {
+  /**
+   * Broadcast event
+   * @param {CommittedEvent} event - Event to broadcast
+   */
+  broadcast(event) {
     this.eventQueue.push(event);
 
     // Send batch after 50ms or when queue reaches 10 events
@@ -720,7 +796,11 @@ class BroadcastManagerImpl implements BroadcastManager {
     }
   }
 
-  private flushBatch() {
+  /**
+   * Flush batch
+   * @private
+   */
+  flushBatch() {
     if (this.eventQueue.length === 0) return;
 
     const events = this.eventQueue.splice(0);
@@ -736,16 +816,26 @@ class BroadcastManagerImpl implements BroadcastManager {
 
 #### Compression
 
-```typescript
+```javascript
 // Compress large state snapshots
 import * as zlib from "zlib";
 
-async function compressSnapshot(snapshot: Snapshot): Promise<Buffer> {
+/**
+ * Compress snapshot
+ * @param {Snapshot} snapshot - Snapshot to compress
+ * @returns {Promise<Buffer>} Compressed snapshot
+ */
+async function compressSnapshot(snapshot) {
   const json = JSON.stringify(snapshot);
   return zlib.gzip(json);
 }
 
-async function decompressSnapshot(buffer: Buffer): Promise<Snapshot> {
+/**
+ * Decompress snapshot
+ * @param {Buffer} buffer - Compressed snapshot
+ * @returns {Promise<Snapshot>} Decompressed snapshot
+ */
+async function decompressSnapshot(buffer) {
   const json = await zlib.gunzip(buffer);
   return JSON.parse(json.toString());
 }
@@ -755,25 +845,39 @@ async function decompressSnapshot(buffer: Buffer): Promise<Snapshot> {
 
 #### Authentication & Authorization
 
-```typescript
+```javascript
 // JWT-based authentication
-interface AuthToken {
-  clientId: string;
-  userId: string;
-  permissions: string[];
-  partition?: string;
-  exp: number;
-}
+/**
+ * Auth token structure
+ * @typedef {Object} AuthToken
+ * @property {string} clientId - Client ID
+ * @property {string} userId - User ID
+ * @property {string[]} permissions - Permissions array
+ * @property {string} [partition] - Optional partition
+ * @property {number} exp - Expiration timestamp
+ */
 
 // Validate client on connection
-async function authenticateConnection(token: string): Promise<AuthToken> {
+/**
+ * Authenticate connection
+ * @param {string} token - JWT token
+ * @returns {Promise<AuthToken>} Decoded token
+ */
+async function authenticateConnection(token) {
   // Verify JWT signature
   // Check expiration
   // Return decoded token
 }
 
 // Authorization check
-function checkPermission(token: AuthToken, action: string, target: string): boolean {
+/**
+ * Check permission
+ * @param {AuthToken} token - Auth token
+ * @param {string} action - Action to check
+ * @param {string} target - Target to check
+ * @returns {boolean} Whether action is permitted
+ */
+function checkPermission(token, action, target) {
   // Check if token.permissions includes required permission
   // Implement role-based access control
 }
@@ -781,12 +885,20 @@ function checkPermission(token: AuthToken, action: string, target: string): bool
 
 #### Rate Limiting
 
-```typescript
+```javascript
 // Rate limit event submissions per client
 class RateLimiter {
-  private limits = new Map<string, number[]>();
+  constructor() {
+    /** @type {Map<string, number[]>} */
+    this.limits = new Map();
+  }
 
-  canSubmit(clientId: string): boolean {
+  /**
+   * Check if client can submit
+   * @param {string} clientId - Client ID
+   * @returns {boolean} Whether submission is allowed
+   */
+  canSubmit(clientId) {
     const now = Date.now();
     const windowMs = 60000; // 1 minute
     const maxRequests = 100;
@@ -807,12 +919,17 @@ class RateLimiter {
 
 #### Input Validation
 
-```typescript
+```javascript
 // Use existing Insieme validation
 import { validateEventPayload } from "insieme";
 
 // Additional server-side validation
-function sanitizeInput(event: RepositoryEvent): RepositoryEvent {
+/**
+ * Sanitize input
+ * @param {RepositoryEvent} event - Event to sanitize
+ * @returns {RepositoryEvent} Sanitized event
+ */
+function sanitizeInput(event) {
   // Remove any sensitive data
   // Validate data types
   // Check for malicious payloads
@@ -824,39 +941,37 @@ function sanitizeInput(event: RepositoryEvent): RepositoryEvent {
 
 #### Metrics to Track
 
-```typescript
+```javascript
 // Performance metrics
-interface Metrics {
-  // Connection metrics
-  activeConnections: number;
-  totalConnections: number;
-  connectionsPerSecond: number;
-
-  // Event metrics
-  eventsPerSecond: number;
-  averageEventProcessingTime: number;
-  eventValidationFailureRate: number;
-
-  // Broadcast metrics
-  averageBroadcastLatency: number;
-  broadcastQueueSize: number;
-
-  // Storage metrics
-  averageEventPersistenceTime: number;
-  snapshotCreationTime: number;
-
-  // Error metrics
-  errorRate: number;
-  errorsByType: Record<string, number>;
-}
+/**
+ * Metrics structure
+ * @typedef {Object} Metrics
+ * @property {number} activeConnections - Active connection count
+ * @property {number} totalConnections - Total connection count
+ * @property {number} connectionsPerSecond - Connections per second
+ * @property {number} eventsPerSecond - Events per second
+ * @property {number} averageEventProcessingTime - Average event processing time
+ * @property {number} eventValidationFailureRate - Event validation failure rate
+ * @property {number} averageBroadcastLatency - Average broadcast latency
+ * @property {number} broadcastQueueSize - Broadcast queue size
+ * @property {number} averageEventPersistenceTime - Average event persistence time
+ * @property {number} snapshotCreationTime - Snapshot creation time
+ * @property {number} errorRate - Error rate
+ * @property {Record<string, number>} errorsByType - Errors by type
+ */
 ```
 
 #### Logging
 
-```typescript
+```javascript
 // Structured logging
 class Logger {
-  info(message: string, meta?: object) {
+  /**
+   * Log info message
+   * @param {string} message - Message to log
+   * @param {object} [meta] - Optional metadata
+   */
+  info(message, meta) {
     console.log(JSON.stringify({
       level: "info",
       timestamp: Date.now(),
@@ -865,7 +980,13 @@ class Logger {
     }));
   }
 
-  error(message: string, error: Error, meta?: object) {
+  /**
+   * Log error message
+   * @param {string} message - Message to log
+   * @param {Error} error - Error to log
+   * @param {object} [meta] - Optional metadata
+   */
+  error(message, error, meta) {
     console.error(JSON.stringify({
       level: "error",
       timestamp: Date.now(),
@@ -885,18 +1006,17 @@ class Logger {
 
 #### Horizontal Scaling
 
-```typescript
+```javascript
 // Use Redis Pub/Sub for cross-server broadcasting
 import { Redis } from "ioredis";
 
-class RedisBroadcastManager implements BroadcastManager {
-  private redis: Redis;
-  private publisher: Redis;
-  private subscriber: Redis;
-
+class RedisBroadcastManager {
   constructor() {
+    /** @type {Redis} */
     this.redis = new Redis();
+    /** @type {Redis} */
     this.publisher = new Redis();
+    /** @type {Redis} */
     this.subscriber = new Redis();
 
     // Subscribe to broadcast channel
@@ -912,7 +1032,11 @@ class RedisBroadcastManager implements BroadcastManager {
     });
   }
 
-  broadcast(event: CommittedEvent) {
+  /**
+   * Broadcast event
+   * @param {CommittedEvent} event - Event to broadcast
+   */
+  broadcast(event) {
     // Publish to Redis for all servers
     this.publisher.publish("insieme:broadcast", JSON.stringify(event));
 
@@ -920,7 +1044,12 @@ class RedisBroadcastManager implements BroadcastManager {
     this.broadcastToLocalClients(event);
   }
 
-  private broadcastToLocalClients(event: CommittedEvent) {
+  /**
+   * Broadcast to local clients
+   * @param {CommittedEvent} event - Event to broadcast
+   * @private
+   */
+  broadcastToLocalClients(event) {
     // Broadcast to clients connected to this server
   }
 }
@@ -928,19 +1057,34 @@ class RedisBroadcastManager implements BroadcastManager {
 
 #### Partition-Based Sharding
 
-```typescript
+```javascript
 // Shard clients by partition
-class ShardedConnectionManager implements ConnectionManager {
-  private shards = new Map<string, ConnectionManager>();
+class ShardedConnectionManager {
+  constructor() {
+    /** @type {Map<string, ConnectionManager>} */
+    this.shards = new Map();
+  }
 
-  getShard(partition: string): ConnectionManager {
+  /**
+   * Get shard for partition
+   * @param {string} partition - Partition identifier
+   * @returns {ConnectionManager} Connection manager for partition
+   */
+  getShard(partition) {
     if (!this.shards.has(partition)) {
       this.shards.set(partition, new ConnectionManagerImpl());
     }
-    return this.shards.get(partition)!;
+    return this.shards.get(partition);
   }
 
-  connect(clientId: string, ws: WebSocket, partition?: string): Connection {
+  /**
+   * Connect client
+   * @param {string} clientId - Client ID
+   * @param {WebSocket} ws - WebSocket instance
+   * @param {string} [partition] - Optional partition
+   * @returns {Connection} Connection instance
+   */
+  connect(clientId, ws, partition) {
     const shard = partition ? this.getShard(partition) : this.getDefaultShard();
     return shard.connect(clientId, ws);
   }
@@ -974,7 +1118,7 @@ class ShardedConnectionManager implements ConnectionManager {
 
 #### Development
 
-- **Language**: TypeScript (for type safety)
+- **Language**: JavaScript with JSDoc
 - **Testing**: Vitest (already used in Insieme)
 - **Code Quality**: ESLint, Prettier
 
@@ -1011,14 +1155,27 @@ class ShardedConnectionManager implements ConnectionManager {
 
 #### Client-Side Changes Needed
 
-```typescript
+```javascript
 // Extend Insieme client to support backend sync
 class InsiemeClient {
-  private repository: Repository;
-  private websocket: WebSocket;
-  private drafts = new Map<string, DraftEvent>();
+  /**
+   * Constructor
+   * @param {Repository} repository - Repository instance
+   */
+  constructor(repository) {
+    /** @type {Repository} */
+    this.repository = repository;
+    /** @type {WebSocket} */
+    this.websocket = null;
+    /** @type {Map<string, DraftEvent>} */
+    this.drafts = new Map();
+  }
 
-  async connect(serverUrl: string) {
+  /**
+   * Connect to server
+   * @param {string} serverUrl - Server WebSocket URL
+   */
+  async connect(serverUrl) {
     this.websocket = new WebSocket(serverUrl);
 
     this.websocket.onmessage = (message) => {
@@ -1026,7 +1183,11 @@ class InsiemeClient {
     };
   }
 
-  async addEvent(event: RepositoryEvent) {
+  /**
+   * Add event
+   * @param {RepositoryEvent} event - Event to add
+   */
+  async addEvent(event) {
     // Generate draft ID
     const draftId = `draft-${Date.now()}-${Math.random()}`;
 
@@ -1044,7 +1205,11 @@ class InsiemeClient {
     }));
   }
 
-  handleServerMessage(message: ServerMessage) {
+  /**
+   * Handle server message
+   * @param {ServerMessage} message - Server message
+   */
+  handleServerMessage(message) {
     switch (message.type) {
       case "event_accepted":
         this.handleEventAccepted(message.payload);
@@ -1058,7 +1223,11 @@ class InsiemeClient {
     }
   }
 
-  handleEventAccepted(payload: EventAcceptedPayload) {
+  /**
+   * Handle event accepted
+   * @param {EventAcceptedPayload} payload - Event accepted payload
+   */
+  handleEventAccepted(payload) {
     // Remove draft
     this.drafts.delete(payload.draftId);
 
@@ -1067,7 +1236,11 @@ class InsiemeClient {
     console.log(`Event accepted: ${payload.eventId}`);
   }
 
-  handleEventRejected(payload: EventRejectedPayload) {
+  /**
+   * Handle event rejected
+   * @param {EventRejectedPayload} payload - Event rejected payload
+   */
+  handleEventRejected(payload) {
     // Rollback to state before draft
     const draft = this.drafts.get(payload.draftId);
     if (draft) {
@@ -1080,7 +1253,11 @@ class InsiemeClient {
     }
   }
 
-  handleBroadcast(payload: BroadcastPayload) {
+  /**
+   * Handle broadcast
+   * @param {BroadcastPayload} payload - Broadcast payload
+   */
+  handleBroadcast(payload) {
     // Apply committed event from another client
     this.repository.addEvent(payload.event);
   }
