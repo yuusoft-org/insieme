@@ -104,7 +104,7 @@ export const createRepository = ({
       throw new Error('Model mode requires a "model" option.');
     }
     if (model.version !== undefined && !Number.isInteger(model.version)) {
-      throw new Error('model.version must be an integer when provided.');
+      throw new Error("model.version must be an integer when provided.");
     }
   }
 

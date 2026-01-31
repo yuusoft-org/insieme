@@ -186,7 +186,7 @@ export const validateEventEnvelope = (payload) => {
  */
 export const validateModelEvent = (schemaId, data, schemas) => {
   if (!schemas || typeof schemas !== "object") {
-    throw new Error("Model schemas registry is required for type \"event\".");
+    throw new Error('Model schemas registry is required for type "event".');
   }
 
   const schema = schemas[schemaId];
