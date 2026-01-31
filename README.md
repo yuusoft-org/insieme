@@ -192,6 +192,8 @@ console.log(repository.getState());
 | `originStore` | Store | *required* | Storage adapter implementing the store interface |
 | `usingCachedEvents` | boolean | `true` | Cache events in memory for fast `getState()`. Set to `false` for partition support |
 | `snapshotInterval` | number | `1000` | Auto-save snapshot every N events. Set to `0` to disable |
+| `mode` | `"tree" \| "model"` | `"tree"` | Event mode: tree actions or model envelope |
+| `model` | object | `undefined` | Model definition for `mode: "model"` (initialState, schemas, reduce, version) |
 
 ### Repository Methods
 
@@ -218,6 +220,50 @@ await repository.addEvent({
   partition: "session-1"  // Optional
 });
 ```
+
+### Model Events (`type: "event"`)
+In `mode: "model"`, you send semantic events through a stable envelope and
+update state via an Immer reducer.
+
+```js
+const repository = createRepository({
+  originStore: store,
+  mode: "model",
+  model: {
+    initialState: { branches: { items: {}, tree: [] } },
+    schemas: {
+      "branch.create": {
+        type: "object",
+        properties: { name: { type: "string", minLength: 1 } },
+        required: ["name"],
+        additionalProperties: false
+      }
+    },
+    reduce(draft, event) {
+      if (event.payload.schema === "branch.create") {
+        const id = event.payload.data.name;
+        draft.branches.items[id] = {};
+        draft.branches.tree.push({ id, children: [] });
+      }
+    },
+    version: 1
+  }
+});
+
+await repository.addEvent({
+  type: "event",
+  payload: {
+    schema: "branch.create",
+    data: { name: "feature-x" }
+  },
+  partition: "branch/feature-x"
+});
+```
+
+**Notes:**
+- Unknown event types are rejected during validation.
+- Model mode accepts only `type: "event"` events.
+- Tree mode accepts only `set/tree*` events.
 
 #### `getState(options)`
 Get the current state or state at a specific event index.
@@ -282,6 +328,8 @@ Init → Load snapshot (50ms) → Load 727 events → Replay (300ms) → Ready (
 2. **Optimized loading**: Repository automatically loads latest snapshot on `init()`
 3. **Fallback behavior**: If no snapshot exists, loads all events (existing behavior)
 4. **Backwards compatible**: Stores without snapshot support work unchanged
+5. **Model versioning**: If `model.version` is set, snapshots store `modelVersion`
+   and are ignored when the version changes.
 
 #### Performance Comparison
 

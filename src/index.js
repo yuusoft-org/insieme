@@ -11,7 +11,12 @@
 export { createRepository } from "./repository.js";
 
 // Validation utilities
-export { EventValidationError } from "./validation.js";
+export {
+  EventValidationError,
+  validateEventEnvelope,
+  validateModelEvent,
+  validateDomainEvent,
+} from "./validation.js";
 
 // Helper functions for tree operations
 export { toFlatItems, toFlatGroups, toTreeStructure } from "./helpers.js";

@@ -7,7 +7,12 @@ import {
   treeMove,
   init as initAction,
 } from "./actions.js";
-import { validateEventPayload } from "./validation.js";
+import { produce } from "immer";
+import {
+  validateEventEnvelope,
+  validateEventPayload,
+  validateModelEvent,
+} from "./validation.js";
 
 /**
  * @typedef {import("./actions.js").SetPayload} SetPayload
@@ -20,11 +25,18 @@ import { validateEventPayload } from "./validation.js";
  */
 
 /**
- * @typedef {SetPayload | UnsetPayload | TreePushPayload | TreeDeletePayload | TreeUpdatePayload | TreeMovePayload | InitPayload} RepositoryEventPayload
+ * @typedef {Object} ModelEventPayload
+ * @property {string} schema
+ * @property {unknown} data
+ * @property {Record<string, unknown>} [meta]
  */
 
 /**
- * @typedef {"set"|"unset"|"treePush"|"treeDelete"|"treeUpdate"|"treeMove"|"init"} RepositoryEventType
+ * @typedef {SetPayload | UnsetPayload | TreePushPayload | TreeDeletePayload | TreeUpdatePayload | TreeMovePayload | InitPayload | ModelEventPayload} RepositoryEventPayload
+ */
+
+/**
+ * @typedef {"set"|"unset"|"treePush"|"treeDelete"|"treeUpdate"|"treeMove"|"init"|"event"} RepositoryEventType
  */
 
 /**
@@ -51,16 +63,28 @@ import { validateEventPayload } from "./validation.js";
  * @property {RepositoryState} state - The state at the time of snapshot
  * @property {number} eventIndex - Number of events included in this snapshot
  * @property {number} createdAt - Timestamp when snapshot was created
+ * @property {number} [modelVersion] - Optional model version used to create the snapshot
+ */
+
+/**
+ * @typedef {Object} RepositoryModel
+ * @property {RepositoryState} [initialState] - Optional default initial state
+ * @property {Record<string, object>} [schemas] - Model schema registry
+ * @property {(draft: RepositoryState, event: RepositoryEvent) => (void|RepositoryState)} reduce - Immer reducer (draft mutation)
+ * @property {(event: RepositoryEvent) => void} [validateEvent] - Optional additional validation
+ * @property {number} [version] - Optional model version for cache invalidation
  */
 
 /**
  * Creates an internal repository instance with event sourcing and checkpointing.
  * Manages state through an append-only log with periodic checkpoints for performance.
  *
- * @param {{ originStore: RepositoryStore, usingCachedEvents?: boolean, snapshotInterval?: number }} options - Repository options
+ * @param {{ originStore: RepositoryStore, usingCachedEvents?: boolean, snapshotInterval?: number, mode?: "tree"|"model", model?: RepositoryModel }} options - Repository options
  * @param {RepositoryStore} options.originStore - The store for persisting events
  * @param {boolean} [options.usingCachedEvents=true] - Whether to use cached events in memory
  * @param {number} [options.snapshotInterval=1000] - Number of events between automatic snapshots
+ * @param {"tree"|"model"} [options.mode="tree"] - Event mode
+ * @param {RepositoryModel} [options.model] - Optional model for mode="model"
  * @returns {{ init: (options?: { initialState?: RepositoryState, partition?: string }) => Promise<void>, addEvent: (event: RepositoryEvent) => Promise<void>, getState: (untilEventIndex?: number) => RepositoryState, getEvents: () => RepositoryEvent[], getEventsAsync: (payload?: object) => Promise<RepositoryEvent[]>, getStateAsync: (options?: {partition?: string, untilEventIndex?: number}) => Promise<RepositoryState>, saveSnapshot: () => Promise<void> }} Repository API
  *
  * @private This is an internal function used by factory functions
@@ -69,7 +93,21 @@ export const createRepository = ({
   originStore,
   usingCachedEvents = true,
   snapshotInterval = 1000,
+  mode = "tree",
+  model,
 }) => {
+  if (mode !== "tree" && mode !== "model") {
+    throw new Error(`Unknown mode "${mode}". Expected "tree" or "model".`);
+  }
+  if (mode === "model") {
+    if (!model) {
+      throw new Error('Model mode requires a "model" option.');
+    }
+    if (model.version !== undefined && !Number.isInteger(model.version)) {
+      throw new Error("model.version must be an integer when provided.");
+    }
+  }
+
   /** @type {RepositoryStore} */
   const store = originStore;
   const CHECKPOINT_INTERVAL = 50;
@@ -131,22 +169,13 @@ export const createRepository = ({
   };
 
   /**
-   * Applies an action to the current state and returns the new state.
-   * Central dispatcher for all supported action types.
-   *
-   * @param {Object} state - The current state
-   * @param {Object} action - The action to apply
-   * @param {string} action.actionType - Type of action (set, unset, treePush, etc.)
-   * @param {Object} action.payload - Action payload containing all action-specific data
-   * @returns {Object} New state after applying the action
-   */
-  /**
    * @param {RepositoryState} state
    * @param {RepositoryEvent} event
    * @returns {RepositoryState}
    */
-  const applyEventToState = (state, event) => {
+  const applyCoreEventToState = (state, event) => {
     const { type, payload } = event;
+    validateEventPayload(type, payload);
     if (type === "set") {
       return set(state, payload);
     } else if (type === "unset") {
@@ -166,11 +195,49 @@ export const createRepository = ({
   };
 
   /**
+   * @param {RepositoryState} state
+   * @param {RepositoryEvent} event
+   * @returns {RepositoryState}
+   */
+  const applyEventToState = (state, event) => {
+    if (event.type === "init") {
+      return applyCoreEventToState(state, event);
+    }
+
+    if (mode === "model") {
+      if (event.type !== "event") {
+        throw new Error('Model mode only accepts type "event".');
+      }
+      validateEventEnvelope(event.payload);
+      validateModelEvent(
+        event.payload.schema,
+        event.payload.data,
+        model.schemas,
+      );
+      if (typeof model.validateEvent === "function") {
+        model.validateEvent(event);
+      }
+
+      const reduce = model.reduce || model.reduceEvent;
+      if (typeof reduce !== "function") {
+        throw new Error('Model mode requires a "reduce" function.');
+      }
+
+      return produce(state, (draft) => reduce(draft, event));
+    }
+
+    if (event.type === "event") {
+      throw new Error('Tree mode does not accept type "event".');
+    }
+    return applyCoreEventToState(state, event);
+  };
+
+  /**
    * Initializes the repository by loading all events from storage.
    * Replays events to reconstruct current state and creates checkpoints.
    *
    * @param {{ initialState?: RepositoryState, partition?: string }} [options] - Initialization options
-   * @param {RepositoryState} [options.initialState] - Optional initial state to set if no events exist
+   * @param {RepositoryState} [options.initialState] - Optional initial state to set if no events exist (falls back to model.initialState)
    * @param {string} [options.partition] - Optional partition identifier for the repository
    * @returns {Promise<void>}
    */
@@ -178,6 +245,13 @@ export const createRepository = ({
     initialState: providedInitialState,
     partition,
   } = {}) => {
+    const effectiveInitialState =
+      providedInitialState !== undefined
+        ? providedInitialState
+        : mode === "model"
+          ? model?.initialState
+          : undefined;
+
     resetCheckpoints();
     snapshotEventIndex = 0;
 
@@ -186,6 +260,16 @@ export const createRepository = ({
       let snapshot = null;
       if (store.getSnapshot) {
         snapshot = await store.getSnapshot();
+      }
+
+      if (snapshot) {
+        if (
+          mode === "model" &&
+          model?.version !== undefined &&
+          snapshot.modelVersion !== model.version
+        ) {
+          snapshot = null;
+        }
       }
 
       if (snapshot) {
@@ -242,12 +326,12 @@ export const createRepository = ({
     const hasEvents = usingCachedEvents ? cachedEvents.length > 0 : false;
     const hasSnapshot = snapshotEventIndex > 0;
 
-    if (!hasEvents && !hasSnapshot && providedInitialState) {
+    if (!hasEvents && !hasSnapshot && effectiveInitialState) {
       const initEvent = {
         type: "init",
         partition,
         payload: {
-          value: providedInitialState,
+          value: effectiveInitialState,
         },
       };
 
@@ -284,8 +368,26 @@ export const createRepository = ({
       );
     }
 
-    // Validate event payload against schema
-    validateEventPayload(event.type, event.payload);
+    if (mode === "model") {
+      if (event.type !== "event") {
+        throw new Error('Model mode only accepts type "event".');
+      }
+      validateEventEnvelope(event.payload);
+      validateModelEvent(
+        event.payload.schema,
+        event.payload.data,
+        model.schemas,
+      );
+      if (typeof model.validateEvent === "function") {
+        model.validateEvent(event);
+      }
+    } else {
+      if (event.type === "event") {
+        throw new Error('Tree mode does not accept type "event".');
+      }
+      // Validate event payload against schema
+      validateEventPayload(event.type, event.payload);
+    }
 
     // Event now includes partition field directly
     const internalEvent = {
@@ -339,6 +441,7 @@ export const createRepository = ({
       state: structuredClone(latestState),
       eventIndex: latestComputedIndex,
       createdAt: Date.now(),
+      modelVersion: model?.version,
     };
 
     await store.setSnapshot(snapshot);
