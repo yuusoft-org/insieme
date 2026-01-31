@@ -5,7 +5,6 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createRepository } from './src/repository.js';
-import { treePush } from './src/actions.js';
 
 // Mock store implementation for testing
 const createMockStore = () => {
@@ -201,6 +200,26 @@ describe('createRepository', () => {
     it('should load events from store during initialization', async () => {
       await repository.init();
       expect(mockStore.getEvents).toHaveBeenCalled();
+    });
+  });
+
+  describe('mode validation', () => {
+    it('should throw when mode is unknown', () => {
+      expect(() => createRepository({ originStore: mockStore, mode: 'unknown' }))
+        .toThrow('Unknown mode');
+    });
+
+    it('should require model when using model mode', () => {
+      expect(() => createRepository({ originStore: mockStore, mode: 'model' }))
+        .toThrow('Model mode requires a "model" option.');
+    });
+
+    it('should require integer model.version when provided', () => {
+      expect(() => createRepository({
+        originStore: mockStore,
+        mode: 'model',
+        model: { version: 'v1', schemas: {}, reduce() {} }
+      })).toThrow('model.version must be an integer');
     });
   });
 
@@ -757,16 +776,36 @@ describe('persistent snapshot functionality', () => {
         state: { counter: 100, name: 'fromSnapshot' },
         eventIndex: 5,
         createdAt: Date.now(),
-        modelVersion: 'v1'
+        modelVersion: 1
       });
 
       mockStore._setEvents([
-        { type: 'set', payload: { target: 'counter', value: 1 } }
+        {
+          type: 'event',
+          payload: { schema: 'counter.set', data: { value: 1 } }
+        }
       ]);
 
       const repository = createRepository({
         originStore: mockStore,
-        model: { version: 'v2', reduceEvent() { return {}; } }
+        mode: 'model',
+        model: {
+          version: 2,
+          initialState: {},
+          schemas: {
+            'counter.set': {
+              type: 'object',
+              properties: { value: { type: 'number' } },
+              required: ['value'],
+              additionalProperties: false
+            }
+          },
+          reduce(draft, event) {
+            if (event.payload.schema === 'counter.set') {
+              draft.counter = event.payload.data.value;
+            }
+          }
+        }
       });
 
       await repository.init();
@@ -1036,20 +1075,37 @@ describe('persistent snapshot functionality', () => {
       const mockStore = createMockStoreWithSnapshots();
       const repository = createRepository({
         originStore: mockStore,
-        model: { version: 'v1', reduceEvent: (state) => state }
+        mode: 'model',
+        model: {
+          version: 1,
+          initialState: {},
+          schemas: {
+            'counter.set': {
+              type: 'object',
+              properties: { value: { type: 'number' } },
+              required: ['value'],
+              additionalProperties: false
+            }
+          },
+          reduce(draft, event) {
+            if (event.payload.schema === 'counter.set') {
+              draft.counter = event.payload.data.value;
+            }
+          }
+        }
       });
 
       await repository.init();
 
       await repository.addEvent({
-        type: 'set',
-        payload: { target: 'counter', value: 1 }
+        type: 'event',
+        payload: { schema: 'counter.set', data: { value: 1 } }
       });
 
       await repository.saveSnapshot();
 
       const savedSnapshot = mockStore._getSnapshot();
-      expect(savedSnapshot.modelVersion).toBe('v1');
+      expect(savedSnapshot.modelVersion).toBe(1);
     });
 
     it('should be no-op when store does not support snapshots', async () => {
@@ -1271,18 +1327,18 @@ describe('persistent snapshot functionality', () => {
     });
   });
 
-  describe('domain event envelope', () => {
+  describe('model event envelope', () => {
     let mockStore;
 
     beforeEach(() => {
       mockStore = createMockStore();
     });
 
-    it('should apply domain events when model is provided', async () => {
+    it('should apply model events when model is provided', async () => {
       const model = {
         initialState: { branches: { items: {}, tree: [] } },
         schemas: {
-          'branch.create@v1': {
+          'branch.create': {
             type: 'object',
             properties: {
               name: { type: 'string', minLength: 1 },
@@ -1292,25 +1348,23 @@ describe('persistent snapshot functionality', () => {
             additionalProperties: false
           }
         },
-        reduceEvent(state, event) {
+        reduce(draft, event) {
           const { schema, data } = event.payload;
-          if (schema === 'branch.create@v1') {
-            return treePush(state, {
-              target: 'branches',
-              value: { id: data.name, desc: data.desc || '' }
-            });
+          if (schema === 'branch.create') {
+            draft.branches.items[data.name] = { desc: data.desc || '' };
+            draft.branches.tree.push({ id: data.name, children: [] });
+            return;
           }
-          return state;
         }
       };
 
-      const repository = createRepository({ originStore: mockStore, model });
+      const repository = createRepository({ originStore: mockStore, mode: 'model', model });
       await repository.init();
 
       await repository.addEvent({
         type: 'event',
         payload: {
-          schema: 'branch.create@v1',
+          schema: 'branch.create',
           data: { name: 'feature-x', desc: 'test' }
         },
         partition: 'branch/feature-x'
@@ -1321,38 +1375,52 @@ describe('persistent snapshot functionality', () => {
       expect(state.branches.tree[0]).toEqual({ id: 'feature-x', children: [] });
     });
 
-    it('should reject domain events when no model is configured', async () => {
-      const repository = createRepository({ originStore: mockStore });
+    it('should reject model events when no model is configured', async () => {
+      const repository = createRepository({ originStore: mockStore, mode: 'tree' });
       await repository.init();
 
       await expect(repository.addEvent({
         type: 'event',
         payload: {
-          schema: 'branch.create@v1',
+          schema: 'branch.create',
           data: { name: 'feature-x' }
         }
-      })).rejects.toThrow('Domain events require a model');
+      })).rejects.toThrow('Tree mode does not accept type "event".');
     });
 
-    it('should reject domain events with unknown schema', async () => {
+    it('should reject model events with unknown schema', async () => {
       const model = {
         initialState: { branches: { items: {}, tree: [] } },
         schemas: {},
-        reduceEvent(state) {
-          return state;
-        }
+        reduce() {}
       };
 
-      const repository = createRepository({ originStore: mockStore, model });
+      const repository = createRepository({ originStore: mockStore, mode: 'model', model });
       await repository.init();
 
       await expect(repository.addEvent({
         type: 'event',
         payload: {
-          schema: 'branch.create@v1',
+          schema: 'branch.create',
           data: { name: 'feature-x' }
         }
       })).rejects.toThrow('unknown schema');
+    });
+
+    it('should reject non-event types in model mode', async () => {
+      const model = {
+        initialState: {},
+        schemas: {},
+        reduce() {}
+      };
+
+      const repository = createRepository({ originStore: mockStore, mode: 'model', model });
+      await repository.init();
+
+      await expect(repository.addEvent({
+        type: 'set',
+        payload: { target: 'x', value: 1 }
+      })).rejects.toThrow('Model mode only accepts type "event".');
     });
   });
 });

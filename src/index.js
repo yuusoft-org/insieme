@@ -13,8 +13,9 @@ export { createRepository } from "./repository.js";
 // Validation utilities
 export {
   EventValidationError,
-  validateDomainEvent,
   validateEventEnvelope,
+  validateModelEvent,
+  validateDomainEvent,
 } from "./validation.js";
 
 // Helper functions for tree operations

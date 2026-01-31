@@ -116,7 +116,7 @@ const eventEnvelopeSchema = {
 
 const eventEnvelopeValidator = ajv.compile(eventEnvelopeSchema);
 
-const domainValidatorCache = new WeakMap();
+const modelValidatorCache = new WeakMap();
 
 /**
  * Custom error class for event validation failures
@@ -165,7 +165,7 @@ export const validateEventPayload = (eventType, payload) => {
 };
 
 /**
- * Validates the event envelope for domain events (type === "event").
+ * Validates the event envelope for model events (type === "event").
  *
  * @param {unknown} payload - The event payload to validate
  * @throws {EventValidationError} If the payload does not match the envelope schema
@@ -177,16 +177,16 @@ export const validateEventEnvelope = (payload) => {
 };
 
 /**
- * Validates a domain event payload against a provided schema registry.
+ * Validates a model event payload against a provided schema registry.
  *
- * @param {string} schemaId - Schema identifier (e.g., "branch.create@v1")
- * @param {unknown} data - The domain event payload to validate
+ * @param {string} schemaId - Schema identifier (e.g., "branch.create")
+ * @param {unknown} data - The model event payload to validate
  * @param {Record<string, object>} schemas - Schema registry
  * @throws {EventValidationError} If schema is missing or payload invalid
  */
-export const validateDomainEvent = (schemaId, data, schemas) => {
+export const validateModelEvent = (schemaId, data, schemas) => {
   if (!schemas || typeof schemas !== "object") {
-    throw new Error("Domain schemas registry is required for type \"event\".");
+    throw new Error("Model schemas registry is required for type \"event\".");
   }
 
   const schema = schemas[schemaId];
@@ -196,10 +196,10 @@ export const validateDomainEvent = (schemaId, data, schemas) => {
     ]);
   }
 
-  let registryCache = domainValidatorCache.get(schemas);
+  let registryCache = modelValidatorCache.get(schemas);
   if (!registryCache) {
     registryCache = new Map();
-    domainValidatorCache.set(schemas, registryCache);
+    modelValidatorCache.set(schemas, registryCache);
   }
 
   let validator = registryCache.get(schemaId);
@@ -241,16 +241,19 @@ export const testValidateEventEnvelope = (payload) => {
 };
 
 /**
- * Test helper for validating domain events
+ * Test helper for validating model events
  * Returns true if valid, throws EventValidationError if invalid
  *
  * @param {string} schemaId - Schema identifier
- * @param {unknown} data - Domain payload
+ * @param {unknown} data - Model payload
  * @param {Record<string, object>} schemas - Schema registry
  * @returns {boolean} true if validation passes
  * @throws {EventValidationError} If the payload does not match the schema
  */
-export const testValidateDomainEvent = (schemaId, data, schemas) => {
-  validateDomainEvent(schemaId, data, schemas);
+export const testValidateModelEvent = (schemaId, data, schemas) => {
+  validateModelEvent(schemaId, data, schemas);
   return true;
 };
+
+// Back-compat alias (deprecated)
+export const validateDomainEvent = validateModelEvent;

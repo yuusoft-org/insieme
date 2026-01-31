@@ -1,6 +1,6 @@
 file: "../../src/validation.js"
 group: validation
-suites: [testValidateEventPayload, testValidateEventEnvelope, testValidateDomainEvent]
+suites: [testValidateEventPayload, testValidateEventEnvelope, testValidateModelEvent]
 ---
 suite: testValidateEventPayload
 exportName: testValidateEventPayload
@@ -262,7 +262,7 @@ exportName: testValidateEventEnvelope
 ---
 case: "valid event envelope"
 in:
-  - schema: "branch.create@v1"
+  - schema: "branch.create"
     data:
       name: "feature-x"
     meta:
@@ -277,26 +277,26 @@ throws: 'Event validation failed for type "event"'
 ---
 case: "event envelope missing data"
 in:
-  - schema: "branch.create@v1"
+  - schema: "branch.create"
 throws: 'Event validation failed for type "event"'
 ---
 case: "event envelope with unknown property"
 in:
-  - schema: "branch.create@v1"
+  - schema: "branch.create"
     data:
       name: "feature-x"
     extra: true
 throws: 'Event validation failed for type "event"'
 
 ---
-suite: testValidateDomainEvent
-exportName: testValidateDomainEvent
+suite: testValidateModelEvent
+exportName: testValidateModelEvent
 ---
-case: "valid domain event"
+case: "valid model event"
 in:
-  - "branch.create@v1"
+  - "branch.create"
   - name: "feature-x"
-  - branch.create@v1:
+  - branch.create:
       type: "object"
       properties:
         name:
@@ -306,18 +306,18 @@ in:
       additionalProperties: false
 out: true
 ---
-case: "domain event unknown schema"
+case: "model event unknown schema"
 in:
-  - "branch.create@v1"
+  - "branch.create"
   - name: "feature-x"
   - {}
 throws: "unknown schema"
 ---
-case: "domain event invalid payload"
+case: "model event invalid payload"
 in:
-  - "branch.create@v1"
+  - "branch.create"
   - {}
-  - branch.create@v1:
+  - branch.create:
       type: "object"
       properties:
         name:
@@ -325,11 +325,11 @@ in:
           minLength: 1
       required: ["name"]
       additionalProperties: false
-throws: 'Event validation failed for type "branch.create@v1"'
+throws: 'Event validation failed for type "branch.create"'
 ---
-case: "domain event missing schemas registry"
+case: "model event missing schemas registry"
 in:
-  - "branch.create@v1"
+  - "branch.create"
   - name: "feature-x"
   - ~
-throws: 'Domain schemas registry is required for type "event".'
+throws: 'Model schemas registry is required for type "event".'

@@ -192,7 +192,8 @@ console.log(repository.getState());
 | `originStore` | Store | *required* | Storage adapter implementing the store interface |
 | `usingCachedEvents` | boolean | `true` | Cache events in memory for fast `getState()`. Set to `false` for partition support |
 | `snapshotInterval` | number | `1000` | Auto-save snapshot every N events. Set to `0` to disable |
-| `model` | object | `undefined` | Optional domain model for `type: "event"` (initialState, schemas, reduceEvent, version) |
+| `mode` | `"tree" \| "model"` | `"tree"` | Event mode: tree actions or model envelope |
+| `model` | object | `undefined` | Model definition for `mode: "model"` (initialState, schemas, reduce, version) |
 
 ### Repository Methods
 
@@ -220,44 +221,39 @@ await repository.addEvent({
 });
 ```
 
-### Domain Events (`type: "event"`)
-You can send semantic events through a stable envelope and map them to tree
-operations in your model reducer.
+### Model Events (`type: "event"`)
+In `mode: "model"`, you send semantic events through a stable envelope and
+update state via an Immer reducer.
 
 ```js
 const repository = createRepository({
   originStore: store,
+  mode: "model",
   model: {
     initialState: { branches: { items: {}, tree: [] } },
     schemas: {
-      "branch.create@v1": {
+      "branch.create": {
         type: "object",
         properties: { name: { type: "string", minLength: 1 } },
         required: ["name"],
         additionalProperties: false
       }
     },
-    reduceEvent(state, event) {
-      if (event.payload.schema === "branch.create@v1") {
+    reduce(draft, event) {
+      if (event.payload.schema === "branch.create") {
         const id = event.payload.data.name;
-        return {
-          ...state,
-          branches: {
-            items: { ...state.branches.items, [id]: {} },
-            tree: [...state.branches.tree, { id, children: [] }]
-          }
-        };
+        draft.branches.items[id] = {};
+        draft.branches.tree.push({ id, children: [] });
       }
-      return state;
     },
-    version: "v1"
+    version: 1
   }
 });
 
 await repository.addEvent({
   type: "event",
   payload: {
-    schema: "branch.create@v1",
+    schema: "branch.create",
     data: { name: "feature-x" }
   },
   partition: "branch/feature-x"
@@ -266,7 +262,8 @@ await repository.addEvent({
 
 **Notes:**
 - Unknown event types are rejected during validation.
-- `type: "event"` requires a model with `reduceEvent` and schemas.
+- Model mode accepts only `type: "event"` events.
+- Tree mode accepts only `set/tree*` events.
 
 #### `getState(options)`
 Get the current state or state at a specific event index.
