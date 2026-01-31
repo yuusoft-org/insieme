@@ -5,6 +5,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createRepository } from './src/repository.js';
+import { treePush } from './src/actions.js';
 
 // Mock store implementation for testing
 const createMockStore = () => {
@@ -435,26 +436,18 @@ describe('createRepository', () => {
       await repository.init();
     });
 
-    it('should handle unknown event types gracefully', async () => {
-      await repository.addEvent({
+    it('should reject unknown event types', async () => {
+      await expect(repository.addEvent({
         type: 'unknownType',
         payload: { data: 'test' }
-      });
-
-      const state = repository.getState();
-      expect(state).toEqual({});
+      })).rejects.toThrow('unknown event type');
     });
 
-    it('should handle malformed event payloads', async () => {
-      // Test with malformed payload that won't crash
-      await repository.addEvent({
-        type: 'unknownType', // Use unknown type instead of null payload
-        payload: null
-      });
-
-      // Should not throw, but handle gracefully
-      const state = repository.getState();
-      expect(state).toEqual({});
+    it('should reject malformed event payloads', async () => {
+      await expect(repository.addEvent({
+        type: 'set',
+        payload: { value: 'missing target' }
+      })).rejects.toThrow('Event validation failed for type "set"');
     });
   });
 
@@ -757,6 +750,31 @@ describe('persistent snapshot functionality', () => {
       expect(mockStore.getSnapshot).toHaveBeenCalled();
     });
 
+    it('should ignore snapshot when model version mismatches', async () => {
+      const mockStore = createMockStoreWithSnapshots();
+
+      mockStore._setSnapshot({
+        state: { counter: 100, name: 'fromSnapshot' },
+        eventIndex: 5,
+        createdAt: Date.now(),
+        modelVersion: 'v1'
+      });
+
+      mockStore._setEvents([
+        { type: 'set', payload: { target: 'counter', value: 1 } }
+      ]);
+
+      const repository = createRepository({
+        originStore: mockStore,
+        model: { version: 'v2', reduceEvent() { return {}; } }
+      });
+
+      await repository.init();
+
+      const state = repository.getState();
+      expect(state).toEqual({ counter: 1 });
+    });
+
     it('should replay only events since snapshot.eventIndex', async () => {
       const mockStore = createMockStoreWithSnapshots();
 
@@ -1014,6 +1032,26 @@ describe('persistent snapshot functionality', () => {
       expect(savedSnapshot.createdAt).toBeDefined();
     });
 
+    it('should persist modelVersion in snapshots when provided', async () => {
+      const mockStore = createMockStoreWithSnapshots();
+      const repository = createRepository({
+        originStore: mockStore,
+        model: { version: 'v1', reduceEvent: (state) => state }
+      });
+
+      await repository.init();
+
+      await repository.addEvent({
+        type: 'set',
+        payload: { target: 'counter', value: 1 }
+      });
+
+      await repository.saveSnapshot();
+
+      const savedSnapshot = mockStore._getSnapshot();
+      expect(savedSnapshot.modelVersion).toBe('v1');
+    });
+
     it('should be no-op when store does not support snapshots', async () => {
       const mockStore = createMockStore();
       const repository = createRepository({ originStore: mockStore });
@@ -1230,6 +1268,91 @@ describe('persistent snapshot functionality', () => {
 
       const savedSnapshot = mockStore._getSnapshot();
       expect(savedSnapshot.eventIndex).toBe(25);
+    });
+  });
+
+  describe('domain event envelope', () => {
+    let mockStore;
+
+    beforeEach(() => {
+      mockStore = createMockStore();
+    });
+
+    it('should apply domain events when model is provided', async () => {
+      const model = {
+        initialState: { branches: { items: {}, tree: [] } },
+        schemas: {
+          'branch.create@v1': {
+            type: 'object',
+            properties: {
+              name: { type: 'string', minLength: 1 },
+              desc: { type: 'string' }
+            },
+            required: ['name'],
+            additionalProperties: false
+          }
+        },
+        reduceEvent(state, event) {
+          const { schema, data } = event.payload;
+          if (schema === 'branch.create@v1') {
+            return treePush(state, {
+              target: 'branches',
+              value: { id: data.name, desc: data.desc || '' }
+            });
+          }
+          return state;
+        }
+      };
+
+      const repository = createRepository({ originStore: mockStore, model });
+      await repository.init();
+
+      await repository.addEvent({
+        type: 'event',
+        payload: {
+          schema: 'branch.create@v1',
+          data: { name: 'feature-x', desc: 'test' }
+        },
+        partition: 'branch/feature-x'
+      });
+
+      const state = repository.getState();
+      expect(state.branches.items['feature-x']).toEqual({ desc: 'test' });
+      expect(state.branches.tree[0]).toEqual({ id: 'feature-x', children: [] });
+    });
+
+    it('should reject domain events when no model is configured', async () => {
+      const repository = createRepository({ originStore: mockStore });
+      await repository.init();
+
+      await expect(repository.addEvent({
+        type: 'event',
+        payload: {
+          schema: 'branch.create@v1',
+          data: { name: 'feature-x' }
+        }
+      })).rejects.toThrow('Domain events require a model');
+    });
+
+    it('should reject domain events with unknown schema', async () => {
+      const model = {
+        initialState: { branches: { items: {}, tree: [] } },
+        schemas: {},
+        reduceEvent(state) {
+          return state;
+        }
+      };
+
+      const repository = createRepository({ originStore: mockStore, model });
+      await repository.init();
+
+      await expect(repository.addEvent({
+        type: 'event',
+        payload: {
+          schema: 'branch.create@v1',
+          data: { name: 'feature-x' }
+        }
+      })).rejects.toThrow('unknown schema');
     });
   });
 });
