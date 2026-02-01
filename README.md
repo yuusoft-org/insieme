@@ -394,30 +394,22 @@ Each tree contains two parts:
 - `items`: A flat object storing all node data by ID
 - `tree`: A hierarchical array representing the tree structure
 
-```json
-{
-  "targetKey": {
-    "items": {
-      "item1": {
-        "id": "item1",
-        "name": "Root Folder",
-        "type": "folder"
-      },
-      "item2": {
-        "id": "item2",
-        "name": "Child File",
-        "type": "file"
-      }
-    },
-    "tree": [{
-      "id": "item1",
-      "children": [{
-        "id": "item2",
-        "children": []
-      }]
-    }]
-  }
-}
+```yaml
+targetKey:
+  items:
+    item1:
+      id: item1
+      name: Root Folder
+      type: folder
+    item2:
+      id: item2
+      name: Child File
+      type: file
+  tree:
+    - id: item1
+      children:
+        - id: item2
+          children: []
 ```
 
 ### Core Actions
@@ -434,32 +426,25 @@ await repository.addEvent({
     options: { replace: false }
   }
 })
+```
 
 **Options:**
 - `replace: boolean` (default: false) - When true, replaces the entire value. When false, merges with existing objects.
 
 **Before:**
-```json
-{
-  "user": {
-    "profile": {
-      "name": "John Doe",
-      "email": "john@example.com"
-    }
-  }
-}
+```yaml
+user:
+  profile:
+    name: John Doe
+    email: john@example.com
 ```
 
 **After:**
-```json
-{
-  "user": {
-    "profile": {
-      "name": "Alice Smith",
-      "email": "john@example.com"
-    }
-  }
-}
+```yaml
+user:
+  profile:
+    name: Alice Smith
+    email: john@example.com
 ```
 
 #### `unset`
@@ -475,26 +460,18 @@ await repository.addEvent({
 ```
 
 **Before:**
-```json
-{
-  "user": {
-    "profile": {
-      "name": "Alice Smith",
-      "email": "john@example.com"
-    }
-  }
-}
+```yaml
+user:
+  profile:
+    name: Alice Smith
+    email: john@example.com
 ```
 
 **After:**
-```json
-{
-  "user": {
-    "profile": {
-      "name": "Alice Smith"
-    }
-  }
-}
+```yaml
+user:
+  profile:
+    name: Alice Smith
 ```
 
 ### Tree Actions
