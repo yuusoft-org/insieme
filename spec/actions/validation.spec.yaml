@@ -1,6 +1,6 @@
 file: "../../src/validation.js"
 group: validation
-suites: [testValidateEventPayload]
+suites: [testValidateEventPayload, testValidateEventEnvelope, testValidateModelEvent]
 ---
 suite: testValidateEventPayload
 exportName: testValidateEventPayload
@@ -241,8 +241,95 @@ in:
       parent: "folder2"
 throws: 'Event validation failed for type "treeMove"'
 ---
+case: "valid init event"
+in:
+  - init
+  - value:
+      explorer:
+        items: {}
+        tree: []
+out: true
+---
 case: "unknown event type passes validation"
 in:
   - unknownType
   - anything: "goes"
+throws: 'Event validation failed for type "unknownType"'
+
+---
+suite: testValidateEventEnvelope
+exportName: testValidateEventEnvelope
+---
+case: "valid event envelope"
+in:
+  - schema: "branch.create"
+    data:
+      name: "feature-x"
+    meta:
+      author: "alice"
 out: true
+---
+case: "event envelope missing schema"
+in:
+  - data:
+      name: "feature-x"
+throws: 'Event validation failed for type "event"'
+---
+case: "event envelope missing data"
+in:
+  - schema: "branch.create"
+throws: 'Event validation failed for type "event"'
+---
+case: "event envelope with unknown property"
+in:
+  - schema: "branch.create"
+    data:
+      name: "feature-x"
+    extra: true
+throws: 'Event validation failed for type "event"'
+
+---
+suite: testValidateModelEvent
+exportName: testValidateModelEvent
+---
+case: "valid model event"
+in:
+  - "branch.create"
+  - name: "feature-x"
+  - branch.create:
+      type: "object"
+      properties:
+        name:
+          type: "string"
+          minLength: 1
+      required: ["name"]
+      additionalProperties: false
+out: true
+---
+case: "model event unknown schema"
+in:
+  - "branch.create"
+  - name: "feature-x"
+  - {}
+throws: "unknown schema"
+---
+case: "model event invalid payload"
+in:
+  - "branch.create"
+  - {}
+  - branch.create:
+      type: "object"
+      properties:
+        name:
+          type: "string"
+          minLength: 1
+      required: ["name"]
+      additionalProperties: false
+throws: 'Event validation failed for type "branch.create"'
+---
+case: "model event missing schemas registry"
+in:
+  - "branch.create"
+  - name: "feature-x"
+  - ~
+throws: 'Model schemas registry is required for type "event".'

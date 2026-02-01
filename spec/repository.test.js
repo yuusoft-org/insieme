@@ -203,6 +203,26 @@ describe('createRepository', () => {
     });
   });
 
+  describe('mode validation', () => {
+    it('should throw when mode is unknown', () => {
+      expect(() => createRepository({ originStore: mockStore, mode: 'unknown' }))
+        .toThrow('Unknown mode');
+    });
+
+    it('should require model when using model mode', () => {
+      expect(() => createRepository({ originStore: mockStore, mode: 'model' }))
+        .toThrow('Model mode requires a "model" option.');
+    });
+
+    it('should require integer model.version when provided', () => {
+      expect(() => createRepository({
+        originStore: mockStore,
+        mode: 'model',
+        model: { version: 'v1', schemas: {}, reduce() {} }
+      })).toThrow('model.version must be an integer');
+    });
+  });
+
   describe('state management', () => {
     beforeEach(async () => {
       await repository.init();
@@ -435,26 +455,18 @@ describe('createRepository', () => {
       await repository.init();
     });
 
-    it('should handle unknown event types gracefully', async () => {
-      await repository.addEvent({
+    it('should reject unknown event types', async () => {
+      await expect(repository.addEvent({
         type: 'unknownType',
         payload: { data: 'test' }
-      });
-
-      const state = repository.getState();
-      expect(state).toEqual({});
+      })).rejects.toThrow('unknown event type');
     });
 
-    it('should handle malformed event payloads', async () => {
-      // Test with malformed payload that won't crash
-      await repository.addEvent({
-        type: 'unknownType', // Use unknown type instead of null payload
-        payload: null
-      });
-
-      // Should not throw, but handle gracefully
-      const state = repository.getState();
-      expect(state).toEqual({});
+    it('should reject malformed event payloads', async () => {
+      await expect(repository.addEvent({
+        type: 'set',
+        payload: { value: 'missing target' }
+      })).rejects.toThrow('Event validation failed for type "set"');
     });
   });
 
@@ -757,6 +769,51 @@ describe('persistent snapshot functionality', () => {
       expect(mockStore.getSnapshot).toHaveBeenCalled();
     });
 
+    it('should ignore snapshot when model version mismatches', async () => {
+      const mockStore = createMockStoreWithSnapshots();
+
+      mockStore._setSnapshot({
+        state: { counter: 100, name: 'fromSnapshot' },
+        eventIndex: 5,
+        createdAt: Date.now(),
+        modelVersion: 1
+      });
+
+      mockStore._setEvents([
+        {
+          type: 'event',
+          payload: { schema: 'counter.set', data: { value: 1 } }
+        }
+      ]);
+
+      const repository = createRepository({
+        originStore: mockStore,
+        mode: 'model',
+        model: {
+          version: 2,
+          initialState: {},
+          schemas: {
+            'counter.set': {
+              type: 'object',
+              properties: { value: { type: 'number' } },
+              required: ['value'],
+              additionalProperties: false
+            }
+          },
+          reduce(draft, event) {
+            if (event.payload.schema === 'counter.set') {
+              draft.counter = event.payload.data.value;
+            }
+          }
+        }
+      });
+
+      await repository.init();
+
+      const state = repository.getState();
+      expect(state).toEqual({ counter: 1 });
+    });
+
     it('should replay only events since snapshot.eventIndex', async () => {
       const mockStore = createMockStoreWithSnapshots();
 
@@ -1014,6 +1071,43 @@ describe('persistent snapshot functionality', () => {
       expect(savedSnapshot.createdAt).toBeDefined();
     });
 
+    it('should persist modelVersion in snapshots when provided', async () => {
+      const mockStore = createMockStoreWithSnapshots();
+      const repository = createRepository({
+        originStore: mockStore,
+        mode: 'model',
+        model: {
+          version: 1,
+          initialState: {},
+          schemas: {
+            'counter.set': {
+              type: 'object',
+              properties: { value: { type: 'number' } },
+              required: ['value'],
+              additionalProperties: false
+            }
+          },
+          reduce(draft, event) {
+            if (event.payload.schema === 'counter.set') {
+              draft.counter = event.payload.data.value;
+            }
+          }
+        }
+      });
+
+      await repository.init();
+
+      await repository.addEvent({
+        type: 'event',
+        payload: { schema: 'counter.set', data: { value: 1 } }
+      });
+
+      await repository.saveSnapshot();
+
+      const savedSnapshot = mockStore._getSnapshot();
+      expect(savedSnapshot.modelVersion).toBe(1);
+    });
+
     it('should be no-op when store does not support snapshots', async () => {
       const mockStore = createMockStore();
       const repository = createRepository({ originStore: mockStore });
@@ -1230,6 +1324,203 @@ describe('persistent snapshot functionality', () => {
 
       const savedSnapshot = mockStore._getSnapshot();
       expect(savedSnapshot.eventIndex).toBe(25);
+    });
+  });
+
+  describe('model event envelope', () => {
+    let mockStore;
+
+    beforeEach(() => {
+      mockStore = createMockStore();
+    });
+
+    it('should apply model events when model is provided', async () => {
+      const model = {
+        initialState: { branches: { items: {}, tree: [] } },
+        schemas: {
+          'branch.create': {
+            type: 'object',
+            properties: {
+              name: { type: 'string', minLength: 1 },
+              desc: { type: 'string' }
+            },
+            required: ['name'],
+            additionalProperties: false
+          }
+        },
+        reduce(draft, event) {
+          const { schema, data } = event.payload;
+          if (schema === 'branch.create') {
+            draft.branches.items[data.name] = { desc: data.desc || '' };
+            draft.branches.tree.push({ id: data.name, children: [] });
+            return;
+          }
+        }
+      };
+
+      const repository = createRepository({ originStore: mockStore, mode: 'model', model });
+      await repository.init();
+
+      await repository.addEvent({
+        type: 'event',
+        payload: {
+          schema: 'branch.create',
+          data: { name: 'feature-x', desc: 'test' }
+        },
+        partition: 'branch/feature-x'
+      });
+
+      const state = repository.getState();
+      expect(state.branches.items['feature-x']).toEqual({ desc: 'test' });
+      expect(state.branches.tree[0]).toEqual({ id: 'feature-x', children: [] });
+    });
+
+    it('should reject model events when no model is configured', async () => {
+      const repository = createRepository({ originStore: mockStore, mode: 'tree' });
+      await repository.init();
+
+      await expect(repository.addEvent({
+        type: 'event',
+        payload: {
+          schema: 'branch.create',
+          data: { name: 'feature-x' }
+        }
+      })).rejects.toThrow('Tree mode does not accept type "event".');
+    });
+
+    it('should reject model events with unknown schema', async () => {
+      const model = {
+        initialState: { branches: { items: {}, tree: [] } },
+        schemas: {},
+        reduce() {}
+      };
+
+      const repository = createRepository({ originStore: mockStore, mode: 'model', model });
+      await repository.init();
+
+      await expect(repository.addEvent({
+        type: 'event',
+        payload: {
+          schema: 'branch.create',
+          data: { name: 'feature-x' }
+        }
+      })).rejects.toThrow('unknown schema');
+    });
+
+    it('should reject non-event types in model mode', async () => {
+      const model = {
+        initialState: {},
+        schemas: {},
+        reduce() {}
+      };
+
+      const repository = createRepository({ originStore: mockStore, mode: 'model', model });
+      await repository.init();
+
+      await expect(repository.addEvent({
+        type: 'set',
+        payload: { target: 'x', value: 1 }
+      })).rejects.toThrow('Model mode only accepts type "event".');
+    });
+
+    it('should call model.validateEvent when provided', async () => {
+      const validateEvent = vi.fn();
+      const model = {
+        initialState: { branches: { items: {}, tree: [] } },
+        schemas: {
+          'branch.create': {
+            type: 'object',
+            properties: { name: { type: 'string', minLength: 1 } },
+            required: ['name'],
+            additionalProperties: false
+          }
+        },
+        reduce(draft, event) {
+          if (event.payload.schema === 'branch.create') {
+            draft.branches.items[event.payload.data.name] = {};
+            draft.branches.tree.push({ id: event.payload.data.name, children: [] });
+          }
+        },
+        validateEvent
+      };
+
+      const repository = createRepository({ originStore: mockStore, mode: 'model', model });
+      await repository.init();
+
+      const event = {
+        type: 'event',
+        payload: { schema: 'branch.create', data: { name: 'feature-x' } }
+      };
+
+      await repository.addEvent(event);
+      expect(validateEvent).toHaveBeenCalled();
+      expect(validateEvent).toHaveBeenCalledWith(event);
+    });
+
+    it('should reject invalid model events during replay', async () => {
+      const model = {
+        initialState: {},
+        schemas: {},
+        reduce() {}
+      };
+
+      mockStore.getEvents.mockResolvedValue([
+        {
+          type: 'event',
+          payload: { schema: 'unknown', data: {} }
+        }
+      ]);
+
+      const repository = createRepository({ originStore: mockStore, mode: 'model', model });
+      await expect(repository.init()).rejects.toThrow('unknown schema');
+    });
+
+    it('should compute partitioned state in model mode via getStateAsync', async () => {
+      const mockStoreWithPartitions = createMockStoreWithSnapshots();
+      mockStoreWithPartitions._setEvents([
+        {
+          type: 'event',
+          partition: 'p1',
+          payload: { schema: 'counter.set', data: { value: 1 } }
+        },
+        {
+          type: 'event',
+          partition: 'p2',
+          payload: { schema: 'counter.set', data: { value: 2 } }
+        }
+      ]);
+
+      const model = {
+        initialState: {},
+        schemas: {
+          'counter.set': {
+            type: 'object',
+            properties: { value: { type: 'number' } },
+            required: ['value'],
+            additionalProperties: false
+          }
+        },
+        reduce(draft, event) {
+          if (event.payload.schema === 'counter.set') {
+            draft.counter = event.payload.data.value;
+          }
+        }
+      };
+
+      const repository = createRepository({
+        originStore: mockStoreWithPartitions,
+        mode: 'model',
+        model,
+        usingCachedEvents: false
+      });
+
+      await repository.init();
+
+      const stateP1 = await repository.getStateAsync({ partition: 'p1' });
+      const stateP2 = await repository.getStateAsync({ partition: 'p2' });
+
+      expect(stateP1).toEqual({ counter: 1 });
+      expect(stateP2).toEqual({ counter: 2 });
     });
   });
 });

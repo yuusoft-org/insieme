@@ -85,6 +85,14 @@ const schemas = {
     required: ["target", "options"],
     additionalProperties: false,
   },
+  init: {
+    type: "object",
+    properties: {
+      value: {},
+    },
+    required: ["value"],
+    additionalProperties: false,
+  },
 };
 
 /**
@@ -94,6 +102,21 @@ const schemas = {
 const validators = Object.fromEntries(
   Object.entries(schemas).map(([type, schema]) => [type, ajv.compile(schema)]),
 );
+
+const eventEnvelopeSchema = {
+  type: "object",
+  properties: {
+    schema: { type: "string", minLength: 1 },
+    data: {},
+    meta: { type: "object" },
+  },
+  required: ["schema", "data"],
+  additionalProperties: false,
+};
+
+const eventEnvelopeValidator = ajv.compile(eventEnvelopeSchema);
+
+const modelValidatorCache = new WeakMap();
 
 /**
  * Custom error class for event validation failures
@@ -124,11 +147,69 @@ export class EventValidationError extends Error {
  * @throws {EventValidationError} If the payload does not match the schema
  */
 export const validateEventPayload = (eventType, payload) => {
+  if (eventType === "event") {
+    validateEventEnvelope(payload);
+    return;
+  }
+
   const validator = validators[eventType];
-  if (!validator) return; // Unknown event type, skip validation
+  if (!validator) {
+    throw new EventValidationError(eventType, [
+      { instancePath: "type", message: "unknown event type" },
+    ]);
+  }
 
   if (!validator(payload)) {
     throw new EventValidationError(eventType, validator.errors);
+  }
+};
+
+/**
+ * Validates the event envelope for model events (type === "event").
+ *
+ * @param {unknown} payload - The event payload to validate
+ * @throws {EventValidationError} If the payload does not match the envelope schema
+ */
+export const validateEventEnvelope = (payload) => {
+  if (!eventEnvelopeValidator(payload)) {
+    throw new EventValidationError("event", eventEnvelopeValidator.errors);
+  }
+};
+
+/**
+ * Validates a model event payload against a provided schema registry.
+ *
+ * @param {string} schemaId - Schema identifier (e.g., "branch.create")
+ * @param {unknown} data - The model event payload to validate
+ * @param {Record<string, object>} schemas - Schema registry
+ * @throws {EventValidationError} If schema is missing or payload invalid
+ */
+export const validateModelEvent = (schemaId, data, schemas) => {
+  if (!schemas || typeof schemas !== "object") {
+    throw new Error('Model schemas registry is required for type "event".');
+  }
+
+  const schema = schemas[schemaId];
+  if (!schema) {
+    throw new EventValidationError(schemaId, [
+      { instancePath: "payload.schema", message: "unknown schema" },
+    ]);
+  }
+
+  let registryCache = modelValidatorCache.get(schemas);
+  if (!registryCache) {
+    registryCache = new Map();
+    modelValidatorCache.set(schemas, registryCache);
+  }
+
+  let validator = registryCache.get(schemaId);
+  if (!validator) {
+    validator = ajv.compile(schema);
+    registryCache.set(schemaId, validator);
+  }
+
+  if (!validator(data)) {
+    throw new EventValidationError(schemaId, validator.errors);
   }
 };
 
@@ -145,3 +226,34 @@ export const testValidateEventPayload = (eventType, payload) => {
   validateEventPayload(eventType, payload);
   return true;
 };
+
+/**
+ * Test helper for validating event envelopes
+ * Returns true if valid, throws EventValidationError if invalid
+ *
+ * @param {unknown} payload - The envelope payload to validate
+ * @returns {boolean} true if validation passes
+ * @throws {EventValidationError} If the payload does not match the envelope schema
+ */
+export const testValidateEventEnvelope = (payload) => {
+  validateEventEnvelope(payload);
+  return true;
+};
+
+/**
+ * Test helper for validating model events
+ * Returns true if valid, throws EventValidationError if invalid
+ *
+ * @param {string} schemaId - Schema identifier
+ * @param {unknown} data - Model payload
+ * @param {Record<string, object>} schemas - Schema registry
+ * @returns {boolean} true if validation passes
+ * @throws {EventValidationError} If the payload does not match the schema
+ */
+export const testValidateModelEvent = (schemaId, data, schemas) => {
+  validateModelEvent(schemaId, data, schemas);
+  return true;
+};
+
+// Back-compat alias (deprecated)
+export const validateDomainEvent = validateModelEvent;
