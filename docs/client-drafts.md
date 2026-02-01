@@ -262,6 +262,108 @@ Notes:
 - For large datasets, consider an auxiliary `event_partitions(id, partition)`
   table to index membership efficiently.
 
+## Tree Mode Actions (Event Payloads)
+
+These apply when using **tree mode** (event `type` is one of the tree actions).
+
+### Tree Data Structure
+
+Each `target` key contains:
+
+- `items`: flat object indexed by item id
+- `tree`: hierarchical array of node ids + children
+
+Example:
+```yaml
+explorer:
+  items:
+    item1:
+      id: item1
+      name: Root Folder
+      type: folder
+    item2:
+      id: item2
+      name: Child File
+      type: file
+  tree:
+    - id: item1
+      children:
+        - id: item2
+          children: []
+```
+
+### `treePush`
+
+Adds a new item to the tree under a parent.
+
+```yaml
+type: treePush
+payload:
+  target: explorer
+  value:
+    id: folder1
+    name: New Folder
+    type: folder
+  options:
+    parent: _root
+    position: last
+```
+
+Options:
+- `parent`: parent id (default `_root`)
+- `position`: `first` | `last` | `{ after: "<id>" }` | `{ before: "<id>" }`
+
+### `treeDelete`
+
+Removes an item and all its children.
+
+```yaml
+type: treeDelete
+payload:
+  target: explorer
+  options:
+    id: folder1
+```
+
+### `treeUpdate`
+
+Updates properties of an existing item.
+
+```yaml
+type: treeUpdate
+payload:
+  target: explorer
+  value:
+    name: Renamed Folder
+    type: folder
+  options:
+    id: folder1
+    replace: false
+```
+
+Options:
+- `id`: item id to update
+- `replace`: when true, replaces the entire item; otherwise merges (default false)
+
+### `treeMove`
+
+Moves an item to a new parent or position.
+
+```yaml
+type: treeMove
+payload:
+  target: explorer
+  options:
+    id: file1
+    parent: folder2
+    position: first
+```
+
+Options:
+- `id`: item id to move
+- `parent`: new parent id (use `_root` for root)
+- `position`: `first` | `last` | `{ after: "<id>" }` | `{ before: "<id>" }`
+
 ## Retention / Compaction (Optional)
 
 - After a snapshot is created for a partition, committed events with
