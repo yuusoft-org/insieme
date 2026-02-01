@@ -1,6 +1,6 @@
 # Scenario 01 - Local Draft -> Commit + Broadcast
 
-Note: All JSON messages include the standard envelope fields (`msg_id`, `timestamp`, `protocol_version`). They are omitted here only when not central to the scenario.
+Note: All YAML messages include the standard envelope fields (`msg_id`, `timestamp`, `protocol_version`). They are omitted here only when not central to the scenario.
 
 ## Goal
 Verify a local draft is stored first, then committed by the server and
@@ -42,23 +42,21 @@ created_at=<local time>
 ### 2) C1 submits to server
 
 **C1 -> Server**
-```json
-{
-  "type": "submit_event",
-  "payload": {
-    "id": "evt-uuid-1",
-    "client_id": "C1",
-    "partitions": ["P1"],
-    "event": {
-      "type": "treePush",
-      "payload": {
-        "target": "explorer",
-        "value": { "id": "A" },
-        "options": { "parent": "_root" }
-      }
-    }
-  }
-}
+```yaml
+type: submit_event
+payload:
+  id: evt-uuid-1
+  client_id: C1
+  partitions:
+    - P1
+  event:
+    type: treePush
+    payload:
+      target: explorer
+      value:
+        id: A
+      options:
+        parent: _root
 ```
 
 ### 3) Server validates and commits
@@ -69,33 +67,43 @@ created_at=<local time>
 ### 4) Server responds + broadcasts
 
 **Server -> C1 (commit)**
-```json
-{
-  "type": "event_committed",
-  "payload": {
-    "id": "evt-uuid-1",
-    "client_id": "C1",
-    "partitions": ["P1"],
-    "committed_id": 101,
-    "event": { "type": "treePush", "payload": { "target": "explorer", "value": { "id": "A" }, "options": { "parent": "_root" } } },
-    "status_updated_at": 1738451205000
-  }
-}
+```yaml
+type: event_committed
+payload:
+  id: evt-uuid-1
+  client_id: C1
+  partitions:
+    - P1
+  committed_id: 101
+  event:
+    type: treePush
+    payload:
+      target: explorer
+      value:
+        id: A
+      options:
+        parent: _root
+  status_updated_at: 1738451205000
 ```
 
 **Server -> C2 (broadcast)**
-```json
-{
-  "type": "event_broadcast",
-  "payload": {
-    "id": "evt-uuid-1",
-    "client_id": "C1",
-    "partitions": ["P1"],
-    "committed_id": 101,
-    "event": { "type": "treePush", "payload": { "target": "explorer", "value": { "id": "A" }, "options": { "parent": "_root" } } },
-    "status_updated_at": 1738451205000
-  }
-}
+```yaml
+type: event_broadcast
+payload:
+  id: evt-uuid-1
+  client_id: C1
+  partitions:
+    - P1
+  committed_id: 101
+  event:
+    type: treePush
+    payload:
+      target: explorer
+      value:
+        id: A
+      options:
+        parent: _root
+  status_updated_at: 1738451205000
 ```
 
 ### 5) Client DB updates

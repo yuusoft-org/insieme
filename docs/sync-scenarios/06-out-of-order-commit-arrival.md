@@ -1,6 +1,6 @@
 # Scenario 06 - Out-of-Order Commit Arrival
 
-Note: All JSON messages include the standard envelope fields (`msg_id`, `timestamp`, `protocol_version`). They are omitted here only when not central to the scenario.
+Note: All YAML messages include the standard envelope fields (`msg_id`, `timestamp`, `protocol_version`). They are omitted here only when not central to the scenario.
 
 ## Goal
 Verify correct ordering when committed events arrive out of order.
@@ -21,18 +21,19 @@ Verify correct ordering when committed events arrive out of order.
 ### 1) C1 receives committed_id=130 first
 
 **Server -> C1**
-```json
-{
-  "type": "event_broadcast",
-  "payload": {
-    "id": "evt-uuid-130",
-    "client_id": "C2",
-    "partitions": ["P1"],
-    "committed_id": 130,
-    "event": { "type": "treeUpdate", "payload": { "target": "explorer" } },
-    "status_updated_at": 1738451400000
-  }
-}
+```yaml
+type: event_broadcast
+payload:
+  id: evt-uuid-130
+  client_id: C2
+  partitions:
+    - P1
+  committed_id: 130
+  event:
+    type: treeUpdate
+    payload:
+      target: explorer
+  status_updated_at: 1738451400000
 ```
 
 **C1 inserts row**
@@ -45,18 +46,19 @@ status=committed
 ### 2) C1 receives committed_id=129 later
 
 **Server -> C1**
-```json
-{
-  "type": "event_broadcast",
-  "payload": {
-    "id": "evt-uuid-129",
-    "client_id": "C2",
-    "partitions": ["P1"],
-    "committed_id": 129,
-    "event": { "type": "treeUpdate", "payload": { "target": "explorer" } },
-    "status_updated_at": 1738451399000
-  }
-}
+```yaml
+type: event_broadcast
+payload:
+  id: evt-uuid-129
+  client_id: C2
+  partitions:
+    - P1
+  committed_id: 129
+  event:
+    type: treeUpdate
+    payload:
+      target: explorer
+  status_updated_at: 1738451399000
 ```
 
 **C1 inserts row**

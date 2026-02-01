@@ -1,6 +1,6 @@
 # Scenario 02 - Local Draft Rejected
 
-Note: All JSON messages include the standard envelope fields (`msg_id`, `timestamp`, `protocol_version`). They are omitted here only when not central to the scenario.
+Note: All YAML messages include the standard envelope fields (`msg_id`, `timestamp`, `protocol_version`). They are omitted here only when not central to the scenario.
 
 ## Goal
 Ensure a draft is marked rejected and removed from the local view when the
@@ -40,34 +40,37 @@ created_at=<local time>
 ### 2) C1 submits to server
 
 **C1 -> Server**
-```json
-{
-  "type": "submit_event",
-  "payload": {
-    "id": "evt-uuid-2",
-    "client_id": "C1",
-    "partitions": ["P1"],
-    "event": { "type": "treePush", "payload": { "target": "explorer", "value": { "id": "A" } } }
-  }
-}
+```yaml
+type: submit_event
+payload:
+  id: evt-uuid-2
+  client_id: C1
+  partitions:
+    - P1
+  event:
+    type: treePush
+    payload:
+      target: explorer
+      value:
+        id: A
 ```
 
 ### 3) Server rejects
 - Validation fails (example: duplicate id).
 
 **Server -> C1**
-```json
-{
-  "type": "event_rejected",
-  "payload": {
-    "id": "evt-uuid-2",
-    "client_id": "C1",
-    "partitions": ["P1"],
-    "reason": "validation_failed",
-    "errors": [ { "field": "payload.value.id", "message": "duplicate id" } ],
-    "status_updated_at": 1738451210000
-  }
-}
+```yaml
+type: event_rejected
+payload:
+  id: evt-uuid-2
+  client_id: C1
+  partitions:
+    - P1
+  reason: validation_failed
+  errors:
+    - field: payload.value.id
+      message: duplicate id
+  status_updated_at: 1738451210000
 ```
 
 ### 4) C1 updates local DB

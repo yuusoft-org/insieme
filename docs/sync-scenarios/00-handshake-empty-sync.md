@@ -1,6 +1,6 @@
 # Scenario 00 - Handshake and Empty Sync
 
-Note: All JSON messages include the standard envelope fields (`msg_id`, `timestamp`, `protocol_version`). They are omitted here only when not central to the scenario.
+Note: All YAML messages include the standard envelope fields (`msg_id`, `timestamp`, `protocol_version`). They are omitted here only when not central to the scenario.
 
 ## Goal
 Verify a clean initial connection with no committed events and no drafts.
@@ -19,16 +19,12 @@ Verify a clean initial connection with no committed events and no drafts.
 ### 1) Client connects (JWT validation only)
 
 **C1 -> Server**
-```json
-{
-  "type": "connect",
-  "payload": {
-    "token": "jwt",
-    "client_id": "C1",
-    "partitions": ["P1"],
-    "last_committed_id": 0
-  }
-}
+```yaml
+type: connect
+payload:
+  token: jwt
+  client_id: C1
+  last_committed_id: 0
 ```
 
 **Server behavior**
@@ -37,43 +33,35 @@ Verify a clean initial connection with no committed events and no drafts.
 - Accept connection.
 
 **Server -> C1**
-```json
-{
-  "type": "connected",
-  "payload": {
-    "client_id": "C1",
-    "partitions": ["P1"],
-    "server_time": 1738451200000,
-    "last_committed_id": 0
-  }
-}
+```yaml
+type: connected
+payload:
+  client_id: C1
+  server_time: 1738451200000
+  last_committed_id: 0
 ```
 
 ### 2) Client requests sync
 
 **C1 -> Server**
-```json
-{
-  "type": "sync",
-  "payload": {
-    "partitions": ["P1"],
-    "since_committed_id": 0,
-    "limit": 500
-  }
-}
+```yaml
+type: sync
+payload:
+  partitions:
+    - P1
+  since_committed_id: 0
+  limit: 500
 ```
 
 **Server -> C1**
-```json
-{
-  "type": "sync_response",
-  "payload": {
-    "partitions": ["P1"],
-    "events": [],
-    "next_since_committed_id": 0,
-    "has_more": false
-  }
-}
+```yaml
+type: sync_response
+payload:
+  partitions:
+    - P1
+  events: []
+  next_since_committed_id: 0
+  has_more: false
 ```
 
 ## Expected Local DB State (C1)

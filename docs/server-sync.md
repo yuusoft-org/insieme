@@ -52,35 +52,27 @@ Protocol requirements:
 ## Handshake & Auth
 
 ### Client → Server: connect
-```json
-{
-  "msg_id": "msg-1",
-  "type": "connect",
-  "timestamp": 1738451200000,
-  "protocol_version": "1.0",
-  "payload": {
-    "token": "jwt",
-    "client_id": "client-123",
-    "partitions": ["workspace-1", "workspace-2"],
-    "last_committed_id": 1200
-  }
-}
+```yaml
+msg_id: msg-1
+type: connect
+timestamp: 1738451200000
+protocol_version: "1.0"
+payload:
+  token: jwt
+  client_id: client-123
+  last_committed_id: 1200
 ```
 
 ### Server → Client: connected
-```json
-{
-  "msg_id": "msg-2",
-  "type": "connected",
-  "timestamp": 1738451200001,
-  "protocol_version": "1.0",
-  "payload": {
-    "client_id": "client-123",
-    "partitions": ["workspace-1", "workspace-2"],
-    "server_time": 1738451200000,
-    "last_committed_id": 1200
-  }
-}
+```yaml
+msg_id: msg-2
+type: connected
+timestamp: 1738451200001
+protocol_version: "1.0"
+payload:
+  client_id: client-123
+  server_time: 1738451200000
+  last_committed_id: 1200
 ```
 
 ### Auth Rules
@@ -92,6 +84,8 @@ Protocol requirements:
 - On auth failure: send `error` and close the connection.
 - For all subsequent messages, the server should trust the connection’s
   authenticated `client_id` and reject mismatches in payload.
+- `connect` does not establish partition subscriptions; clients declare
+  `partitions` in `sync` requests.
 
 ## Heartbeat & Timeouts
 
@@ -108,144 +102,141 @@ These are illustrative shapes; exact fields can evolve.
 ### Client → Server
 
 **submit_event**
-```json
-{
-  "msg_id": "msg-3",
-  "type": "submit_event",
-  "timestamp": 1738451201000,
-  "protocol_version": "1.0",
-  "payload": {
-    "id": "uuid",
-    "client_id": "client-123",
-    "partitions": ["workspace-1", "workspace-2"],
-    "event": { "type": "treePush", "payload": { ... } }
-  }
-}
+```yaml
+msg_id: msg-3
+type: submit_event
+timestamp: 1738451201000
+protocol_version: "1.0"
+payload:
+  id: uuid
+  client_id: client-123
+  partitions:
+    - workspace-1
+    - workspace-2
+  event:
+    type: treePush
+    payload: {} # ...
 ```
 
 **sync**
-```json
-{
-  "msg_id": "msg-4",
-  "type": "sync",
-  "timestamp": 1738451202000,
-  "protocol_version": "1.0",
-  "payload": {
-    "partitions": ["workspace-1", "workspace-2"],
-    "since_committed_id": 1200,
-    "limit": 500
-  }
-}
+```yaml
+msg_id: msg-4
+type: sync
+timestamp: 1738451202000
+protocol_version: "1.0"
+payload:
+  partitions:
+    - workspace-1
+    - workspace-2
+  since_committed_id: 1200
+  limit: 500
 ```
 
 ### Server → Client
 
 **event_committed** (to origin client)
-```json
-{
-  "msg_id": "msg-5",
-  "type": "event_committed",
-  "timestamp": 1738451205000,
-  "protocol_version": "1.0",
-  "payload": {
-    "id": "uuid",
-    "client_id": "client-123",
-    "partitions": ["workspace-1", "workspace-2"],
-    "committed_id": 1201,
-    "event": { "type": "treePush", "payload": { ... } },
-    "status_updated_at": 1738451200000
-  }
-}
+```yaml
+msg_id: msg-5
+type: event_committed
+timestamp: 1738451205000
+protocol_version: "1.0"
+payload:
+  id: uuid
+  client_id: client-123
+  partitions:
+    - workspace-1
+    - workspace-2
+  committed_id: 1201
+  event:
+    type: treePush
+    payload: {} # ...
+  status_updated_at: 1738451200000
 ```
 
 **event_rejected** (to origin client)
-```json
-{
-  "msg_id": "msg-6",
-  "type": "event_rejected",
-  "timestamp": 1738451205000,
-  "protocol_version": "1.0",
-  "payload": {
-    "id": "uuid",
-    "client_id": "client-123",
-    "partitions": ["workspace-1", "workspace-2"],
-    "reason": "validation_failed",
-    "errors": [ { "field": "payload.value.id", "message": "duplicate id" } ],
-    "status_updated_at": 1738451200000
-  }
-}
+```yaml
+msg_id: msg-6
+type: event_rejected
+timestamp: 1738451205000
+protocol_version: "1.0"
+payload:
+  id: uuid
+  client_id: client-123
+  partitions:
+    - workspace-1
+    - workspace-2
+  reason: validation_failed
+  errors:
+    - field: payload.value.id
+      message: duplicate id
+  status_updated_at: 1738451200000
 ```
 
 **event_broadcast** (to other clients)
-```json
-{
-  "msg_id": "msg-7",
-  "type": "event_broadcast",
-  "timestamp": 1738451205000,
-  "protocol_version": "1.0",
-  "payload": {
-    "id": "uuid",
-    "client_id": "client-123",
-    "partitions": ["workspace-1", "workspace-2"],
-    "committed_id": 1201,
-    "event": { "type": "treePush", "payload": { ... } },
-    "status_updated_at": 1738451200000
-  }
-}
+```yaml
+msg_id: msg-7
+type: event_broadcast
+timestamp: 1738451205000
+protocol_version: "1.0"
+payload:
+  id: uuid
+  client_id: client-123
+  partitions:
+    - workspace-1
+    - workspace-2
+  committed_id: 1201
+  event:
+    type: treePush
+    payload: {} # ...
+  status_updated_at: 1738451200000
 ```
 
 **sync_response**
-```json
-{
-  "msg_id": "msg-8",
-  "type": "sync_response",
-  "timestamp": 1738451206000,
-  "protocol_version": "1.0",
-  "payload": {
-    "partitions": ["workspace-1", "workspace-2"],
-    "events": [ /* committed events in order */ ],
-    "next_since_committed_id": 1700,
-    "sync_to_committed_id": 1700,
-    "has_more": false
-  }
-}
+```yaml
+msg_id: msg-8
+type: sync_response
+timestamp: 1738451206000
+protocol_version: "1.0"
+payload:
+  partitions:
+    - workspace-1
+    - workspace-2
+  events: [] # committed events in order
+  next_since_committed_id: 1700
+  sync_to_committed_id: 1700
+  has_more: false
 ```
 
 **heartbeat**
-```json
-{
-  "msg_id": "msg-9",
-  "type": "heartbeat",
-  "timestamp": 1738451207000,
-  "protocol_version": "1.0",
-  "payload": { "client_id": "client-123" }
-}
+```yaml
+msg_id: msg-9
+type: heartbeat
+timestamp: 1738451207000
+protocol_version: "1.0"
+payload:
+  client_id: client-123
 ```
 
 **heartbeat_ack**
-```json
-{
-  "msg_id": "msg-10",
-  "type": "heartbeat_ack",
-  "timestamp": 1738451207001,
-  "protocol_version": "1.0",
-  "payload": { "client_id": "client-123" }
-}
+```yaml
+msg_id: msg-10
+type: heartbeat_ack
+timestamp: 1738451207001
+protocol_version: "1.0"
+payload:
+  client_id: client-123
 ```
 
 **error**
-```json
-{
-  "msg_id": "msg-err-1",
-  "type": "error",
-  "timestamp": 1738451207002,
-  "protocol_version": "1.0",
-  "payload": {
-    "code": "auth_failed",
-    "message": "Invalid token",
-    "details": {}
-  }
-}
+```yaml
+msg_id: msg-err-1
+type: error
+timestamp: 1738451207002
+protocol_version: "1.0"
+payload:
+  code: auth_failed
+  message: Invalid token
+  details: {}
 ```
 
 ## Server Flow
@@ -318,13 +309,13 @@ Payload equality:
 
 ## Partition Subscriptions
 
-- `partitions` is a client subscription set.
-- A connection may update its subscription by sending a new `connect`
-  message (replacing the previous set), followed by `sync`.
+- `partitions` are declared on `sync` requests, not on `connect`.
+- The server treats the latest `sync` request’s partitions as the client’s
+  current subscription set.
 - The server only broadcasts events whose partitions intersect the
   connection’s current subscription.
-- If the subscription adds a new partition, the client must sync from
-  `since_committed_id=0` (or maintain its own per-partition cursors).
+- If a client adds a new partition, it must sync from `since_committed_id=0`
+  (or maintain its own per-partition cursors).
 
 ## Limits & Backpressure
 

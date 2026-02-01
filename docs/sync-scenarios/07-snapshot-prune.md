@@ -1,6 +1,6 @@
 # Scenario 07 - Snapshot + Prune
 
-Note: All JSON messages include the standard envelope fields (`msg_id`, `timestamp`, `protocol_version`). They are omitted here only when not central to the scenario.
+Note: All YAML messages include the standard envelope fields (`msg_id`, `timestamp`, `protocol_version`). They are omitted here only when not central to the scenario.
 
 ## Goal
 Verify snapshot usage and pruning of older committed events per partition.
