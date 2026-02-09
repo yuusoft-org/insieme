@@ -3,8 +3,7 @@
 Note: All YAML messages include the standard envelope fields (`msg_id`, `timestamp`, `protocol_version`). They are omitted here only when not central to the scenario.
 
 ## Goal
-Verify events that belong to multiple partitions are visible in all
-corresponding partition views and delivered to all intersecting subscribers.
+Verify events that belong to multiple partitions are visible in all corresponding partition views and delivered to all intersecting subscribers.
 
 ## Actors
 - C1 subscribed to ["P1"]

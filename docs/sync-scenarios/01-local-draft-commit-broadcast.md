@@ -3,8 +3,7 @@
 Note: All YAML messages include the standard envelope fields (`msg_id`, `timestamp`, `protocol_version`). They are omitted here only when not central to the scenario.
 
 ## Goal
-Verify a local draft is stored first, then committed by the server and
-broadcast to other clients.
+Verify a local draft is stored first, then committed by the server and broadcast to other clients.
 
 ## Actors
 - C1 (origin client_id = "C1")

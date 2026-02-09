@@ -1,7 +1,6 @@
 # Client Drafts vs Committed Events (Offline-First)
 
-This document summarizes the agreed client behavior for drafts and committed
-events, before any server implementation changes.
+This document summarizes the agreed client behavior for drafts and committed events, before any server implementation changes.
 
 ## Core Decisions
 
@@ -64,14 +63,11 @@ CREATE INDEX events_draft_order
 
 ### Snapshots Table
 
-Snapshots store **committed-only** state per partition. Drafts are always
-re-applied on top of snapshots.
+Snapshots store **committed-only** state per partition. Drafts are always re-applied on top of snapshots.
 
 Invalidation:
-- If `model_version` changes (model/domain mode), discard the snapshot and
-  rebuild from committed events to avoid applying drafts on stale state.
-- For tree mode, if your app’s initial schema/state changes in a breaking way,
-  clear snapshots or bump an app-level version and invalidate similarly.
+- If `model_version` changes (model/domain mode), discard the snapshot and rebuild from committed events to avoid applying drafts on stale state.
+- For tree mode, if your app's initial schema/state changes in a breaking way, clear snapshots or bump an app-level version and invalidate similarly.
 
 ```sql
 CREATE TABLE snapshots (
@@ -91,16 +87,14 @@ CREATE INDEX snapshots_committed_id
 - `partitions` is always an **array of strings**.
 - An event can belong to **multiple partitions**.
 - Per-partition state uses **events whose partitions include that partition**.
-- `committed_id` is **global and monotonic**; per-partition ordering is the
-  subsequence of committed events that include the partition.
+- `committed_id` is **global and monotonic**; per-partition ordering is the subsequence of committed events that include the partition.
 
 Practical rules:
 - `committed_id` is unique **globally**.
 - The server guarantees `committed_id` is **monotonic**.
 - `id` (draft UUID) is used to match a local draft with its commit.
 - A client may participate in multiple partitions at once.
-- If a client **adds** a new partition to its subscription, it must sync from
-  `since_committed_id=0` (or track per-partition cursors).
+- If a client **adds** a new partition to its subscription, it must sync from `since_committed_id=0` (or track per-partition cursors).
 
 ## Event Lifecycle
 
@@ -111,13 +105,11 @@ Practical rules:
    - Enqueue async send to server
 
 2) **Committed by Server**
-   - Update same row: `status='committed'`, set `committed_id`, `status_updated_at`
-     (server-provided time)
+   - Update same row: `status='committed'`, set `committed_id`, `status_updated_at` (server-provided time)
    - Draft is removed from overlay automatically (by status)
 
 3) **Rejected by Server**
-   - Update row: `status='rejected'`, set `status_updated_at`
-     (server-provided time, optionally store reason)
+   - Update row: `status='rejected'`, set `status_updated_at` (server-provided time, optionally store reason)
    - Draft no longer appears in UI (excluded by status)
 
 4) **Remote Committed Event (other clients)**
@@ -128,11 +120,9 @@ Practical rules:
 
 The UI state should be computed from:
 
-1. **Committed events** (all rows with `status='committed'`
-   that include the partition)
+1. **Committed events** (all rows with `status='committed'` that include the partition)
    - Ordered by `committed_id` (global incremental id)
-2. **Draft events** (all rows with `status='draft'`
-   that include the partition)
+2. **Draft events** (all rows with `status='draft'` that include the partition)
    - Ordered by `draft_clock` (tie-break with `id` if needed)
 
 Rejected drafts are **excluded** from view computation.
@@ -146,18 +136,15 @@ Rejected drafts are **excluded** from view computation.
 
 - **Do not interleave** drafts into the committed stream.
 - Always compute: `committed_state` → then apply all drafts on top.
-- When a new committed event arrives (local commit or remote broadcast),
-  **recompute committed state** and re-apply drafts (rebase).
-- This may cause brief UI reordering during poor connectivity, but LWW + rebase
-  keeps the client simple and convergent.
+- When a new committed event arrives (local commit or remote broadcast), **recompute committed state** and re-apply drafts (rebase).
+- This may cause brief UI reordering during poor connectivity, but LWW + rebase keeps the client simple and convergent.
 
 ### Draft Clock (Lamport-style)
 
 - `draft_clock` is a **monotonic local counter (global, not per partition)**.
 - Draft ordering always uses `(draft_clock, id)` even when filtering by partition.
 - On each local draft: `draft_clock += 1` and store it on the row.
-- On startup: set `draft_clock` to the max value found for the local client
-  (filter by `client_id = local`).
+- On startup: set `draft_clock` to the max value found for the local client (filter by `client_id = local`).
 - Remote events do **not** update the local `draft_clock` (drafts are local-only).
 
 ## Full Data Flow (All Cases)
@@ -198,13 +185,11 @@ flowchart TD
 
 **Committed by server**
 - Server assigns `committed_id`.
-- Client updates local row:
-  - `status='committed'`, set `committed_id`, `status_updated_at`.
+- Client updates local row: `status='committed'`, set `committed_id`, `status_updated_at`.
 - Recompute **local view state**: committed stream → drafts overlay.
 
 **Rejected by server**
-- Client updates local row:
-  - `status='rejected'`, set `status_updated_at`, optional `reject_reason`.
+- Client updates local row: `status='rejected'`, set `status_updated_at`, optional `reject_reason`.
 - Recompute **local view state** (draft removed).
 
 ### 4) Remote Committed Events
@@ -216,18 +201,15 @@ flowchart TD
 
 ### 5) Reconnect / Catch-up
 
-- Client requests missed committed events since last `committed_id`
-  (global cursor).
+- Client requests missed committed events since last `committed_id` (global cursor).
 - Apply all new committed events in order.
 - Rebase drafts on top (recompute **local view state**).
 
 ### 5a) Out-of-Order Committed Delivery
 
 - Committed events may arrive out of order (polling, reconnect, retries).
-- Always compute committed state using `ORDER BY committed_id`, so storage order
-  does not matter.
-- If keeping an in-memory incremental state, buffer until gaps fill **or**
-  rebuild committed state from the ordered DB stream.
+- Always compute committed state using `ORDER BY committed_id`, so storage order does not matter.
+- If keeping an in-memory incremental state, buffer until gaps fill **or** rebuild committed state from the ordered DB stream.
 
 ### 6) Duplicate Sends / Retries
 
@@ -237,15 +219,12 @@ flowchart TD
 
 ### 7) Commit Delivery Idempotency (Upsert Strategy)
 
-When a committed event arrives (local commit response or broadcast), apply it
-with **update-then-insert** semantics:
+When a committed event arrives (local commit response or broadcast), apply it with **update-then-insert** semantics:
 
 1. **UPDATE** by `id` (primary key) to upgrade a local draft into committed.
 2. If no row was updated, **INSERT** the committed row.
-3. Use `ON CONFLICT(committed_id) DO NOTHING` on the insert to ignore
-   duplicates (retry/broadcast).
-4. If the insert fails due to `id` uniqueness, re-run the UPDATE (another path
-   already inserted it).
+3. Use `ON CONFLICT(committed_id) DO NOTHING` on the insert to ignore duplicates (retry/broadcast).
+4. If the insert fails due to `id` uniqueness, re-run the UPDATE (another path already inserted it).
 
 This avoids double-apply while ensuring drafts are properly upgraded.
 
@@ -257,10 +236,8 @@ This avoids double-apply while ensuring drafts are properly upgraded.
   - `WHERE status='draft' AND partitions CONTAINS ? ORDER BY draft_clock, id`
 
 Notes:
-- `partitions CONTAINS ?` is conceptual. In SQLite, use:
-  `EXISTS (SELECT 1 FROM json_each(events.partitions) WHERE value = ?)`
-- For large datasets, consider an auxiliary `event_partitions(id, partition)`
-  table to index membership efficiently.
+- `partitions CONTAINS ?` is conceptual. In SQLite, use: `EXISTS (SELECT 1 FROM json_each(events.partitions) WHERE value = ?)`
+- For large datasets, consider an auxiliary `event_partitions(id, partition)` table to index membership efficiently.
 
 ## Tree Mode Actions (Event Payloads)
 
@@ -366,9 +343,6 @@ Options:
 
 ## Retention / Compaction (Optional)
 
-- After a snapshot is created for a partition, committed events with
-  `committed_id <= snapshot.committed_id` can be archived or pruned.
-- Keep **all drafts** (and rejected drafts if you need audit/UI history) until
-  they are resolved and no longer needed by the app.
-- For multi-partition events, only prune when **all** referenced partitions
-  have advanced past that `committed_id`.
+- After a snapshot is created for a partition, committed events with `committed_id <= snapshot.committed_id` can be archived or pruned.
+- Keep **all drafts** (and rejected drafts if you need audit/UI history) until they are resolved and no longer needed by the app.
+- For multi-partition events, only prune when **all** referenced partitions have advanced past that `committed_id`.

@@ -3,8 +3,7 @@
 Note: All YAML messages include the standard envelope fields (`msg_id`, `timestamp`, `protocol_version`). They are omitted here only when not central to the scenario.
 
 ## Goal
-Ensure a draft is marked rejected and removed from the local view when the
-server rejects it.
+Ensure a draft is marked rejected and removed from the local view when the server rejects it.
 
 ## Actors
 - C1 (client_id = "C1")
