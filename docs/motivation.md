@@ -47,27 +47,27 @@ For conflict resolution, we use **Last-Write-Wins (LWW)**. It's simple, predicta
 
 ## Interface Design
 
-We designed the API around two modes, both optimized for ease of use.
+To maximize long-term robustness, Insieme standardizes on:
 
-### Tree Mode
+- **One low-level implementation**: model/event-sourcing core (append-only events, schema validation, deterministic reducer, replay, snapshots).
+- **One app-facing interface**: strict command interface on top of that core (command events in the `event` envelope).
 
-Tree mode provides a hierarchical data structure (`items` + `tree`) with built-in actions: `set`, `unset`, `treePush`, `treeDelete`, `treeUpdate`, `treeMove`.
+This keeps all correctness guarantees on a single execution path and avoids divergence between parallel mutation models.
 
-This structure is naturally conflict-friendly:
-- The `items` map and `tree` hierarchy can represent diverse data shapes (nested lists, key-value collections, mixed hierarchies).
-- Operations target specific nodes by ID, so concurrent edits to different parts of the tree don't conflict.
-- It covers the majority of collaborative UI patterns (file explorers, nested lists, kanban boards, document outlines).
+### Canonical Interface (Recommended)
 
-### Model Mode
-
-Model mode is an append-only event log with computed state:
-- Define domain events with schemas (e.g., `branch.create`, `task.assign`).
-- Register reducers that fold events into state.
-- The library handles replay, snapshots, and rebase.
-
-This applies an event-sourcing pattern with a constrained API. You define what happened, the library computes the current state. No manual state management, no conflict resolution logic in application code.
+Use model-style command events:
+- Define domain command schemas (e.g., `scene.create`, `scene.move`).
+- Validate every command payload against schema.
+- Apply with deterministic reducers.
 
 Model snapshots are version-aware: snapshot reuse is gated by `model.version`, so stale snapshots are automatically discarded when the model schema evolves.
+
+### Tree Interface (Compatibility Layer)
+
+Tree actions (`set`, `unset`, `treePush`, `treeDelete`, `treeUpdate`, `treeMove`) remain available as a compatibility interface for existing apps.
+
+For new critical systems, tree actions should be exposed through a constrained command facade (or adapter) rather than called directly from UI handlers.
 
 ## Storage Agnostic
 

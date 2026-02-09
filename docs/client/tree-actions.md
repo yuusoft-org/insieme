@@ -1,8 +1,10 @@
 # Tree Actions
 
-This document defines the tree data structure and tree mode event types: `treePush`, `treeDelete`, `treeUpdate`, `treeMove`, and their edge cases.
+This document defines the tree data structure and tree compatibility event types: `treePush`, `treeDelete`, `treeUpdate`, `treeMove`, and their edge cases.
 
-These apply when using **tree mode** (event `type` is one of the tree actions).
+Tree actions are the **compatibility interface**. The canonical app-facing interface is model-style command events (`type: event`) with schema validation.
+
+These rules apply when tree compatibility is enabled (event `type` is one of the tree actions).
 
 ## Tree Data Structure
 
@@ -106,8 +108,23 @@ Options:
 
 Server implementations must match these exact semantics to avoid state divergence:
 
+For robust deployments, validate and reject invalid operations in the command layer before they are translated into tree actions.
+
 - **`treePush` to nonexistent parent**: the item is added to `items` but not inserted into `tree`. The item becomes orphaned. No error is thrown.
 - **`treeUpdate` on nonexistent item**: the value is written as a new entry in `items` (spread of undefined + value). No error is thrown.
 - **`treeDelete` on nonexistent item**: silent no-op. No error is thrown.
 - **`treeMove` on nonexistent item**: silent no-op, state is returned unchanged. No error is thrown.
-- **`treeMove` into own descendant**: the node is removed from the tree during the move, then the target parent (which was a descendant) is no longer found. The node and all its descendants silently disappear from `tree` but remain in `items` as orphans. **This should be prevented by validation** — both client and server should reject `treeMove` where the target parent is a descendant of the moved node.
+- **`treeMove` into own descendant**: the node is removed from the tree during the move, then the target parent (which was a descendant) is no longer found. The node and all its descendants silently disappear from `tree` but remain in `items` as orphans. **Both client and server must reject this with `validation_failed`** before applying the operation.
+
+## Recommended Guardrails (Compatibility Deployments)
+
+For dynamic-document production deployments, use the strict tree compatibility policy from [protocol/validation.md](../protocol/validation.md#tree-compatibility-policy-dynamic-documents):
+
+- whitelist valid `target` values,
+- whitelist allowed actions per target,
+- validate payload by (`target`, `action`) schema,
+- run strict precondition checks,
+- simulate apply on sandbox state,
+- validate post-state invariants before commit.
+
+This keeps tree compatibility deterministic and safe while preserving canonical `type: event` as the primary interface.

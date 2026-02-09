@@ -116,7 +116,7 @@ Server closes the connection after sending this error.
 ## Part D: Model Version Change
 
 ### Preconditions
-- C1 is connected, subscribed to ["P1"], running in model mode.
+- C1 is connected, subscribed to ["P1"], using the canonical `event` profile.
 - Current model_version = 3.
 - C1 has a local snapshot for P1 at model_version = 3.
 
@@ -134,8 +134,8 @@ payload:
 
 ### 2) C1 handles version change
 
-- C1 invalidates all local snapshots where `model_version != 4`.
-- C1 performs a full re-sync from `since_committed_id=0` for affected partitions.
+- C1 invalidates all local model snapshots.
+- C1 performs a full re-sync from `since_committed_id=0` for all active model partitions.
 
 **C1 -> Server**
 ```yaml
@@ -190,10 +190,10 @@ payload:
 - Client can recover by sending the correct message.
 
 **Protocol version unsupported:**
-- Server sends `error` with `code: protocol_version_unsupported`, includes `supported_versions`, and closes the connection.
+- Server sends `error` with `code: protocol_version_unsupported`, includes `details.supported_versions`, and closes the connection.
 
 **Version change:**
 - Server sends `version_changed` to all connected clients when model version changes.
-- Client invalidates snapshots with mismatched `model_version`.
-- Client performs full re-sync (`since_committed_id=0`) for affected partitions.
+- Client invalidates all local model snapshots.
+- Client performs full re-sync (`since_committed_id=0`) for all active model partitions.
 - New snapshot is stored with the updated `model_version`.

@@ -15,6 +15,18 @@ It provides a deterministic, event-based core for syncing application state acro
 
 ---
 
+## Canonical Architecture
+
+For long-term robustness, Insieme standardizes on:
+
+- One low-level implementation: model/event-sourcing core.
+- One app-facing interface: strict command events via `type: "event"` + schema validation.
+- Tree actions remain available as a compatibility layer for existing apps.
+
+For new critical systems, prefer `mode: "model"` and expose domain commands from your service layer instead of raw tree mutations from UI handlers.
+
+---
+
 ## 🚀 Quick Start
 
 ```js
@@ -22,34 +34,56 @@ import { createRepository } from "insieme";
 
 const store = {
   async getEvents(payload) {  
-    console.log(payload);  // should be {} or { partition: ... }
+    console.log(payload);  // should be {} or { partitions: [...] }
     return []; 
   },
   async appendEvent(event) { 
-    console.log("saved", event);  // should be { type: ..., payload: {...} } or { type: ..., partition: ..., payload: {...} }
+    console.log("saved", event);  // should be { type: ..., payload: {...} } or { type: ..., partitions: [...], payload: {...} }
   },
 };
 
-const repository = createRepository({
-  originStore: store
-});
-
-const initialState = {
-  explorer: { items: {}, tree: [] },
+const model = {
+  initialState: {
+    explorer: { items: {}, tree: [] },
+  },
+  schemas: {
+    "explorer.folderCreated": {
+      type: "object",
+      properties: {
+        id: { type: "string", minLength: 1 },
+        name: { type: "string", minLength: 1 },
+      },
+      required: ["id", "name"],
+      additionalProperties: false,
+    },
+  },
+  reduce(draft, event) {
+    if (event.payload.schema === "explorer.folderCreated") {
+      const { id, name } = event.payload.data;
+      draft.explorer.items[id] = { name, type: "folder" };
+      draft.explorer.tree.push({ id, children: [] });
+    }
+  },
+  version: 1,
 };
 
+const repository = createRepository({
+  originStore: store,
+  mode: "model",
+  model,
+});
+
 await repository.init({
-  initialState
+  initialState: model.initialState,
 });
 
 // apply an event
 await repository.addEvent({
-  type: "treePush",
+  type: "event",
   payload: {
-    target: "explorer",
-    value: { id: "1", name: "New Folder", type: "folder" },
-    options: { parent: "_root" }
-  }
+    schema: "explorer.folderCreated",
+    data: { id: "1", name: "New Folder" },
+  },
 });
 
 // read the current state
@@ -57,26 +91,27 @@ console.log(repository.getState());
 
 const repositoryWithPartition = createRepository({
   originStore: store,
-  usingCachedEvents: false  // this default true, should be false when need partition
+  mode: "model",
+  model,
+  usingCachedEvents: false, // default is true; set false for partition-scoped async reads
 });
 
 await repositoryWithPartition.init({
-  initialState
+  initialState: model.initialState,
 });
 
-// apply an event with partition
-await repository.addEvent({
-  type: "treePush",
-  partition: "session-1",
+// apply an event with partitions
+await repositoryWithPartition.addEvent({
+  type: "event",
+  partitions: ["session-1"],
   payload: {
-    target: "explorer",
-    value: { id: "1", name: "New Folder", type: "folder" },
-    options: { parent: "_root" }
-  }
+    schema: "explorer.folderCreated",
+    data: { id: "2", name: "Session Folder" },
+  },
 });
 
-// read the current state with partition
-const stateWithPartition = await repository.getStateAsync({ partition: "session-1" })
+// read the current state with partitions filter
+const stateWithPartition = await repositoryWithPartition.getStateAsync({ partitions: ["session-1"] })
 console.log(stateWithPartition);
 ```
 
@@ -91,7 +126,7 @@ While Insieme is inspired by CRDTs (Conflict-Free Replicated Data Types), it use
 | **Action flow** | Direct peer merges | Optimistic drafts → server commit |
 | **Conflict handling** | Complex merge rules | Last Write Wins (LWW), deterministic |
 | **Offline mode** | Local replicas merge later | Optimistic drafts work offline, sync later |
-| **Data structure** | Generic object graphs | Tree-based state with granular updates |
+| **Data structure** | Generic object graphs | Command/event model (tree adapter optional) |
 
 🧠 **In short**: Insieme trades peer-to-peer autonomy for simplicity, validation, and predictability—delivering optimistic UIs and offline support with a single source of truth.
 
@@ -116,15 +151,15 @@ The store interface defines the methods your storage adapter must implement. Req
 const store = {
   // Required: Load all events with optional filtering
   async getEvents(payload) {
-    // payload: {} | { partition?: string, since?: number }
-    // - partition: filter events by partition
+    // payload: {} | { partitions?: string[], since?: number }
+    // - partitions: filter events by partition intersection
     // - since: load events after this index (for snapshot optimization)
     return []; // Array of events
   },
 
   // Required: Append a new event
   async appendEvent(event) {
-    // event: { type, payload, partition? }
+    // event: { type, payload, partitions? }
     // Persist the event
   },
 
@@ -145,6 +180,10 @@ const store = {
 };
 ```
 
+Partition field migration:
+- Canonical contract uses `partitions: string[]`.
+- Legacy singular `partition` may be accepted only as a local compatibility shim; normalize to `partitions` immediately.
+
 **Note**: Stores that don't implement snapshot methods will still work perfectly but won't benefit from fast initialization. The `since` parameter in `getEvents` is optional - if your store doesn't support it, Insieme will automatically load all events and slice them as needed.
 
 ### Repository Creation
@@ -157,28 +196,43 @@ const store = {
   async appendEvent(event) { console.log("saved", event); },
 };
 
+const model = {
+  initialState: { user: { name: "" } },
+  schemas: {
+    "user.nameSet": {
+      type: "object",
+      properties: { value: { type: "string" } },
+      required: ["value"],
+      additionalProperties: false,
+    },
+  },
+  reduce(draft, event) {
+    if (event.payload.schema === "user.nameSet") {
+      draft.user.name = event.payload.data.value;
+    }
+  },
+  version: 1,
+};
+
 const repository = createRepository({
   originStore: store,              // Required: Store implementation
   usingCachedEvents: true,         // Optional: Cache events in memory (default: true)
-  snapshotInterval: 1000           // Optional: Auto-save snapshot interval (default: 1000)
+  snapshotInterval: 1000,          // Optional: Auto-save snapshot interval (default: 1000)
+  mode: "model",                   // Canonical profile
+  model,
 });
 
-const initialState = {
-  explorer: { items: {}, tree: [] },
-};
-
 await repository.init({
-  initialState
+  initialState: model.initialState,
 });
 
 // apply an event
 await repository.addEvent({
-  type: "treePush",
+  type: "event",
   payload: {
-    target: "explorer",
-    value: { id: "1", name: "New Folder", type: "folder" },
-    options: { parent: "_root" }
-  }
+    schema: "user.nameSet",
+    data: { value: "Alice" },
+  },
 });
 
 // read the current state
@@ -192,7 +246,7 @@ console.log(repository.getState());
 | `originStore` | Store | *required* | Storage adapter implementing the store interface |
 | `usingCachedEvents` | boolean | `true` | Cache events in memory for fast `getState()`. Set to `false` for partition support |
 | `snapshotInterval` | number | `1000` | Auto-save snapshot every N events. Set to `0` to disable |
-| `mode` | `"tree" \| "model"` | `"tree"` | Event mode: tree actions or model envelope |
+| `mode` | `"tree" \| "model"` | `"tree"` | Runtime mode. Use `"model"` for the canonical command/event interface |
 | `model` | object | `undefined` | Model definition for `mode: "model"` (initialState, schemas, reduce, version) |
 
 ### Repository Methods
@@ -202,8 +256,7 @@ Initialize the repository, loading from snapshot (if available) and replaying ev
 
 ```js
 await repository.init({
-  initialState: { /* ... */ },  // Optional: Initial state if no events exist
-  partition: "session-1"        // Optional: Partition identifier
+  initialState: { /* ... */ }   // Optional: Initial state if no events exist
 });
 ```
 
@@ -212,17 +265,17 @@ Append a new event to the event log.
 
 ```js
 await repository.addEvent({
-  type: "set",
+  type: "event",
   payload: {
-    target: "user.name",
-    value: "Alice"
+    schema: "user.nameSet",
+    data: { value: "Alice" }
   },
-  partition: "session-1"  // Optional
+  partitions: ["session-1"]  // Optional
 });
 ```
 
-### Model Events (`type: "event"`)
-In `mode: "model"`, you send semantic events through a stable envelope and
+### Model Events (`type: "event"`) (Canonical Interface)
+In `mode: "model"`, you send semantic command events through a stable envelope and
 update state via an Immer reducer.
 
 ```js
@@ -256,14 +309,14 @@ await repository.addEvent({
     schema: "branch.create",
     data: { name: "feature-x" }
   },
-  partition: "branch/feature-x"
+  partitions: ["branch/feature-x"]
 });
 ```
 
 **Notes:**
 - Unknown event types are rejected during validation.
-- Model mode accepts only `type: "event"` events.
-- Tree mode accepts only `set/tree*` events.
+- Canonical profile: `type: "event"` only.
+- Tree actions (`set`, `unset`, `tree*`) are a compatibility interface for legacy flows.
 
 #### `getState(options)`
 Get the current state or state at a specific event index.
@@ -285,14 +338,14 @@ Get events from the store (useful for partition support).
 
 ```js
 const allEvents = await repository.getEventsAsync();
-const partitionEvents = await repository.getEventsAsync({ partition: "session-1" });
+const partitionEvents = await repository.getEventsAsync({ partitions: ["session-1"] });
 ```
 
 #### `getStateAsync(options)`
 Get state asynchronously (only available when `usingCachedEvents: false`).
 
 ```js
-const state = await repository.getStateAsync({ partition: "session-1" });
+const state = await repository.getStateAsync({ partitions: ["session-1"] });
 ```
 
 #### `saveSnapshot()`
@@ -384,9 +437,21 @@ await repository.init();
 Snapshots are optional but highly recommended for production applications with significant event history.
 
 
-## Actions
+## Tree Compatibility Actions
 
-Insieme stores data in a tree structure designed to minimize conflicts and support collaborative editing. The tree uses a Last Writer Wins approach rather than CRDT merging for simplicity and predictability.
+These actions are maintained for compatibility with existing tree-mode integrations.
+
+Canonical interface for new systems is model commands (`type: "event"`). If you use tree actions, prefer wrapping them behind a service-level command facade.
+
+For dynamic-document apps, harden tree compatibility with:
+- target/action whitelists,
+- per target+action payload schemas,
+- strict precondition checks,
+- sandbox apply + post-state invariant validation before commit.
+
+See `docs/protocol/validation.md#tree-compatibility-policy-dynamic-documents`.
+
+Insieme stores tree data in a structure designed to minimize conflicts and support collaborative editing. The tree uses a Last Writer Wins approach rather than CRDT merging for simplicity and predictability.
 
 ### Data Structure
 
@@ -474,8 +539,9 @@ user:
     name: Alice Smith
 ```
 
-### Tree Actions
+### Tree Compatibility Actions
 
 Tree action payloads and examples now live in the client protocol docs:
 
-- `docs/client-drafts.md` → **Tree Mode Actions (Event Payloads)**
+- `docs/client/tree-actions.md` → **Tree Compatibility Actions (Event Payloads)**
+- `docs/client/drafts.md` → **Draft Lifecycle, Rebase, and Local View**

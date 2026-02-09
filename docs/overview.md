@@ -4,6 +4,14 @@ Insieme is an offline-first collaborative library built on an authoritative serv
 
 For design philosophy, goals, and trade-offs, see [motivation.md](motivation.md).
 
+## Canonical Profile
+
+To keep one source of truth and minimize long-term risk:
+
+- Low-level core: model/event-sourcing runtime.
+- App-facing interface: strict command API carried through `event` envelope messages.
+- Tree actions are maintained as a compatibility adapter layer.
+
 ## Architecture
 
 ```mermaid
@@ -37,7 +45,7 @@ sequenceDiagram
 | [protocol/ordering-and-idempotency.md](protocol/ordering-and-idempotency.md) | `committed_id` ordering, dedup by `id`, payload equality |
 | [protocol/errors.md](protocol/errors.md) | Error codes, connection effects, recovery guidance |
 | [protocol/partitions.md](protocol/partitions.md) | Partition constraints, subscriptions, multi-partition events |
-| [protocol/validation.md](protocol/validation.md) | Server validation, tree vs model mode, model versioning |
+| [protocol/validation.md](protocol/validation.md) | Server validation, canonical `event` interface, tree compatibility, model versioning |
 | [protocol/durability.md](protocol/durability.md) | Server flow, sync/catch-up, persistence, storage, limits |
 
 ### Client (local storage and state management)
@@ -46,7 +54,7 @@ sequenceDiagram
 |----------|--------|
 | [client/storage.md](client/storage.md) | Events table, snapshots, indexes, query patterns |
 | [client/drafts.md](client/drafts.md) | Draft lifecycle, draft clock, rebase, view computation |
-| [client/tree-actions.md](client/tree-actions.md) | Tree data structure, treePush/Delete/Update/Move, edge cases |
+| [client/tree-actions.md](client/tree-actions.md) | Tree compatibility interface, treePush/Delete/Update/Move, edge cases |
 
 ### Scenarios
 
@@ -70,6 +78,6 @@ sequenceDiagram
 | `partitions` | Array of strings identifying logical streams an event belongs to. An event can belong to multiple partitions. |
 | `rebase` | Recomputing local view state by replaying committed events in order, then applying drafts on top. Triggered when new committed events arrive. |
 | `snapshot` | Serialized committed-only state for a partition. Used for fast initialization without replaying the full event log. |
-| `model_version` | Integer version of the model/domain schema (model mode). When it changes, clients must invalidate snapshots and re-sync. |
+| `model_version` | Integer version of the model/domain schema (canonical profile). When it changes, clients must invalidate snapshots and re-sync. |
 | `sync cycle` | A sequence of paginated `sync` / `sync_response` exchanges until `has_more=false`. Broadcasts received during a cycle are buffered if they exceed the cycle's high-watermark. |
 | `LWW` | Last-Write-Wins. Conflict resolution strategy where the event with the higher `committed_id` wins. The server's commit order is deterministic and final. |

@@ -107,6 +107,6 @@ This follows the existing draft rebase pattern.
 
 ## Current recommendation
 
-Use Insieme for structural collaboration (tree mode, model mode) and integrate a dedicated text library (Yjs, Automerge) for character-level editing. This is the proven approach used by production apps like Notion and Linear.
+Use Insieme for structural collaboration (canonical `event` profile, with optional tree compatibility adapter) and integrate a dedicated text library (Yjs, Automerge) for character-level editing. This is the proven approach used by production apps like Notion and Linear.
 
 If the integration complexity becomes a real problem for Insieme users, this design provides a path to native text support without requiring a second collaboration system. The protocol is designed to allow this extension — `textEdit` is a new event type with a different merge strategy, not a change to existing semantics.

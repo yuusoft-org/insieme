@@ -2,11 +2,15 @@
 
 This document defines the client-side draft lifecycle, local view computation, ordering strategy, draft clock, and the full data flow for offline-first event handling.
 
+Canonical interface note:
+- Recommended profile uses `type: event` (schema + data envelope).
+- Tree actions are compatibility-only and follow the same draft/commit lifecycle.
+
 ## Event Lifecycle
 
 ### 1) Create Draft (local)
 
-- If running **model mode**, validate the event locally before insert.
+- In canonical profile deployments (`type: event`), validate the event locally before insert.
 - Insert row with `status='draft'`, `committed_id=NULL`, `partitions=[...]`
 - Apply to UI immediately (optimistic)
 - Enqueue async send to server
@@ -20,6 +24,7 @@ This document defines the client-side draft lifecycle, local view computation, o
 
 - Update row: `status='rejected'`, set `status_updated_at` (server-provided time, optionally store reason)
 - Draft no longer appears in UI (excluded by status)
+- Common reasons: `validation_failed`, `forbidden`
 
 ### 4) Remote Committed Event (other clients)
 
@@ -82,7 +87,7 @@ flowchart TD
 
 - Client generates a UUID `id`.
 - Client increments local `draft_clock` and stores it with the draft row.
-- If running **model mode**, validate the event locally before insert.
+- In canonical profile deployments (`type: event`), validate the event locally before insert.
 - Insert into local DB as `status='draft'`.
 - Apply draft to **local view state** immediately.
 

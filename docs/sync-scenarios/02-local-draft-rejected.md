@@ -70,7 +70,7 @@ payload:
     - P1
   reason: validation_failed
   errors:
-    - field: payload.value.id
+    - field: event.payload.value.id
       message: duplicate id
   status_updated_at: 1738451210000
 ```

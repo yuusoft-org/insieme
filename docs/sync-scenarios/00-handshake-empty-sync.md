@@ -39,6 +39,16 @@ payload:
   client_id: C1
   server_time: 1738451200000
   server_last_committed_id: 0
+  capabilities:
+    profile: compatibility
+    accepted_event_types:
+      - set
+      - unset
+      - treePush
+      - treeDelete
+      - treeUpdate
+      - treeMove
+    tree_policy: strict
 ```
 
 ### 2) Client requests sync

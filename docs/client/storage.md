@@ -66,8 +66,8 @@ CREATE INDEX events_draft_order
 Snapshots store **committed-only** state per partition. Drafts are always re-applied on top of snapshots.
 
 Invalidation:
-- If `model_version` changes (model mode), discard the snapshot and rebuild from committed events to avoid applying drafts on stale state.
-- For tree mode, if your app's initial schema/state changes in a breaking way, clear snapshots or bump an app-level version and invalidate similarly.
+- If `model_version` changes (canonical profile), discard the snapshot and rebuild from committed events to avoid applying drafts on stale state.
+- For tree compatibility deployments, if your app's initial schema/state changes in a breaking way, clear snapshots or bump an app-level version and invalidate similarly.
 
 ```sql
 CREATE TABLE snapshots (
@@ -75,7 +75,7 @@ CREATE TABLE snapshots (
   state TEXT NOT NULL,                 -- JSON
   committed_id INTEGER NOT NULL,       -- last committed_id included
   created_at INTEGER NOT NULL,
-  model_version INTEGER                -- optional (model mode only)
+  model_version INTEGER                -- optional (canonical profile only)
 );
 
 CREATE INDEX snapshots_committed_id

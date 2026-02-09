@@ -65,4 +65,4 @@ payload:
 - Broadcast is delivered to all clients whose subscription intersects the event partitions.
 - Per-partition views include events whose partitions contain that partition.
 - C2 (subscribed only to P2) does not see the event in any P1 view.
-- C1 (subscribed only to P1) sees the event in P1 view but does not receive broadcasts for P2.
+- C1 receives origin confirmation via `event_committed`; a separate `event_broadcast` to the origin is optional and must be handled idempotently if sent.
