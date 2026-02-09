@@ -33,6 +33,9 @@ payload:
       target: explorer
       value:
         id: DIFFERENT
+      options:
+        parent: _root
+        position: first
 ```
 
 ### 2) Server detects mismatch

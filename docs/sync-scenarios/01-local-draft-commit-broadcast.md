@@ -56,6 +56,7 @@ payload:
         id: A
       options:
         parent: _root
+        position: first
 ```
 
 ### 3) Server validates and commits
@@ -82,6 +83,7 @@ payload:
         id: A
       options:
         parent: _root
+        position: first
   status_updated_at: 1738451205000
 ```
 
@@ -102,6 +104,7 @@ payload:
         id: A
       options:
         parent: _root
+        position: first
   status_updated_at: 1738451205000
 ```
 

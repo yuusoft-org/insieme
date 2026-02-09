@@ -38,7 +38,7 @@ type: connected
 payload:
   client_id: C1
   server_time: 1738451200000
-  last_committed_id: 0
+  server_last_committed_id: 0
 ```
 
 ### 2) Client requests sync
@@ -48,6 +48,8 @@ payload:
 type: sync
 payload:
   partitions:
+    - P1
+  subscription_partitions:
     - P1
   since_committed_id: 0
   limit: 500
@@ -59,8 +61,11 @@ type: sync_response
 payload:
   partitions:
     - P1
+  effective_subscriptions:
+    - P1
   events: []
   next_since_committed_id: 0
+  sync_to_committed_id: 0
   has_more: false
 ```
 
@@ -77,3 +82,4 @@ payload:
 - No committed events are inserted.
 - No drafts are created.
 - sync_response is empty and has_more = false.
+- effective_subscriptions includes P1.

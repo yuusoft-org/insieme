@@ -52,6 +52,9 @@ payload:
       target: explorer
       value:
         id: A
+      options:
+        parent: _root
+        position: first
 ```
 
 ### 3) Server rejects

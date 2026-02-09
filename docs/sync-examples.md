@@ -13,3 +13,11 @@ This index points to detailed end-to-end scenarios used for unit and integration
 - `docs/sync-scenarios/08-model-local-validation.md`
 - `docs/sync-scenarios/09-same-id-different-payload.md`
 - `docs/sync-scenarios/10-broadcast-vs-origin-commit.md`
+- `docs/sync-scenarios/11-concurrent-drafts-commit-reordered.md`
+- `docs/sync-scenarios/12-partition-added-mid-session.md`
+- `docs/sync-scenarios/13-retry-while-draft-pending.md`
+- `docs/sync-scenarios/14-lww-conflict-concurrent-update.md`
+- `docs/sync-scenarios/15-server-crash-recovery.md`
+- `docs/sync-scenarios/16-batch-submit-offline-catchup.md`
+- `docs/sync-scenarios/17-heartbeat-and-disconnect.md`
+- `docs/sync-scenarios/18-error-and-version-change.md`

@@ -1,6 +1,6 @@
 # Client Drafts vs Committed Events (Offline-First)
 
-This document summarizes the agreed client behavior for drafts and committed events, before any server implementation changes.
+This document defines client-side behavior for drafts and committed events in Insieme's offline-first model.
 
 ## Core Decisions
 
@@ -66,7 +66,7 @@ CREATE INDEX events_draft_order
 Snapshots store **committed-only** state per partition. Drafts are always re-applied on top of snapshots.
 
 Invalidation:
-- If `model_version` changes (model/domain mode), discard the snapshot and rebuild from committed events to avoid applying drafts on stale state.
+- If `model_version` changes (model mode), discard the snapshot and rebuild from committed events to avoid applying drafts on stale state.
 - For tree mode, if your app's initial schema/state changes in a breaking way, clear snapshots or bump an app-level version and invalidate similarly.
 
 ```sql
@@ -81,6 +81,17 @@ CREATE TABLE snapshots (
 CREATE INDEX snapshots_committed_id
   ON snapshots(partition, committed_id);
 ```
+
+### Cursor Mapping (Spec vs Runtime)
+
+`committed_id` is the **canonical sync cursor** in the protocol and storage docs.
+
+The JS repository runtime (`src/repository.js`) uses `eventIndex` in snapshots as an internal replay cursor. These are related but not equivalent:
+
+- `committed_id`: global server ordering cursor (wire/storage contract).
+- `eventIndex`: local repository replay index (runtime/cache contract).
+
+Adapters that bridge the sync layer and the repository must persist both values. Do not treat `eventIndex` as a protocol cursor unless the local event log is a complete, gap-free prefix of the global committed stream.
 
 ## Partitions
 
@@ -99,7 +110,7 @@ Practical rules:
 ## Event Lifecycle
 
 1) **Create Draft (local)**
-   - If running **model/domain mode**, validate the event locally before insert.
+   - If running **model mode**, validate the event locally before insert.
    - Insert row with `status='draft'`, `committed_id=NULL`, `partitions=[...]`
    - Apply to UI immediately (optimistic)
    - Enqueue async send to server
@@ -147,6 +158,8 @@ Rejected drafts are **excluded** from view computation.
 - On startup: set `draft_clock` to the max value found for the local client (filter by `client_id = local`).
 - Remote events do **not** update the local `draft_clock` (drafts are local-only).
 
+Crash-recovery note: `draft_clock` has no cross-client meaning and does not participate in server dedupe. If no draft rows exist at startup, initializing to `0` is safe. The only requirement is local monotonicity for newly created drafts.
+
 ## Full Data Flow (All Cases)
 
 ```mermaid
@@ -170,7 +183,7 @@ flowchart TD
 
 - Client generates a UUID `id`.
 - Client increments local `draft_clock` and stores it with the draft row.
-- If running **model/domain mode**, validate the event locally before insert.
+- If running **model mode**, validate the event locally before insert.
 - Insert into local DB as `status='draft'`.
 - Apply draft to **local view state** immediately.
 
@@ -178,8 +191,9 @@ flowchart TD
 
 - Client enqueues the draft for delivery.
 - Transport can be:
-  - **WebSocket**: push `submit_event`.
+  - **WebSocket**: push `submit_event` (or `submit_events` for batch).
   - **Polling**: batch and POST drafts on a schedule.
+- Drafts must be submitted in `draft_clock` order. If new drafts are created while the queue is draining, they are appended to the end of the queue and submitted after earlier drafts.
 
 ### 3) Server Response (Commit or Reject)
 
@@ -204,6 +218,7 @@ flowchart TD
 - Client requests missed committed events since last `committed_id` (global cursor).
 - Apply all new committed events in order.
 - Rebase drafts on top (recompute **local view state**).
+- After sync completes, retry all pending drafts (status=draft) in `draft_clock` order. The server dedupes by `id`, so retrying already-committed drafts is safe.
 
 ### 5a) Out-of-Order Committed Delivery
 
@@ -228,6 +243,8 @@ When a committed event arrives (local commit response or broadcast), apply it wi
 
 This avoids double-apply while ensuring drafts are properly upgraded.
 
+Conflict diagnostic: if `ON CONFLICT(committed_id) DO NOTHING` affects 0 rows, check whether the existing row for that `committed_id` has the same `id`. If the ids differ, this is a protocol integrity violation — log it and trigger a full re-sync.
+
 ## Key Query Patterns
 
 - **Committed state (per partition):**
@@ -236,8 +253,12 @@ This avoids double-apply while ensuring drafts are properly upgraded.
   - `WHERE status='draft' AND partitions CONTAINS ? ORDER BY draft_clock, id`
 
 Notes:
-- `partitions CONTAINS ?` is conceptual. In SQLite, use: `EXISTS (SELECT 1 FROM json_each(events.partitions) WHERE value = ?)`
-- For large datasets, consider an auxiliary `event_partitions(id, partition)` table to index membership efficiently.
+- `partitions CONTAINS ?` is a logical operator. Backend-specific implementations:
+  - **SQLite**: `EXISTS (SELECT 1 FROM json_each(events.partitions) WHERE value = ?)`
+  - **PostgreSQL**: `events.partitions @> to_jsonb(ARRAY[?]::text[])`
+  - **IndexedDB**: maintain an auxiliary index store keyed by `(partition, committed_id)`
+  - **In-memory**: `event.partitions.includes(partition)`
+- For high-volume workloads, consider a normalized `event_partitions(event_id, partition)` join table.
 
 ## Tree Mode Actions (Event Payloads)
 
@@ -283,12 +304,12 @@ payload:
     type: folder
   options:
     parent: _root
-    position: last
+    position: first
 ```
 
 Options:
 - `parent`: parent id (default `_root`)
-- `position`: `first` | `last` | `{ after: "<id>" }` | `{ before: "<id>" }`
+- `position`: `first` | `last` | `{ after: "<id>" }` | `{ before: "<id>" }` (default `first`)
 
 ### `treeDelete`
 
@@ -338,11 +359,21 @@ payload:
 
 Options:
 - `id`: item id to move
-- `parent`: new parent id (use `_root` for root)
-- `position`: `first` | `last` | `{ after: "<id>" }` | `{ before: "<id>" }`
+- `parent`: new parent id (use `_root` for root) (default `_root`)
+- `position`: `first` | `last` | `{ after: "<id>" }` | `{ before: "<id>" }` (default `first`)
+
+### Tree Operation Edge Cases
+
+Server implementations must match these exact semantics to avoid state divergence:
+
+- **`treePush` to nonexistent parent**: the item is added to `items` but not inserted into `tree`. The item becomes orphaned. No error is thrown.
+- **`treeUpdate` on nonexistent item**: the value is written as a new entry in `items` (spread of undefined + value). No error is thrown.
+- **`treeDelete` on nonexistent item**: silent no-op. No error is thrown.
+- **`treeMove` on nonexistent item**: silent no-op, state is returned unchanged. No error is thrown.
+- **`treeMove` into own descendant**: the node is removed from the tree during the move, then the target parent (which was a descendant) is no longer found. The node and all its descendants silently disappear from `tree` but remain in `items` as orphans. **This should be prevented by validation** — both client and server should reject `treeMove` where the target parent is a descendant of the moved node.
 
 ## Retention / Compaction (Optional)
 
 - After a snapshot is created for a partition, committed events with `committed_id <= snapshot.committed_id` can be archived or pruned.
 - Keep **all drafts** (and rejected drafts if you need audit/UI history) until they are resolved and no longer needed by the app.
-- For multi-partition events, only prune when **all** referenced partitions have advanced past that `committed_id`.
+- For multi-partition events, only prune when **all** referenced partitions have advanced past that `committed_id`. Track this using per-partition watermarks (the highest `committed_id` included in each partition's snapshot).

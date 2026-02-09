@@ -41,6 +41,9 @@ payload:
       target: explorer
       value:
         id: A
+      options:
+        parent: _root
+        position: first
 ```
 
 ### 2) Server dedupes
@@ -63,6 +66,9 @@ payload:
       target: explorer
       value:
         id: A
+      options:
+        parent: _root
+        position: first
   status_updated_at: 1738451205000
 ```
 

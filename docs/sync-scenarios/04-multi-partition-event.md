@@ -14,6 +14,7 @@ Verify events that belong to multiple partitions are visible in all correspondin
 ## Preconditions
 - Server global committed_id = 101.
 - All clients connected.
+- C1 is subscribed only to P1 for broadcast, but submissions are allowed for partitions outside the current subscription set.
 
 ## Steps
 
@@ -34,6 +35,9 @@ payload:
       target: explorer
       value:
         id: B
+      options:
+        parent: _root
+        position: first
 ```
 
 ### 2) Server commits
@@ -58,6 +62,7 @@ payload:
 **P2 view** (clients C2, C3): includes evt-uuid-3.
 
 ## Assertions
-- Broadcast is delivered to all clients whose subscription intersects
-  the event partitions.
+- Broadcast is delivered to all clients whose subscription intersects the event partitions.
 - Per-partition views include events whose partitions contain that partition.
+- C2 (subscribed only to P2) does not see the event in any P1 view.
+- C1 (subscribed only to P1) sees the event in P1 view but does not receive broadcasts for P2.
