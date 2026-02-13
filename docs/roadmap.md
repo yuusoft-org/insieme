@@ -7,7 +7,7 @@ This roadmap is the implementation plan for the current protocol/interface docs.
 - Normative protocol/interface requirements remain in existing docs under:
   - `docs/protocol/*.md`
   - `docs/client/*.md`
-  - `docs/overview.md`
+  - `docs/README.md`
   - `docs/sync-scenarios/*.md`
 - This roadmap is execution-only (tasks, order, acceptance criteria).
 - Do not duplicate or fork protocol rules in code comments/spec files; reference the docs above by section.

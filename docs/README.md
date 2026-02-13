@@ -1,13 +1,49 @@
-# Docs Entrypoint
+# Insieme Docs
 
-Start here. This file is the navigation index for all Insieme docs.
+Start here. This is the single docs entrypoint and navigation index.
+
+Insieme is an offline-first collaborative library built on an authoritative server model. Clients create events locally (optimistic UI), send them to the server for validation, and receive committed events back in a globally ordered stream. Conflict resolution uses Last-Write-Wins (LWW) with server commit order as the canonical timeline.
+
+For single-client/local-only use, the client runtime can run fully offline without any server. A server is required only for multi-client collaboration and authoritative commit/validation.
+
+For design philosophy, goals, and trade-offs, see [motivation.md](motivation.md).
+
+## Interface Profiles
+
+To keep one source of truth and minimize long-term risk:
+
+- Low-level core: model/event-sourcing runtime.
+- App-facing profiles are both first-class:
+  - Tree profile (`set`, `unset`, `tree*`) for free-form dynamic data.
+  - Event profile (`type: event`) for strict schema-driven commands.
+
+## Architecture
+
+```mermaid
+sequenceDiagram
+    participant C1 as Client A
+    participant S as Server
+    participant C2 as Client B
+
+    C1->>S: connect (JWT)
+    S->>C1: connected (server cursor)
+    C1->>S: sync (partitions, since_committed_id)
+    S->>C1: sync_response (missed events)
+
+    Note over C1: Create draft locally (optimistic UI)
+    C1->>S: submit_events (events[])
+    S->>S: validate + assign committed_id + persist
+    S->>C1: submit_events_result
+    S->>C2: event_broadcast (committed_id)
+
+    Note over C2: Apply committed event, rebase local drafts
+```
 
 ## First Read
 
-1. `overview.md` - protocol and client doc map, glossary, and architecture context.
-2. `motivation.md` - design goals, tradeoffs, and interface rationale.
-3. `javascript-interface.md` - small JS interface contract for client and backend.
-4. `roadmap.md` - implementation plan (backend + frontend + test strategy).
+1. `motivation.md` - design goals, tradeoffs, and interface rationale.
+2. `javascript-interface.md` - small JS interface contract for client and backend.
+3. `roadmap.md` - implementation plan (backend + frontend + test strategy).
 
 ## Protocol Spec
 
@@ -25,10 +61,29 @@ Start here. This file is the navigation index for all Insieme docs.
 - `client/drafts.md` - draft lifecycle, rebase, idempotent apply strategy.
 - `client/tree-actions.md` - tree profile action semantics and edge cases.
 
-## Scenario Index
+## Scenarios
 
-- `sync-examples.md` - index of all end-to-end sync scenarios.
+- `sync-examples.md` - index of all 19 end-to-end sync scenarios.
 - `sync-scenarios/*.md` - scenario-by-scenario expected behavior.
+
+## Future Work
+
+- `drafts/collaborative-text.md` - design draft for native OT-based text editing (not implemented).
+
+## Glossary
+
+| Term | Definition |
+|------|-----------|
+| `client_id` | Authenticated client/device identifier. Represents event origin client and is distinct from event ids and tree item ids. |
+| `id` | Event id (globally unique UUID assigned by the client when creating an event). Used for dedup and draft-to-commit matching; not a tree item id. |
+| `committed_id` | Server-assigned global monotonic integer. Defines canonical ordering of all committed events. Never reused, survives restarts. |
+| `draft_clock` | Local monotonic counter on each client for ordering drafts. Not transmitted to the server; no cross-client meaning. |
+| `partitions` | Array of strings identifying logical streams an event belongs to. An event can belong to multiple partitions. |
+| `rebase` | Recomputing local view state by replaying committed events in order, then applying drafts on top. Triggered when new committed events arrive. |
+| `snapshot` | Serialized committed-only state for a partition. Used for fast initialization without replaying the full event log. |
+| `model_version` | Integer version of the model/domain schema (event profile / `canonical`). When it changes, clients must invalidate snapshots and re-sync. |
+| `sync cycle` | A sequence of paginated `sync` / `sync_response` exchanges until `has_more=false`. Broadcasts received during a cycle are buffered if they exceed the cycle high-watermark. |
+| `LWW` | Last-Write-Wins. Conflict resolution where the event with higher `committed_id` wins. Server commit order is deterministic and final. |
 
 ## Source of Truth Rules
 
