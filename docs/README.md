@@ -63,8 +63,25 @@ sequenceDiagram
 
 ## Scenarios
 
-- `sync-examples.md` - index of all 19 end-to-end sync scenarios.
-- `sync-scenarios/*.md` - scenario-by-scenario expected behavior.
+- `sync-scenarios/00-handshake-empty-sync.md`
+- `sync-scenarios/01-local-draft-commit-broadcast.md`
+- `sync-scenarios/02-local-draft-rejected.md`
+- `sync-scenarios/03-duplicate-submit-retry.md`
+- `sync-scenarios/04-multi-partition-event.md`
+- `sync-scenarios/05-reconnect-catch-up-paged.md`
+- `sync-scenarios/06-out-of-order-commit-arrival.md`
+- `sync-scenarios/07-snapshot-prune.md`
+- `sync-scenarios/08-model-local-validation.md`
+- `sync-scenarios/09-same-id-different-payload.md`
+- `sync-scenarios/10-broadcast-vs-origin-commit.md`
+- `sync-scenarios/11-concurrent-drafts-commit-reordered.md`
+- `sync-scenarios/12-partition-added-mid-session.md`
+- `sync-scenarios/13-retry-while-draft-pending.md`
+- `sync-scenarios/14-lww-conflict-concurrent-update.md`
+- `sync-scenarios/15-server-crash-recovery.md`
+- `sync-scenarios/16-batch-submit-offline-catchup.md`
+- `sync-scenarios/17-heartbeat-and-disconnect.md`
+- `sync-scenarios/18-error-and-version-change.md`
 
 ## Future Work
 
