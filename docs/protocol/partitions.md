@@ -33,7 +33,7 @@ Normative keywords in this document are to be interpreted as described in RFC 21
 
 - Subscription is a delivery filter, not an authorization mechanism.
 - Server **MUST** authorize partition access separately for both submit and sync paths.
-- For `submit_event`/`submit_events`, authorization is all-of across event partitions: client must be authorized for every partition in the event.
+- For `submit_events`, authorization is all-of across event partitions: client must be authorized for every partition in the event.
 - For `sync`, if any requested partition is unauthorized, server **MUST** reject the request with `forbidden` and return no event data.
 
 ## Partition Subscriptions

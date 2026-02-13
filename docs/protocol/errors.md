@@ -69,4 +69,4 @@ Retry `connect` using one of `details.supported_profiles` (or remove `required_p
 
 ### `version_changed`
 
-When the model version changes while clients are connected in canonical profile deployments, the server sends `version_changed` globally. On receiving it, clients **MUST** invalidate all local model snapshots and perform a full catch-up (`since_committed_id=0`) for all active model partitions. See [validation.md](validation.md#model-versioning) for details.
+When the model version changes while clients are connected in event profile (`canonical`) deployments, the server sends `version_changed` globally. On receiving it, clients **MUST** invalidate all local model snapshots and perform a full catch-up (`since_committed_id=0`) for all active model partitions. See [validation.md](validation.md#model-versioning) for details.

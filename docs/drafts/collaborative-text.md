@@ -19,7 +19,7 @@ Using a CRDT for text inside Insieme would mean paying the CRDT complexity tax (
 ### OT advantages in Insieme's context
 
 - **Simpler operations.** `insert(position, text)` and `delete(position, length)`. The transform function is small and well-understood.
-- **Server decides.** The server receives operations, transforms them against concurrent committed ones, and broadcasts the result. This fits the existing `submit_event` → validate → `event_committed` → broadcast flow.
+- **Server decides.** The server receives operations, transforms them against concurrent committed ones, and broadcasts the result. This fits the existing `submit_events` → validate → result/broadcast flow.
 - **Smaller payloads.** OT operations are compact (position + text). CRDT operations carry unique IDs per character and causal metadata. For batched operations sent every 500ms, payload size matters.
 - **No tombstones.** CRDTs keep deleted characters as hidden state forever (or need garbage collection). OT does not.
 - **Central server simplifies OT.** Classic distributed OT (Google Wave) was notoriously hard because operation ordering was ambiguous and transform functions had to compose across N peers. Insieme's `committed_id` gives a total order, and the server is the single transform authority — no peer-to-peer transform chains.
@@ -107,6 +107,6 @@ This follows the existing draft rebase pattern.
 
 ## Current recommendation
 
-Use Insieme for structural collaboration (canonical `event` profile, with optional tree compatibility adapter) and integrate a dedicated text library (Yjs, Automerge) for character-level editing. This is the proven approach used by production apps like Notion and Linear.
+Use Insieme for structural collaboration (tree profile for free-form structures and/or event profile for schema-driven commands) and integrate a dedicated text library (Yjs, Automerge) for character-level editing. This is the proven approach used by production apps like Notion and Linear.
 
 If the integration complexity becomes a real problem for Insieme users, this design provides a path to native text support without requiring a second collaboration system. The protocol is designed to allow this extension — `textEdit` is a new event type with a different merge strategy, not a change to existing semantics.

@@ -36,24 +36,25 @@ Server closes the connection after sending this error.
 
 ### 1) C1 sends a message before completing handshake
 
-C1 sends `submit_event` without first completing `connect`/`connected`.
+C1 sends `submit_events` without first completing `connect`/`connected`.
 
 **C1 -> Server**
 ```yaml
-type: submit_event
+type: submit_events
 payload:
-  id: evt-uuid-bad
-  partitions:
-    - P1
-  event:
-    type: treePush
-    payload:
-      target: explorer
-      value:
-        id: bad-item
-      options:
-        parent: _root
-        position: first
+  events:
+    - id: evt-uuid-bad
+      partitions:
+        - P1
+      event:
+        type: treePush
+        payload:
+          target: explorer
+          value:
+            id: bad-item
+          options:
+            parent: _root
+            position: first
 ```
 
 **Server -> C1**
@@ -61,7 +62,7 @@ payload:
 type: error
 payload:
   code: bad_request
-  message: Must complete handshake before sending submit_event
+  message: Must complete handshake before sending submit_events
 ```
 
 Connection remains open (bad_request does not close the connection). C1 should send `connect` first.

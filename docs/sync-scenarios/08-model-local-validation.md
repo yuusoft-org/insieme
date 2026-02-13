@@ -31,7 +31,7 @@ payload:
 
 ### 3) Client behavior
 - Do not insert draft row.
-- Do not send `submit_event` to server.
+- Do not send `submit_events` to server.
 - Surface validation error locally.
 
 ## Expected Results

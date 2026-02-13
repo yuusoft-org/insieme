@@ -42,21 +42,22 @@ created_at=<local time>
 
 **C1 -> Server**
 ```yaml
-type: submit_event
+type: submit_events
 payload:
-  id: evt-uuid-1
-  client_id: C1
-  partitions:
-    - P1
-  event:
-    type: treePush
-    payload:
-      target: explorer
-      value:
-        id: A
-      options:
-        parent: _root
-        position: first
+  events:
+    - id: evt-uuid-1
+      client_id: C1
+      partitions:
+        - P1
+      event:
+        type: treePush
+        payload:
+          target: explorer
+          value:
+            id: A
+          options:
+            parent: _root
+            position: first
 ```
 
 ### 3) Server validates and commits
@@ -68,23 +69,13 @@ payload:
 
 **Server -> C1 (commit)**
 ```yaml
-type: event_committed
+type: submit_events_result
 payload:
-  id: evt-uuid-1
-  client_id: C1
-  partitions:
-    - P1
-  committed_id: 101
-  event:
-    type: treePush
-    payload:
-      target: explorer
-      value:
-        id: A
-      options:
-        parent: _root
-        position: first
-  status_updated_at: 1738451205000
+  results:
+    - id: evt-uuid-1
+      status: committed
+      committed_id: 101
+      status_updated_at: 1738451205000
 ```
 
 **Server -> C2 (broadcast)**

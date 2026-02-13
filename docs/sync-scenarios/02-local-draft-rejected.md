@@ -40,21 +40,22 @@ created_at=<local time>
 
 **C1 -> Server**
 ```yaml
-type: submit_event
+type: submit_events
 payload:
-  id: evt-uuid-2
-  client_id: C1
-  partitions:
-    - P1
-  event:
-    type: treePush
-    payload:
-      target: explorer
-      value:
-        id: A
-      options:
-        parent: _root
-        position: first
+  events:
+    - id: evt-uuid-2
+      client_id: C1
+      partitions:
+        - P1
+      event:
+        type: treePush
+        payload:
+          target: explorer
+          value:
+            id: A
+          options:
+            parent: _root
+            position: first
 ```
 
 ### 3) Server rejects
@@ -62,17 +63,16 @@ payload:
 
 **Server -> C1**
 ```yaml
-type: event_rejected
+type: submit_events_result
 payload:
-  id: evt-uuid-2
-  client_id: C1
-  partitions:
-    - P1
-  reason: validation_failed
-  errors:
-    - field: event.payload.value.id
-      message: duplicate id
-  status_updated_at: 1738451210000
+  results:
+    - id: evt-uuid-2
+      status: rejected
+      reason: validation_failed
+      errors:
+        - field: event.payload.value.id
+          message: duplicate id
+      status_updated_at: 1738451210000
 ```
 
 ### 4) C1 updates local DB

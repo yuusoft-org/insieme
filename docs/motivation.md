@@ -19,6 +19,8 @@ Examples:
 
 The common thread: these applications need offline support and optimistic UI, but they also need a central authority that can reject invalid operations.
 
+Important scope note: Insieme's client runtime can be used fully offline with no server for single-client/local-only apps. A server is only needed when multiple clients must collaborate and converge on authoritative commits.
+
 ## Why Not CRDTs
 
 CRDTs solve conflict resolution without a central server. For purely peer-to-peer systems with no server — local-first note-taking, real-time cursors, shared whiteboards — CRDTs can be the right choice.
@@ -50,11 +52,13 @@ For conflict resolution, we use **Last-Write-Wins (LWW)**. It's simple, predicta
 To maximize long-term robustness, Insieme standardizes on:
 
 - **One low-level implementation**: model/event-sourcing core (append-only events, schema validation, deterministic reducer, replay, snapshots).
-- **One app-facing interface**: strict command interface on top of that core (command events in the `event` envelope).
+- **Two first-class app-facing interfaces** on top of that core:
+  - **Tree profile** (`set`, `unset`, `tree*`) for free-form dynamic documents.
+  - **Event profile** (`type: event` envelope) for explicit schema-driven command domains.
 
-This keeps all correctness guarantees on a single execution path and avoids divergence between parallel mutation models.
+This keeps correctness guarantees on a single execution core while allowing two intentional interface styles.
 
-### Canonical Interface (Recommended)
+### Event Profile
 
 Use model-style command events:
 - Define domain command schemas (e.g., `scene.create`, `scene.move`).
@@ -63,11 +67,11 @@ Use model-style command events:
 
 Model snapshots are version-aware: snapshot reuse is gated by `model.version`, so stale snapshots are automatically discarded when the model schema evolves.
 
-### Tree Interface (Compatibility Layer)
+### Tree Profile
 
-Tree actions (`set`, `unset`, `treePush`, `treeDelete`, `treeUpdate`, `treeMove`) remain available as a compatibility interface for existing apps.
+Tree actions (`set`, `unset`, `treePush`, `treeDelete`, `treeUpdate`, `treeMove`) are first-class for dynamic data models and document-like structures.
 
-For new critical systems, tree actions should be exposed through a constrained command facade (or adapter) rather than called directly from UI handlers.
+For production robustness, tree profile deployments should enforce target/action whitelists, payload schemas, and post-state invariants as defined in the protocol docs.
 
 ## Storage Agnostic
 
@@ -87,7 +91,7 @@ Setting clear boundaries prevents misuse:
 - **Not a real-time text editor.** Insieme operates at the event/action level, not the character level. For collaborative rich text editing with per-keystroke sync, use a dedicated OT or CRDT text library.
 - **Not a database.** Insieme is a state synchronization layer. It manages an event log and computes state from it. Your storage backend is yours to choose and operate.
 - **Not a full backend framework.** Insieme defines the sync protocol and provides the client-side event sourcing engine. The server implementation, authentication, and deployment are your responsibility (we provide the spec, not the server).
-- **Not peer-to-peer.** Insieme requires a central server. If you need serverless peer-to-peer collaboration, use a CRDT library instead.
+- **Not serverless peer-to-peer collaboration.** Insieme's collaboration protocol relies on a central server for authoritative validation/ordering. Single-client offline usage is supported without a server.
 
 ## Priorities
 
@@ -113,6 +117,7 @@ Performance goals:
 - **Incremental state computation.** When a new event arrives, update state incrementally rather than replaying the full log.
 - **Efficient partition queries.** Partition-scoped operations should only touch data relevant to that partition, not scan everything.
 - **Minimal wire overhead.** The sync protocol is designed for small message payloads, batched submissions, and paged catch-up to reduce bandwidth.
+- **Compact and compressed data when possible.** Storage and payload formats should avoid redundant/unnecessary bytes, and use compression where it provides clear wins without hurting correctness.
 - **Lazy loading.** Clients should only load and compute state for partitions they actively need. In-memory cached mode optimizes fast local reads; partition-scoped reads use async store queries for memory efficiency.
 
 These optimizations are layered on top of a correct foundation. We will not sacrifice correctness for speed, but we will invest in making the correct path fast.

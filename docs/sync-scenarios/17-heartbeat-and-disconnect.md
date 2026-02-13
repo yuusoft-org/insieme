@@ -53,43 +53,34 @@ C2 submits an event that gets committed.
 
 **C2 -> Server**
 ```yaml
-type: submit_event
+type: submit_events
 payload:
-  id: evt-uuid-dc1
-  partitions:
-    - P1
-  event:
-    type: treePush
-    payload:
-      target: explorer
-      value:
-        id: dc-item
-      options:
-        parent: _root
-        position: first
+  events:
+    - id: evt-uuid-dc1
+      partitions:
+        - P1
+      event:
+        type: treePush
+        payload:
+          target: explorer
+          value:
+            id: dc-item
+          options:
+            parent: _root
+            position: first
 ```
 
 Server commits with committed_id=401.
 
 **Server -> C2 (commit)**
 ```yaml
-type: event_committed
+type: submit_events_result
 payload:
-  id: evt-uuid-dc1
-  client_id: C2
-  partitions:
-    - P1
-  committed_id: 401
-  event:
-    type: treePush
-    payload:
-      target: explorer
-      value:
-        id: dc-item
-      options:
-        parent: _root
-        position: first
-  status_updated_at: 1738452100000
+  results:
+    - id: evt-uuid-dc1
+      status: committed
+      committed_id: 401
+      status_updated_at: 1738452100000
 ```
 
 Server does **not** broadcast to C1 (already disconnected and unsubscribed).

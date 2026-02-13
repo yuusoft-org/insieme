@@ -22,22 +22,23 @@ Verify events that belong to multiple partitions are visible in all correspondin
 
 **C1 -> Server**
 ```yaml
-type: submit_event
+type: submit_events
 payload:
-  id: evt-uuid-3
-  client_id: C1
-  partitions:
-    - P1
-    - P2
-  event:
-    type: treePush
-    payload:
-      target: explorer
-      value:
-        id: B
-      options:
-        parent: _root
-        position: first
+  events:
+    - id: evt-uuid-3
+      client_id: C1
+      partitions:
+        - P1
+        - P2
+      event:
+        type: treePush
+        payload:
+          target: explorer
+          value:
+            id: B
+          options:
+            parent: _root
+            position: first
 ```
 
 ### 2) Server commits
@@ -45,7 +46,7 @@ payload:
 - Persist event with partitions ["P1","P2"].
 
 ### 3) Broadcast
-- C1 receives event_committed.
+- C1 receives submit_events_result.
 - C2 and C3 receive event_broadcast (subscriptions intersect).
 
 ## Expected Local DB Inserts
@@ -65,4 +66,5 @@ payload:
 - Broadcast is delivered to all clients whose subscription intersects the event partitions.
 - Per-partition views include events whose partitions contain that partition.
 - C2 (subscribed only to P2) does not see the event in any P1 view.
-- C1 receives origin confirmation via `event_committed`; a separate `event_broadcast` to the origin is optional and must be handled idempotently if sent.
+- C1 receives origin confirmation via `submit_events_result` only.
+- Server does not send `event_broadcast` for this item back to the origin connection.

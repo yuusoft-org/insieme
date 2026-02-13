@@ -4,30 +4,48 @@
 **Insieme** (Italian for *“together”*) is a foundational library for building **collaborative, consistent state**.
 It provides a deterministic, event-based core for syncing application state across clients and a central authoritative server
 
----
-
-## ✨ Features
-
-- 🔁 **Offline-first** - Works offline and syncs when network is available
-- 🧱 **Validation** - central server commits and validates changes.
-- 💾 **Swappable storage adapters** — works in browser, desktop, or custom stores.
-- ⚡ **Persistent snapshots** - Fast initialization by loading from snapshots instead of replaying all events.
+The client runtime can also be used fully offline without any server for single-client/local-only apps. A server is required only for multi-client collaboration and authoritative commit/sync.
 
 ---
 
-## Canonical Architecture
+## Features
+
+- **Offline-first** - Works offline and syncs when network is available
+- **Validation** - central server commits and validates changes.
+- **Swappable storage adapters** — works in browser, desktop, or custom stores.
+- **Persistent snapshots** - Fast initialization by loading from snapshots instead of replaying all events.
+
+Documentation entrypoint: `docs/README.md`.
+
+---
+
+## Architecture Profiles
 
 For long-term robustness, Insieme standardizes on:
 
 - One low-level implementation: model/event-sourcing core.
-- One app-facing interface: strict command events via `type: "event"` + schema validation.
-- Tree actions remain available as a compatibility layer for existing apps.
+- Two first-class interfaces on top of that core:
+  - Tree profile (`set`, `unset`, `tree*`) for free-form dynamic documents.
+  - Event profile (`type: "event"`) for strict schema-driven command domains.
 
-For new critical systems, prefer `mode: "model"` and expose domain commands from your service layer instead of raw tree mutations from UI handlers.
+Use the tree profile when your app is intentionally dynamic/free-form. Use the event profile when your domain benefits from explicit command schemas and tighter contracts.
+
+## Implementation Guidelines (Required)
+
+These rules are mandatory for this repository:
+
+- JavaScript only (`.js`). No TypeScript source files.
+- JSDoc is allowed and encouraged for contracts and developer ergonomics.
+- Use functions and factory functions only. Do not introduce classes.
+- Keep core logic in pure functions wherever possible.
+- Test pure behavior primarily with Puty YAML specs.
+- Use Vitest (JavaScript) only for cases that cannot be cleanly modeled as pure-function Puty specs (stateful internals, complex async/control-flow paths).
+- Prioritize automatic testability in all designs and changes.
+- Keep implementation behavior aligned with protocol/spec docs under `docs/`.
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ```js
 import { createRepository } from "insieme";
@@ -115,7 +133,7 @@ const stateWithPartition = await repositoryWithPartition.getStateAsync({ partiti
 console.log(stateWithPartition);
 ```
 
-## 🔄 How Insieme Differs from CRDTs
+## How Insieme Differs from CRDTs
 
 While Insieme is inspired by CRDTs (Conflict-Free Replicated Data Types), it uses an authoritative, event-based model rather than full distribution.
 
@@ -128,9 +146,9 @@ While Insieme is inspired by CRDTs (Conflict-Free Replicated Data Types), it use
 | **Offline mode** | Local replicas merge later | Optimistic drafts work offline, sync later |
 | **Data structure** | Generic object graphs | Command/event model (tree adapter optional) |
 
-🧠 **In short**: Insieme trades peer-to-peer autonomy for simplicity, validation, and predictability—delivering optimistic UIs and offline support with a single source of truth.
+**In short**: Insieme trades peer-to-peer autonomy for simplicity, validation, and predictability—delivering optimistic UIs and offline support with a single source of truth.
 
-🧱 Architecture Overview
+## Architecture Overview
 
 client
  ├─ drafts → local actions (optimistic)
@@ -142,6 +160,8 @@ server
  └─ returns committed actions with incremental IDs
 
 ## API Documentation
+
+For the canonical small JS interface (client + backend), see `docs/javascript-interface.md`.
 
 ### Store Interface
 
@@ -218,7 +238,7 @@ const repository = createRepository({
   originStore: store,              // Required: Store implementation
   usingCachedEvents: true,         // Optional: Cache events in memory (default: true)
   snapshotInterval: 1000,          // Optional: Auto-save snapshot interval (default: 1000)
-  mode: "model",                   // Canonical profile
+  mode: "model",                   // Event profile (schema-driven)
   model,
 });
 
@@ -315,8 +335,8 @@ await repository.addEvent({
 
 **Notes:**
 - Unknown event types are rejected during validation.
-- Canonical profile: `type: "event"` only.
-- Tree actions (`set`, `unset`, `tree*`) are a compatibility interface for legacy flows.
+- Event profile: `type: "event"` only.
+- Tree profile: `set`, `unset`, `tree*` for dynamic/free-form data.
 
 #### `getState(options)`
 Get the current state or state at a specific event index.
@@ -449,7 +469,7 @@ For dynamic-document apps, harden tree compatibility with:
 - strict precondition checks,
 - sandbox apply + post-state invariant validation before commit.
 
-See `docs/protocol/validation.md#tree-compatibility-policy-dynamic-documents`.
+See `docs/protocol/validation.md#tree-profile-policy-dynamic-documents`.
 
 Insieme stores tree data in a structure designed to minimize conflicts and support collaborative editing. The tree uses a Last Writer Wins approach rather than CRDT merging for simplicity and predictability.
 

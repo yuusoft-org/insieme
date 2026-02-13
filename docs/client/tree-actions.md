@@ -1,10 +1,10 @@
 # Tree Actions
 
-This document defines the tree data structure and tree compatibility event types: `treePush`, `treeDelete`, `treeUpdate`, `treeMove`, and their edge cases.
+This document defines the tree data structure and tree profile event types: `treePush`, `treeDelete`, `treeUpdate`, `treeMove`, and their edge cases.
 
-Tree actions are the **compatibility interface**. The canonical app-facing interface is model-style command events (`type: event`) with schema validation.
+Tree actions are a **first-class interface** for dynamic/free-form documents. The event profile (`type: event`) is also first-class for stricter schema-driven domains.
 
-These rules apply when tree compatibility is enabled (event `type` is one of the tree actions).
+These rules apply when tree profile support is enabled (event `type` is one of the tree actions).
 
 ## Tree Data Structure
 
@@ -116,9 +116,9 @@ For robust deployments, validate and reject invalid operations in the command la
 - **`treeMove` on nonexistent item**: silent no-op, state is returned unchanged. No error is thrown.
 - **`treeMove` into own descendant**: the node is removed from the tree during the move, then the target parent (which was a descendant) is no longer found. The node and all its descendants silently disappear from `tree` but remain in `items` as orphans. **Both client and server must reject this with `validation_failed`** before applying the operation.
 
-## Recommended Guardrails (Compatibility Deployments)
+## Recommended Guardrails (Tree Profile Deployments)
 
-For dynamic-document production deployments, use the strict tree compatibility policy from [protocol/validation.md](../protocol/validation.md#tree-compatibility-policy-dynamic-documents):
+For dynamic-document production deployments, use the strict tree policy from [protocol/validation.md](../protocol/validation.md#tree-profile-policy-dynamic-documents):
 
 - whitelist valid `target` values,
 - whitelist allowed actions per target,
@@ -127,4 +127,4 @@ For dynamic-document production deployments, use the strict tree compatibility p
 - simulate apply on sandbox state,
 - validate post-state invariants before commit.
 
-This keeps tree compatibility deterministic and safe while preserving canonical `type: event` as the primary interface.
+This keeps tree operations deterministic and safe for first-class dynamic data use.

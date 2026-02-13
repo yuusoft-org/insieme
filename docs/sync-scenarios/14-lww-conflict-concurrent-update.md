@@ -48,36 +48,38 @@ Both clients apply their draft optimistically. At this point:
 
 **C1 -> Server**
 ```yaml
-type: submit_event
+type: submit_events
 payload:
-  id: evt-c1-upd
-  partitions:
-    - P1
-  event:
-    type: treeUpdate
-    payload:
-      target: explorer
-      value:
-        name: C1 Edit
-      options:
-        id: item1
+  events:
+    - id: evt-c1-upd
+      partitions:
+        - P1
+      event:
+        type: treeUpdate
+        payload:
+          target: explorer
+          value:
+            name: C1 Edit
+          options:
+            id: item1
 ```
 
 **C2 -> Server**
 ```yaml
-type: submit_event
+type: submit_events
 payload:
-  id: evt-c2-upd
-  partitions:
-    - P1
-  event:
-    type: treeUpdate
-    payload:
-      target: explorer
-      value:
-        name: C2 Edit
-      options:
-        id: item1
+  events:
+    - id: evt-c2-upd
+      partitions:
+        - P1
+      event:
+        type: treeUpdate
+        payload:
+          target: explorer
+          value:
+            name: C2 Edit
+          options:
+            id: item1
 ```
 
 ### 3) Server commits in arrival order
@@ -90,22 +92,13 @@ Server receives C2 first, then C1:
 
 **Server -> C2 (commit)**
 ```yaml
-type: event_committed
+type: submit_events_result
 payload:
-  id: evt-c2-upd
-  client_id: C2
-  partitions:
-    - P1
-  committed_id: 201
-  event:
-    type: treeUpdate
-    payload:
-      target: explorer
-      value:
-        name: C2 Edit
-      options:
-        id: item1
-  status_updated_at: 1738451600000
+  results:
+    - id: evt-c2-upd
+      status: committed
+      committed_id: 201
+      status_updated_at: 1738451600000
 ```
 
 **Server -> C1 (broadcast of C2's event)**
@@ -130,22 +123,13 @@ payload:
 
 **Server -> C1 (commit)**
 ```yaml
-type: event_committed
+type: submit_events_result
 payload:
-  id: evt-c1-upd
-  client_id: C1
-  partitions:
-    - P1
-  committed_id: 202
-  event:
-    type: treeUpdate
-    payload:
-      target: explorer
-      value:
-        name: C1 Edit
-      options:
-        id: item1
-  status_updated_at: 1738451600100
+  results:
+    - id: evt-c1-upd
+      status: committed
+      committed_id: 202
+      status_updated_at: 1738451600100
 ```
 
 **Server -> C2 (broadcast of C1's event)**

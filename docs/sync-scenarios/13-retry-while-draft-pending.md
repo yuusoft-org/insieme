@@ -3,7 +3,7 @@
 Note: All YAML messages include the standard envelope fields (`msg_id`, `timestamp`, `protocol_version`). They are omitted here only when not central to the scenario.
 
 ## Goal
-Verify idempotent retry handling when the client did not receive the original `event_committed` and the local row is still `status=draft`.
+Verify idempotent retry handling when the client did not receive the original `submit_events_result` and the local row is still `status=draft`.
 
 ## Actors
 - C1 (client_id = "C1")
@@ -12,32 +12,33 @@ Verify idempotent retry handling when the client did not receive the original `e
 ## Preconditions
 - C1 submitted event `evt-uuid-r1` to the server.
 - Server already committed it at `committed_id=410`.
-- C1 never received the `event_committed` response (network interruption).
+- C1 never received the `submit_events_result` response (network interruption).
 - C1 local DB still has:
   - `id=evt-uuid-r1`, `status=draft`, `committed_id=NULL`, `draft_clock=5`
 
 ## Steps
 
-### 1) C1 reconnects and retries submit_event (same id)
+### 1) C1 reconnects and retries submit_events (same id)
 
 After reconnecting, C1 retries all pending drafts in `draft_clock` order.
 
 **C1 -> Server**
 ```yaml
-type: submit_event
+type: submit_events
 payload:
-  id: evt-uuid-r1
-  partitions:
-    - P1
-  event:
-    type: treePush
-    payload:
-      target: explorer
-      value:
-        id: X
-      options:
-        parent: _root
-        position: first
+  events:
+    - id: evt-uuid-r1
+      partitions:
+        - P1
+      event:
+        type: treePush
+        payload:
+          target: explorer
+          value:
+            id: X
+          options:
+            parent: _root
+            position: first
 ```
 
 ### 2) Server dedupes by id
@@ -48,23 +49,13 @@ payload:
 
 **Server -> C1** (replay commit result)
 ```yaml
-type: event_committed
+type: submit_events_result
 payload:
-  id: evt-uuid-r1
-  client_id: C1
-  partitions:
-    - P1
-  committed_id: 410
-  event:
-    type: treePush
-    payload:
-      target: explorer
-      value:
-        id: X
-      options:
-        parent: _root
-        position: first
-  status_updated_at: 1738451500000
+  results:
+    - id: evt-uuid-r1
+      status: committed
+      committed_id: 410
+      status_updated_at: 1738451500000
 ```
 
 ### 3) C1 upgrades local draft

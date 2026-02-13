@@ -2,15 +2,16 @@
 
 This document defines the client-side draft lifecycle, local view computation, ordering strategy, draft clock, and the full data flow for offline-first event handling.
 
-Canonical interface note:
-- Recommended profile uses `type: event` (schema + data envelope).
-- Tree actions are compatibility-only and follow the same draft/commit lifecycle.
+Interface note:
+- Tree profile (`set`, `unset`, `tree*`) is first-class for free-form dynamic data.
+- Event profile uses `type: event` (schema + data envelope).
+- Both profiles follow the same draft/commit lifecycle.
 
 ## Event Lifecycle
 
 ### 1) Create Draft (local)
 
-- In canonical profile deployments (`type: event`), validate the event locally before insert.
+- Validate the event locally before insert using the active profile rules.
 - Insert row with `status='draft'`, `committed_id=NULL`, `partitions=[...]`
 - Apply to UI immediately (optimistic)
 - Enqueue async send to server
@@ -87,7 +88,7 @@ flowchart TD
 
 - Client generates a UUID `id`.
 - Client increments local `draft_clock` and stores it with the draft row.
-- In canonical profile deployments (`type: event`), validate the event locally before insert.
+- Validate the event locally before insert using the active profile rules.
 - Insert into local DB as `status='draft'`.
 - Apply draft to **local view state** immediately.
 
@@ -95,7 +96,7 @@ flowchart TD
 
 - Client enqueues the draft for delivery.
 - Transport can be:
-  - **WebSocket**: push `submit_event` (or `submit_events` for batch).
+  - **WebSocket**: push `submit_events` (single-item or batch).
   - **Polling**: batch and POST drafts on a schedule.
 - Drafts must be submitted in `draft_clock` order. If new drafts are created while the queue is draining, they are appended to the end of the queue and submitted after earlier drafts.
 

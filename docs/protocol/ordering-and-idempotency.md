@@ -1,6 +1,6 @@
 # Ordering & Idempotency
 
-This document defines `committed_id` ordering guarantees, deduplication semantics, payload equality, and broadcast-to-origin behavior.
+This document defines `committed_id` ordering guarantees, deduplication semantics, payload equality, and origin/broadcast behavior.
 
 Normative keywords in this document are to be interpreted as described in RFC 2119: `MUST`, `MUST NOT`, `SHOULD`, `SHOULD NOT`, `MAY`.
 
@@ -42,7 +42,8 @@ Rules:
 - Broadcasts include both `id` and `committed_id` to support client idempotency.
 - Clients **MUST** handle receiving the same committed event multiple times (via sync, broadcast, or retry) without double-applying.
 
-## Broadcast to Origin
+## Origin Result and Broadcast
 
-- The server **MUST** send `event_committed` to the origin client.
-- Additionally broadcasting `event_broadcast` to the origin client is **optional** (`MAY`); if it happens, the client **MUST** be idempotent by `id` / `committed_id`.
+- The server **MUST** send one `submit_events_result` for each `submit_events` request, with one result entry per submitted item in input order.
+- The server **MUST NOT** send `event_broadcast` for an item to the same connection that submitted that item.
+- The origin client's authoritative submit outcome is `submit_events_result`.

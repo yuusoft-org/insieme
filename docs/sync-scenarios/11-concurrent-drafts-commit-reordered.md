@@ -23,54 +23,57 @@ Verify client rebase correctness when server commit order differs from local sub
 
 **C1 -> Server**
 ```yaml
-type: submit_event
+type: submit_events
 payload:
-  id: evt-d1
-  partitions:
-    - P1
-  event:
-    type: treePush
-    payload:
-      target: explorer
-      value:
-        id: item-d1
-      options:
-        parent: _root
-        position: first
+  events:
+    - id: evt-d1
+      partitions:
+        - P1
+      event:
+        type: treePush
+        payload:
+          target: explorer
+          value:
+            id: item-d1
+          options:
+            parent: _root
+            position: first
 ```
 
 ```yaml
-type: submit_event
+type: submit_events
 payload:
-  id: evt-d2
-  partitions:
-    - P1
-  event:
-    type: treePush
-    payload:
-      target: explorer
-      value:
-        id: item-d2
-      options:
-        parent: _root
-        position: first
+  events:
+    - id: evt-d2
+      partitions:
+        - P1
+      event:
+        type: treePush
+        payload:
+          target: explorer
+          value:
+            id: item-d2
+          options:
+            parent: _root
+            position: first
 ```
 
 ```yaml
-type: submit_event
+type: submit_events
 payload:
-  id: evt-d3
-  partitions:
-    - P1
-  event:
-    type: treePush
-    payload:
-      target: explorer
-      value:
-        id: item-d3
-      options:
-        parent: _root
-        position: first
+  events:
+    - id: evt-d3
+      partitions:
+        - P1
+      event:
+        type: treePush
+        payload:
+          target: explorer
+          value:
+            id: item-d3
+          options:
+            parent: _root
+            position: first
 ```
 
 ### 2) Server commits in different order
@@ -80,27 +83,17 @@ Due to concurrent validation or internal scheduling, server commits:
 - D1 -> committed_id=502
 - D3 -> committed_id=503
 
-### 3) C1 receives event_committed for D2
+### 3) C1 receives submit_events_result for D2
 
 **Server -> C1**
 ```yaml
-type: event_committed
+type: submit_events_result
 payload:
-  id: evt-d2
-  client_id: C1
-  partitions:
-    - P1
-  committed_id: 501
-  event:
-    type: treePush
-    payload:
-      target: explorer
-      value:
-        id: item-d2
-      options:
-        parent: _root
-        position: first
-  status_updated_at: 1738451300000
+  results:
+    - id: evt-d2
+      status: committed
+      committed_id: 501
+      status_updated_at: 1738451300000
 ```
 
 **C1 local state after D2 committed**
@@ -108,27 +101,17 @@ payload:
 - committed(P1) = [501(D2)]
 - drafts(P1) = [D1(clock=1), D3(clock=3)]
 
-### 4) C1 receives event_committed for D1
+### 4) C1 receives submit_events_result for D1
 
 **Server -> C1**
 ```yaml
-type: event_committed
+type: submit_events_result
 payload:
-  id: evt-d1
-  client_id: C1
-  partitions:
-    - P1
-  committed_id: 502
-  event:
-    type: treePush
-    payload:
-      target: explorer
-      value:
-        id: item-d1
-      options:
-        parent: _root
-        position: first
-  status_updated_at: 1738451300100
+  results:
+    - id: evt-d1
+      status: committed
+      committed_id: 502
+      status_updated_at: 1738451300100
 ```
 
 **C1 local state after D1 committed**
@@ -136,27 +119,17 @@ payload:
 - committed(P1) = [501(D2), 502(D1)]
 - drafts(P1) = [D3(clock=3)]
 
-### 5) C1 receives event_committed for D3
+### 5) C1 receives submit_events_result for D3
 
 **Server -> C1**
 ```yaml
-type: event_committed
+type: submit_events_result
 payload:
-  id: evt-d3
-  client_id: C1
-  partitions:
-    - P1
-  committed_id: 503
-  event:
-    type: treePush
-    payload:
-      target: explorer
-      value:
-        id: item-d3
-      options:
-        parent: _root
-        position: first
-  status_updated_at: 1738451300200
+  results:
+    - id: evt-d3
+      status: committed
+      committed_id: 503
+      status_updated_at: 1738451300200
 ```
 
 **C1 local state after D3 committed**

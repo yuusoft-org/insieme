@@ -6,17 +6,18 @@ Normative keywords in this document are to be interpreted as described in RFC 21
 
 ## Server Flow
 
-### Submit Event
+### Submit Events
 
-1. Receive `submit_event` (or `submit_events` for batch).
-2. Validate payload and authorization (canonical `event` profile; tree compatibility profile if enabled).
-3. If invalid or unauthorized → send `event_rejected` to origin client. No broadcast occurs on rejection.
+1. Receive `submit_events`.
+2. Validate payload and authorization (event profile/canonical and tree profile/compatibility).
+3. If invalid or unauthorized, mark that item as `status=rejected` in `submit_events_result`. No broadcast occurs on rejection.
 4. If valid → assign `committed_id` (global, monotonic).
 5. Persist the committed event (durable write).
-6. Send `event_committed` to origin client.
+6. After all items are processed, send one `submit_events_result` to the origin client.
 7. Broadcast `event_broadcast` to all other clients whose subscriptions intersect the event's partitions.
 
-For a valid event, steps 4-7 **MUST** occur in this order.
+For each valid item, steps 4, 5, and 7 **MUST** occur in this order.
+Step 6 occurs once per `submit_events` request after all items are processed.
 
 For `submit_events`:
 - Server **MUST** pre-validate request-level invariants before processing any item (for example: unique `payload.events[].id`).
@@ -57,7 +58,7 @@ If `since_committed_id` is higher than the server's current max committed_id, th
 
 ## Durability Guarantees
 
-- `event_committed` / `event_broadcast` **MUST** only be sent **after** the committed event is durably persisted.
+- `submit_events_result` committed entries and `event_broadcast` **MUST** only be sent **after** the committed event is durably persisted.
 - On server restart, the commit log is the source of truth for replay and sync. In-memory subscription state is rebuilt from active connections (clients **MUST** reconnect and re-sync).
 - If the server crashes between durable persist and broadcast, the origin client never receives confirmation. On reconnect, the client retries pending drafts; the server dedupes by `id` and returns the existing committed result. Peers receive the event on their next sync.
 
