@@ -202,7 +202,7 @@ const store = {
 
 Partition field migration:
 - Canonical contract uses `partitions: string[]`.
-- Legacy singular `partition` may be accepted only as a local compatibility shim; normalize to `partitions` immediately.
+- Legacy singular `partition` is deprecated and not supported in protocol-facing payloads. Use `partitions` only.
 
 **Note**: Stores that don't implement snapshot methods will still work perfectly but won't benefit from fast initialization. The `since` parameter in `getEvents` is optional - if your store doesn't support it, Insieme will automatically load all events and slice them as needed.
 

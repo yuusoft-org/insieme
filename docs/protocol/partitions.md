@@ -16,13 +16,12 @@ Normative keywords in this document are to be interpreted as described in RFC 21
 - The server **MUST** treat `partitions` as a **set**: deduplicate and sort (ascending lexical byte order) before storage. Use the normalized array for hashing/equality checks.
 - If limits are exceeded, server **MUST** reject with `validation_failed`.
 
-### Legacy Field Migration (`partition` -> `partitions`)
+### Field Canonicalization (`partitions` only)
 
 - Wire protocol and durable storage **MUST** use `partitions` (array) as the canonical field.
 - Legacy singular `partition` is deprecated and **MUST NOT** be emitted on the wire.
-- Local adapter/runtime APIs **MAY** accept legacy `partition` input only as a compatibility shim by normalizing to `partitions: [partition]`.
-- If both fields are provided and equivalent after normalization, implementations **MAY** accept and canonicalize to `partitions`.
-- If both `partition` and `partitions` are provided and disagree, the request **MUST** be rejected with `bad_request`.
+- Legacy singular `partition` is not supported for submission compatibility and **MUST NOT** be accepted in protocol requests.
+- If `partition` is present in a protocol request payload (including alongside `partitions`), the server **MUST** reject with `bad_request`.
 
 ## Submission vs Subscription
 

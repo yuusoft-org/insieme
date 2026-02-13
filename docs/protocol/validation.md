@@ -34,6 +34,7 @@ For `submit_events` (batch submit):
 
 - `payload.events` **MUST** be a non-empty array.
 - `payload.events[].id` values **MUST** be unique within the request.
+- Legacy singular `payload.events[].partition` **MUST NOT** be accepted. If present, server **MUST** reject the request with `bad_request`.
 - Duplicate ids inside a single batch **MUST** cause whole-request rejection with `bad_request` before processing any item.
 - Server **MUST** process `payload.events` in list order.
 - Each item is validated against state resulting from prior committed items in the same batch.

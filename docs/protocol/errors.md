@@ -38,7 +38,7 @@ Servers **MUST** choose error codes using the following boundaries:
   - JWT invalid/expired, authenticated identity mismatch, or post-connect `payload.client_id` mismatch.
   - Connection effect: close.
 - `bad_request`:
-  - Malformed envelope, unknown message `type`, invalid message for current connection state, missing required fields, or request-level batch invariants failure (for example duplicate ids in one `submit_events` request).
+  - Malformed envelope, unknown message `type`, invalid message for current connection state, missing required fields, request-level batch invariants failure (for example duplicate ids in one `submit_events` request), or use of explicitly disallowed deprecated fields (for example legacy `partition`).
   - Connection effect: keep open.
 - `validation_failed`:
   - Well-formed submit message where event/domain/partition constraints fail.

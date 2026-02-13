@@ -14,7 +14,7 @@ All WebSocket messages (both directions) **MUST** include the following top-leve
 - `payload` (object): message-specific payload.
 - `protocol_version` (string): current version is `"1.0"`.
 
-Unknown fields **MUST** be ignored to allow forward compatibility.
+Unknown fields **MUST** be ignored to allow forward compatibility, except fields explicitly marked as reserved/deprecated-invalid by this spec (for example legacy `partition` in partitioned request payloads), which **MUST** be rejected with `bad_request`.
 
 ### Envelope Rules
 

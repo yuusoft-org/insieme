@@ -73,7 +73,7 @@ export function createSyncClient(deps) {}
  * @property {(reason?: string) => Promise<void>} stop
  * @property {(event: string, handler: (payload: any) => void) => () => void} on
  * @property {() => number} getLastCommittedId
- * @property {(options?: { partition?: string }) => object} getViewState
+ * @property {(options?: { partitions?: string[] }) => object} getViewState
  */
 ```
 
