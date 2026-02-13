@@ -26,11 +26,14 @@ Required ordering for accepted items:
 - Server returns events with `committed_id > since_committed_id` intersecting requested partitions.
 - Paging uses `limit` + `has_more`.
 - Client continues paging until `has_more=false`.
+- Server **MUST** use a fixed per-cycle upper bound (`sync_to_committed_id`) captured at the first page so paging converges to completion.
+- Events committed after `sync_to_committed_id` are delivered after the cycle (broadcast or next sync cycle).
 
 Cursor rule:
 
 - `next_since_committed_id` from each page is the input cursor for the next page.
 - Final `next_since_committed_id` is the client's durable cursor.
+- Client **MAY** persist intermediate page cursors, but **MUST** persist the final cursor when `has_more=false`.
 
 ## Broadcast During Sync (Simplified Rule)
 

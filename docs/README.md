@@ -48,6 +48,10 @@ sequenceDiagram
 - `client/tree-actions.md` - tree action semantics (app-level extension).
 - `../examples/real-client-usage/` - production-style client integration examples.
 
+## Interface Reference
+
+- `reference/javascript-interface.md` - minimal JS client/server factory interface.
+
 ## Sync Scenarios
 
 `sync-scenarios/` contains core behavior scenarios aligned with the simplified protocol surface.

@@ -52,7 +52,7 @@ Field semantics:
 - Required claim: `client_id`; it **MUST** match `connect.payload.client_id`.
 - Authenticated connection identity is authoritative for all later requests.
 - Partition authorization **MUST** be checked for both submit and sync.
-- If token expires during a connection, server **MUST** close.
+- If token expires during a connection, server **MUST** send `auth_failed` and close.
 
 ## Active Requests
 

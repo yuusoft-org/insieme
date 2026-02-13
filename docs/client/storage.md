@@ -17,8 +17,7 @@ CREATE TABLE local_drafts (
   draft_clock INTEGER PRIMARY KEY AUTOINCREMENT,
   id TEXT NOT NULL UNIQUE,
   client_id TEXT NOT NULL,
-  type TEXT NOT NULL,
-  payload TEXT NOT NULL,
+  event TEXT NOT NULL,              -- JSON: { type, payload }
   partitions TEXT NOT NULL,
   created_at INTEGER NOT NULL
 );
@@ -30,8 +29,7 @@ CREATE TABLE committed_events (
   committed_id INTEGER PRIMARY KEY,
   id TEXT NOT NULL UNIQUE,
   client_id TEXT NOT NULL,
-  type TEXT NOT NULL,
-  payload TEXT NOT NULL,
+  event TEXT NOT NULL,              -- JSON: { type, payload }
   partitions TEXT NOT NULL,
   status_updated_at INTEGER NOT NULL
 );
@@ -45,6 +43,7 @@ Notes:
 - `id` is global event UUID and dedupe key.
 - `draft_clock` is local ordering only.
 - `partitions` should be stored as a normalized set representation.
+- Reference adapter: `src-next/sqlite-client-store.js` (`createSqliteClientStore`).
 
 ## Optional Tables
 

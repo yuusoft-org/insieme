@@ -33,6 +33,16 @@ Rules:
 - Exclude connection metadata.
 - Server **MUST** use one deterministic canonicalization algorithm consistently.
 
+Canonicalization algorithm (required):
+
+1. Normalize `partitions` as a set sorted lexicographically (ascending, code-point order).
+2. Build `canonical_input = { partitions: normalizedPartitions, event }`.
+3. Serialize `canonical_input` using deep key-sorted JSON:
+   - object keys sorted lexicographically (ascending),
+   - arrays preserve order,
+   - primitive values preserved.
+4. Compare canonical serialized bytes for equality.
+
 ## Origin Result vs Broadcast
 
 - Origin connection's submit outcome is `submit_events_result`.

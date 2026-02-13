@@ -176,6 +176,7 @@ Cursor rule:
 
 - If `has_more=true`, client **MUST** use `next_since_committed_id` in the next `sync` call.
 - If `has_more=false`, `next_since_committed_id` becomes the durable cursor.
+- `payload.partitions` **MUST** be present and reflect the normalized active sync scope used for this response page.
 
 ### `error`
 

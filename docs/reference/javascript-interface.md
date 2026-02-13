@@ -12,15 +12,10 @@ This file defines a minimal JS API surface aligned with the simplified core prot
 /**
  * @typedef {Object} SubmitItem
  * @property {string} id
+ * @property {string} clientId
  * @property {string[]} partitions
  * @property {{ type: string, payload: object }} event
- */
-
-/**
- * @typedef {Object} SyncRequest
- * @property {string[]} partitions
- * @property {number} sinceCommittedId
- * @property {number} [limit]
+ * @property {number} createdAt
  */
 ```
 
@@ -31,16 +26,27 @@ This file defines a minimal JS API surface aligned with the simplified core prot
 ```js
 /**
  * @param {Object} deps
- * @param {{ send: (message: object) => Promise<void>, connect: () => Promise<void>, disconnect: () => Promise<void> }} deps.transport
  * @param {{
+ *   send: (message: object) => Promise<void>,
+ *   connect: () => Promise<void>,
+ *   disconnect: () => Promise<void>,
+ *   onMessage: (handler: (message: object) => void) => () => void
+ * }} deps.transport
+ * @param {{
+ *   init: () => Promise<void>,
  *   loadCursor: () => Promise<number>,
- *   saveCursor: (cursor: number) => Promise<void>,
  *   insertDraft: (item: SubmitItem) => Promise<void>,
  *   loadDraftsOrdered: () => Promise<SubmitItem[]>,
- *   applyCommitted: (event: object) => Promise<void>,
- *   removeDraftById: (id: string) => Promise<void>
+ *   applySubmitResult: (input: { result: object, fallbackClientId: string }) => Promise<void>,
+ *   applyCommittedBatch: (input: { events: object[], nextCursor?: number }) => Promise<void>
  * }} deps.store
- * @param {(item: SubmitItem) => void} deps.validateLocalEvent
+ * @param {string} deps.token
+ * @param {string} deps.clientId
+ * @param {string[]} deps.partitions
+ * @param {() => number} [deps.now]
+ * @param {() => string} [deps.uuid]
+ * @param {(item: SubmitItem) => void} [deps.validateLocalEvent]
+ * @param {(input: { type: string, payload: any }) => void} [deps.onEvent]
  * @returns {SyncClient}
  */
 export function createSyncClient(deps) {}
@@ -51,12 +57,12 @@ export function createSyncClient(deps) {}
 ```js
 /**
  * @typedef {Object} SyncClient
- * @property {(input: { token: string, clientId: string }) => Promise<void>} start
- * @property {(request: SyncRequest) => Promise<void>} sync
- * @property {(item: SubmitItem) => Promise<void>} submit
+ * @property {() => Promise<void>} start
  * @property {() => Promise<void>} stop
- * @property {(event: string, handler: (payload: any) => void) => () => void} on
- * @property {() => number} getLastCommittedId
+ * @property {(partitions: string[]) => Promise<void>} setPartitions
+ * @property {(item: { partitions: string[], event: { type: string, payload: object } }) => Promise<string>} submitEvent
+ * @property {() => Promise<void>} syncNow
+ * @property {() => Promise<void>} flushDrafts
  */
 ```
 
@@ -80,12 +86,20 @@ Client runtime events:
  * @param {{ authorizePartitions: (identity: object, partitions: string[]) => Promise<boolean> }} deps.authz
  * @param {{ validate: (item: SubmitItem, ctx: object) => Promise<void> }} deps.validation
  * @param {{
- *   getById: (id: string) => Promise<object|null>,
- *   appendCommitted: (event: object) => Promise<void>,
- *   listCommittedSince: (input: { partitions: string[], sinceCommittedId: number, limit: number }) => Promise<{ events: object[], hasMore: boolean, nextSinceCommittedId: number }>,
+ *   commitOrGetExisting: (input: { id: string, clientId: string, partitions: string[], event: object, now: number }) => Promise<{
+ *     deduped: boolean,
+ *     committedEvent: {
+ *       id: string,
+ *       client_id: string,
+ *       partitions: string[],
+ *       committed_id: number,
+ *       event: object,
+ *       status_updated_at: number
+ *     }
+ *   }>,
+ *   listCommittedSince: (input: { partitions: string[], sinceCommittedId: number, limit: number, syncToCommittedId?: number }) => Promise<{ events: object[], hasMore: boolean, nextSinceCommittedId: number }>,
  *   getMaxCommittedId: () => Promise<number>
  * }} deps.store
- * @param {{ nextCommittedId: () => Promise<number> }} deps.ids
  * @param {{ now: () => number }} deps.clock
  * @returns {SyncServer}
  */
@@ -112,4 +126,5 @@ export function createSyncServer(deps) {}
 
 - Client submit path is single-item in core mode.
 - Server still receives `submit_events` wire message shape with one `events[0]` item.
+- Client store methods that mutate committed/draft/cursor state should be implemented as single DB transactions.
 - All behavior must match `docs/protocol/*.md`.

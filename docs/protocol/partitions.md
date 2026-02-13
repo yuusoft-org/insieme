@@ -8,7 +8,8 @@ Normative keywords in this document are to be interpreted as described in RFC 21
 
 - `partitions` **MUST** be a non-empty array of strings.
 - Each partition entry **MUST** be non-empty.
-- Duplicate partition values in one event **SHOULD** be rejected with `validation_failed`.
+- Duplicate partition values in one event **MUST** be rejected with `validation_failed`.
+- Partition order is not semantically significant. Server **MUST** normalize accepted partition sets to deterministic lexicographic order.
 
 ## Authorization
 
