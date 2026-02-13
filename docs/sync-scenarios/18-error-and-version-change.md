@@ -1,9 +1,9 @@
-# Scenario 18 - Error Handling and Model Version Change
+# Scenario 18 - Error Handling and Model Version Upgrade
 
 Note: All YAML messages include the standard envelope fields (`msg_id`, `timestamp`, `protocol_version`). They are omitted here only when not central to the scenario.
 
 ## Goal
-Verify server error responses for auth failure, bad request, and unsupported protocol version. Also verify model version change notification and client re-sync behavior.
+Verify server error responses for auth failure, bad request, and unsupported protocol version. Also verify deployment-driven model version upgrade handling and client re-sync behavior.
 
 ## Actors
 - C1 (client_id = "C1")
@@ -114,7 +114,7 @@ payload:
 
 Server closes the connection after sending this error.
 
-## Part D: Model Version Change
+## Part D: Model Version Upgrade (No Dynamic Broadcast)
 
 ### Preconditions
 - C1 is connected, subscribed to ["P1"], using the canonical `event` profile.
@@ -124,19 +124,29 @@ Server closes the connection after sending this error.
 ### 1) Server deploys new model version
 
 The server's model/domain schema is updated from version 3 to version 4.
+No `version_changed` push message is sent in protocol `1.0`.
 
-**Server -> C1**
-```yaml
-type: version_changed
-payload:
-  old_model_version: 3
-  new_model_version: 4
-```
+### 2) C1 reconnects/syncs and detects mismatch
 
-### 2) C1 handles version change
+C1 updates client code/runtime to version 4 and reconnects.
+C1 observes `model_version=4` from handshake/sync metadata and compares it to local snapshot version `3`.
 
 - C1 invalidates all local model snapshots.
 - C1 performs a full re-sync from `since_committed_id=0` for all active model partitions.
+
+**Server -> C1**
+```yaml
+type: connected
+payload:
+  client_id: C1
+  server_time: 1738452200000
+  server_last_committed_id: 900
+  capabilities:
+    profile: canonical
+    accepted_event_types:
+      - event
+  model_version: 4
+```
 
 **C1 -> Server**
 ```yaml
@@ -193,8 +203,9 @@ payload:
 **Protocol version unsupported:**
 - Server sends `error` with `code: protocol_version_unsupported`, includes `details.supported_versions`, and closes the connection.
 
-**Version change:**
-- Server sends `version_changed` to all connected clients when model version changes.
+**Model version upgrade:**
+- Server does not send a dynamic `version_changed` push message.
+- Client detects mismatch from `model_version` in `connected` / `sync_response`.
 - Client invalidates all local model snapshots.
 - Client performs full re-sync (`since_committed_id=0`) for all active model partitions.
 - New snapshot is stored with the updated `model_version`.

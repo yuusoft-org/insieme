@@ -183,7 +183,7 @@ Insieme does not own the storage backend. The runtime targets a simple store int
 | `partitions` | Array of strings identifying logical streams an event belongs to. An event can belong to multiple partitions. |
 | `rebase` | Recomputing local view state by replaying committed events in order, then applying drafts on top. Triggered when new committed events arrive. |
 | `snapshot` | Serialized committed-only state for a partition. Used for fast initialization without replaying the full event log. |
-| `model_version` | Integer version of the model/domain schema (event profile / `canonical`). When it changes, clients must invalidate snapshots and re-sync. |
+| `model_version` | Integer version of the model/domain schema (event profile / `canonical`). Version upgrades are deployment-driven (client code update + reconnect); on mismatch, clients invalidate snapshots and re-sync. |
 | `sync cycle` | A sequence of paginated `sync` / `sync_response` exchanges until `has_more=false`. Broadcasts received during a cycle are buffered if they exceed the cycle high-watermark. |
 | `LWW` | Last-Write-Wins. Conflict resolution where the event with higher `committed_id` wins. Server commit order is deterministic and final. |
 

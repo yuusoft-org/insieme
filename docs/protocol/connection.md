@@ -90,7 +90,7 @@ Field semantics:
 - For `profile=canonical`, `accepted_event_types` **MUST** be exactly `[event]`.
 - For `profile=compatibility`, `accepted_event_types` **MUST** include only tree action types (`set`, `unset`, `treePush`, `treeDelete`, `treeUpdate`, `treeMove`).
 - This spec defines `tree_policy=strict` only. Clients **MUST** treat other values as unsupported.
-- `model_version` (optional): current model/domain schema version for event profile deployments. If the client's local snapshot has a different version, it **MUST** invalidate and re-sync.
+- `model_version` (optional): current model/domain schema version for event profile deployments. If the client's local snapshot has a different version, it **MUST** invalidate and re-sync. Model/version upgrades are deployment-driven (no dynamic `version_changed` push message in protocol `1.0`).
 - `limits` (optional): server-advertised operational limits. If omitted, clients **MUST** use protocol defaults where defined (`max_batch_size=100`, `sync_limit_min=50`, `sync_limit_max=1000`) and treat other limits as unknown.
 
 Profile negotiation semantics:

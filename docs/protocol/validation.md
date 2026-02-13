@@ -87,6 +87,6 @@ Notes:
 ## Model Versioning
 
 - Server **MUST** expose `model_version` in `connected` and `sync_response` for event profile deployments.
-- If the model version changes while clients are connected, server **MUST** send `version_changed`.
-- `version_changed` is global in scope (not partition-scoped).
-- On receiving `version_changed`, clients **MUST** invalidate all local model snapshots and perform full re-sync for all active model partitions.
+- Protocol `1.0` does not use a dynamic `version_changed` push message.
+- Model/schema upgrades are deployment-driven: client code/runtime version is updated out-of-band.
+- If a client observes `model_version` different from its local snapshot/model version, it **MUST** invalidate local model snapshots and perform full re-sync for all active model partitions (`since_committed_id=0`).

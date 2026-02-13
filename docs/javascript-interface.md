@@ -86,7 +86,6 @@ export function createSyncClient(deps) {}
 - `committed`
 - `rejected`
 - `broadcast`
-- `version_changed`
 - `error`
 - `status_changed`
 
@@ -193,7 +192,7 @@ await client.submitMany([
 ]);
 ```
 
-### 6) Reactive Handling (Commit/Reject/Version Change)
+### 6) Reactive Handling (Commit/Reject)
 
 ```js
 const offCommitted = client.on("committed", (payload) => {
@@ -202,13 +201,6 @@ const offCommitted = client.on("committed", (payload) => {
 
 const offRejected = client.on("rejected", (payload) => {
   console.log("rejected", payload.id, payload.reason);
-});
-
-const offVersionChanged = client.on("version_changed", async () => {
-  await client.sync({
-    partitions: ["workspace-1"],
-    sinceCommittedId: 0,
-  });
 });
 ```
 
@@ -242,7 +234,6 @@ export function createSyncServer(deps) {}
 /**
  * @typedef {Object} SyncServer
  * @property {(transport: { connectionId: string, send: (message: object) => Promise<void>, close: (code?: number, reason?: string) => Promise<void> }) => ConnectionSession} attachConnection
- * @property {(payload: { oldModelVersion: number, newModelVersion: number }) => Promise<void>} publishVersionChange
  * @property {() => Promise<void>} shutdown
  */
 ```
@@ -311,16 +302,7 @@ await session.receive({
 });
 ```
 
-### 3) Global Version Change Broadcast
-
-```js
-await server.publishVersionChange({
-  oldModelVersion: 3,
-  newModelVersion: 4,
-});
-```
-
-### 4) Graceful Shutdown
+### 3) Graceful Shutdown
 
 ```js
 await server.shutdown();
@@ -341,4 +323,4 @@ await server.shutdown();
 - `heartbeat` / `heartbeat_ack`: automatic in client runtime, handled by `session.receive(heartbeatMessage)`
 - `disconnect`: `client.stop(reason)` and `session.close(reason)`
 - `error`: `client.on("error", handler)` and backend `receive(...)` validation/auth boundaries
-- `version_changed`: `client.on("version_changed", ...)` and `server.publishVersionChange(...)`
+- `model_version` mismatch: detected from `connected` / `sync_response`, then client invalidates snapshots and re-syncs from `sinceCommittedId: 0`

@@ -75,7 +75,7 @@ This roadmap is the implementation plan for the current protocol/interface docs.
 - broadcast buffering during sync
 - batch ordered non-atomic processing
 - partitions normalization/authorization
-- version_changed global handling
+- model_version mismatch handling on reconnect/sync
 
 ### Vitest-Only Units (Tricky)
 
@@ -118,7 +118,7 @@ This roadmap is the implementation plan for the current protocol/interface docs.
   - future-cursor handling.
 - Versioning:
   - include `model_version`,
-  - emit `version_changed` globally.
+  - enforce snapshot invalidation/full re-sync on version mismatch.
 
 ### Backend Data Model Requirements
 
@@ -263,7 +263,7 @@ This roadmap is the implementation plan for the current protocol/interface docs.
   - dedupe correctness (`id` with same vs different payload),
   - ordered non-atomic batch guarantees,
   - sync high-watermark/buffer correctness,
-  - global `version_changed` invalidation behavior.
+  - model_version mismatch invalidation behavior.
 - Run model checking in CI nightly (not required on every PR initially).
 
 ### Is Formal Language Necessary?

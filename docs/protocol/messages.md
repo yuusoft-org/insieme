@@ -289,18 +289,6 @@ payload:
 
 See [errors.md](errors.md) for the full error codes table.
 
-### `version_changed`
-
-Event profile (`canonical`) only.
-
-```yaml
-msg_id: msg-vc-1
-type: version_changed
-timestamp: 1738451210000
-protocol_version: "1.0"
-payload:
-  old_model_version: 3
-  new_model_version: 4
-```
-
-`version_changed` is global in scope (not partition-scoped). On receiving it, clients **MUST** invalidate model snapshots and perform a full catch-up (`since_committed_id=0`) for all active model partitions.
+Model version note:
+- Protocol `1.0` does not define a dynamic model-version broadcast message.
+- Clients detect model-version changes from `connected.payload.model_version` and/or `sync_response.payload.model_version` and handle invalidation/re-sync accordingly (see [validation.md](validation.md#model-versioning)).
