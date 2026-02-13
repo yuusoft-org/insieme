@@ -118,7 +118,7 @@ For robust deployments, validate and reject invalid operations in the command la
 
 ## Recommended Guardrails (Tree Profile Deployments)
 
-For dynamic-document production deployments, use the strict tree policy from [protocol/validation.md](../protocol/validation.md#tree-profile-policy-dynamic-documents):
+For dynamic-document production deployments, use strict app-level validation policy as described in [protocol/validation.md](../protocol/validation.md#app-level-validation-extensions):
 
 - whitelist valid `target` values,
 - whitelist allowed actions per target,

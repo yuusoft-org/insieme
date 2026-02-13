@@ -1,94 +1,56 @@
 # Scenario 02 - Local Draft Rejected
 
-Note: All YAML messages include the standard envelope fields (`msg_id`, `timestamp`, `protocol_version`). They are omitted here only when not central to the scenario.
+Note: Envelope metadata (`msg_id`, `timestamp`) is omitted when not central.
 
 ## Goal
-Ensure a draft is marked rejected and removed from the local view when the server rejects it.
+Verify rejected submit removes local draft and does not broadcast.
 
 ## Actors
-- C1 (client_id = "C1")
+- C1
 - Server
 
 ## Preconditions
-- C1 is connected and subscribed to ["P1"].
-- C1 has no committed events.
-- C1 draft_clock = 1 (next draft will be 2).
+- C1 connected with partition scope including `P1`.
+- `local_drafts` contains `id=evt-uuid-rj1`.
 
 ## Steps
 
-### 1) C1 creates a local draft
-- id = "evt-uuid-2"
-- draft_clock = 2
-- partitions = ["P1"]
-
-**Local DB insert (C1)**
-```
-id=evt-uuid-2
-committed_id=NULL
-status=draft
-partitions=["P1"]
-client_id=C1
-draft_clock=2
-created_at=<local time>
-```
-
-**Local view state (C1, P1)**
-- committed(P1) = []
-- drafts(P1) = [evt-uuid-2]
-
-### 2) C1 submits to server
+### 1) C1 submits invalid draft
 
 **C1 -> Server**
 ```yaml
 type: submit_events
+protocol_version: "1.0"
 payload:
   events:
-    - id: evt-uuid-2
-      client_id: C1
-      partitions:
-        - P1
+    - id: evt-uuid-rj1
+      partitions: [P1]
       event:
         type: treePush
         payload:
           target: explorer
-          value:
-            id: A
-          options:
-            parent: _root
-            position: first
+          value: { id: A }
+          options: { parent: does-not-exist, position: first }
 ```
 
-### 3) Server rejects
-- Validation fails (example: duplicate id).
+### 2) Server rejects
 
 **Server -> C1**
 ```yaml
 type: submit_events_result
+protocol_version: "1.0"
 payload:
   results:
-    - id: evt-uuid-2
+    - id: evt-uuid-rj1
       status: rejected
       reason: validation_failed
       errors:
-        - field: event.payload.value.id
-          message: duplicate id
-      status_updated_at: 1738451210000
+        - field: event.payload.options.parent
+          message: parent not found
+      status_updated_at: 1738451205100
 ```
-
-### 4) C1 updates local DB
-
-```
-id=evt-uuid-2
-status=rejected
-status_updated_at=1738451210000
-reject_reason="validation_failed"
-```
-
-## Expected Local View State (C1, P1)
-- committed(P1) = []
-- drafts(P1) = []
 
 ## Assertions
-- No committed event is created on the server.
-- Rejected draft does not appear in local view state.
-- A reject reason is stored locally for UI/audit.
+- C1 removes `evt-uuid-rj1` from `local_drafts`.
+- No row is inserted into `committed_events` for `evt-uuid-rj1`.
+- No `event_broadcast` is emitted.

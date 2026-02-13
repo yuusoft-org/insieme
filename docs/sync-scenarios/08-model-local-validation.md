@@ -1,43 +1,27 @@
-# Scenario 08 - Model/Domain Local Validation
+# Scenario 08 - Local Validation Gate
 
-Note: All YAML messages include the standard envelope fields (`msg_id`, `timestamp`, `protocol_version`). They are omitted here only when not central to the scenario.
+Note: Envelope metadata (`msg_id`, `timestamp`) is omitted when not central.
 
 ## Goal
-Ensure invalid model events are rejected locally before insert/send.
+Verify local validation prevents obviously invalid drafts from being queued.
 
 ## Actors
 - C1
-- Server (not reached)
 
 ## Preconditions
-- Client is running in model/domain mode.
-- Model schemas are registered locally.
+- C1 has local validator for active app event mode.
 
 ## Steps
 
-### 1) C1 attempts to create a model event
+### 1) Invalid local event
+- User action generates invalid payload (missing required field).
+- Local validator rejects before insert.
 
-**Event**
-```yaml
-type: event
-payload:
-  schema: branch.create
-  data:
-    name: 123
-```
-
-### 2) Local validation fails
-- Schema expects `name` as string; received number.
-
-### 3) Client behavior
-- Do not insert draft row.
-- Do not send `submit_events` to server.
-- Surface validation error locally.
-
-## Expected Results
-- No DB insert.
-- No network call.
-- No draft overlay changes.
+### 2) Valid local event
+- User action generates valid payload.
+- Client inserts into `local_drafts` and sends `submit_events`.
 
 ## Assertions
-- Local validation errors are deterministic and match schema.
+- Invalid event is not inserted into `local_drafts` and not submitted.
+- Valid event follows normal draft -> submit -> result flow.
+- Server validation remains authoritative even when client pre-validates.

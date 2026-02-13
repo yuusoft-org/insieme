@@ -1,19 +1,15 @@
 # Insieme Docs
 
-Start here. This is the single docs entrypoint and navigation index.
+Start here. This is the docs entrypoint and navigation index.
 
-Insieme is an offline-first collaborative library built on an authoritative server model. Clients create events locally (optimistic UI), send them to the server for validation, and receive committed events back in a globally ordered stream. Conflict resolution uses Last-Write-Wins (LWW) with server commit order as the canonical timeline.
+Insieme is an offline-first collaborative library with an authoritative server. Clients create local drafts, submit them, and converge on server-ordered committed events.
 
-For single-client/local-only use, the client runtime can run fully offline without any server. A server is required only for multi-client collaboration and authoritative commit/validation.
+## Core Model
 
-## Interface Profiles
-
-To keep one source of truth and minimize long-term risk:
-
-- Low-level core: model/event-sourcing runtime.
-- App-facing profiles are both first-class:
-  - Tree profile (`set`, `unset`, `tree*`) for free-form dynamic data.
-  - Event profile (`type: event`) for strict schema-driven commands.
+- Server assigns global monotonic `committed_id`.
+- Client-generated `id` is the dedupe key.
+- Origin submit outcome comes from `submit_events_result`.
+- Catch-up uses `sync` with `since_committed_id`.
 
 ## Architecture
 
@@ -23,174 +19,57 @@ sequenceDiagram
     participant S as Server
     participant C2 as Client B
 
-    C1->>S: connect (JWT)
-    S->>C1: connected (server cursor)
-    C1->>S: sync (partitions, since_committed_id)
-    S->>C1: sync_response (missed events)
+    C1->>S: connect
+    S->>C1: connected
+    C1->>S: sync(partitions, since_committed_id)
+    S->>C1: sync_response
 
-    Note over C1: Create draft locally (optimistic UI)
-    C1->>S: submit_events (events[])
+    Note over C1: Create draft locally (optimistic)
+    C1->>S: submit_events (1 event)
     S->>S: validate + assign committed_id + persist
     S->>C1: submit_events_result
-    S->>C2: event_broadcast (committed_id)
-
-    Note over C2: Apply committed event, rebase local drafts
+    S->>C2: event_broadcast
 ```
-
-## Motivation & Design Goals
-
-### Why Insieme Exists
-
-Insieme exists to provide collaborative state that is simple to reason about and robust in production:
-
-- offline-first local UX,
-- authoritative server validation,
-- deterministic convergence.
-
-Existing options often force a tradeoff between always-online assumptions and CRDT complexity. Insieme targets the large class of apps that require server-side validation and authorization.
-
-### Who This Is For
-
-Insieme fits apps where multiple users/devices modify shared state and a server enforces business rules.
-
-Examples:
-- project/task/workflow tools,
-- shared dashboards and config editors,
-- collaborative planning tools,
-- CMS/editorial systems with approval rules.
-
-Important scope note:
-- The client runtime can run fully offline with no server for single-client/local-only apps.
-- A server is required only for multi-client collaboration with authoritative commits.
-
-### Why Not CRDTs
-
-CRDTs are strong for fully peer-to-peer collaboration. For authoritative systems, they add cost without solving the core requirement:
-
-- no central validation/rejection boundary,
-- higher implementation/debug complexity,
-- merge behavior that can be hard to explain and audit.
-
-If your system must reject invalid operations centrally, an authoritative commit model is the simpler and safer default.
-
-### Approach: Authoritative Server + LWW
-
-Insieme uses a server as source of truth:
-
-- clients create drafts locally,
-- server validates and commits or rejects,
-- server assigns global monotonic `committed_id`,
-- clients replay committed events and rebase drafts deterministically.
-
-Conflict resolution is Last-Write-Wins by server commit order.
-
-### Interface Strategy
-
-- One low-level implementation: model/event-sourcing core.
-- Two first-class profiles on top:
-  - tree profile (`set`, `unset`, `tree*`) for free-form dynamic documents,
-  - event profile (`type: event`) for schema-driven command domains.
-
-### Storage Agnostic
-
-Insieme does not own the storage backend. The runtime targets a simple store interface and works with:
-
-- SQLite,
-- IndexedDB,
-- in-memory stores for tests/prototyping,
-- PostgreSQL and other server databases.
-
-### What Insieme Is Not
-
-- not a real-time character-level text editor,
-- not a database,
-- not a full backend framework,
-- not serverless peer-to-peer collaboration.
-
-### Priorities
-
-#### Robustness and Reliability
-
-- protocol-first behavior with explicit invariants,
-- idempotent sync semantics under retries/duplicates/reordering,
-- scenario coverage for edge and failure paths,
-- fail-safe defaults (prefer full re-sync over uncertain local recovery).
-
-#### Performance
-
-- snapshots for fast initialization,
-- incremental state computation,
-- efficient partition-scoped queries,
-- compact wire/storage formats with compression when it provides clear wins,
-- lazy loading for active partitions only.
-
-## First Read
-
-1. `Motivation & Design Goals` section in this file.
-2. `javascript-interface.md` - small JS interface contract for client and backend.
-3. `roadmap.md` - implementation plan (backend + frontend + test strategy).
 
 ## Protocol Spec
 
-- `protocol/messages.md` - wire envelope and all message schemas.
-- `protocol/connection.md` - handshake, auth, lifecycle, profile negotiation.
-- `protocol/ordering-and-idempotency.md` - global ordering and dedupe semantics.
-- `protocol/partitions.md` - partition rules, subscriptions, multi-partition behavior.
-- `protocol/validation.md` - event/tree profile validation and policy gates.
+- `protocol/messages.md` - envelope and message schemas.
+- `protocol/connection.md` - handshake/auth/reconnect semantics.
+- `protocol/ordering-and-idempotency.md` - ordering and dedupe invariants.
+- `protocol/partitions.md` - partition shape, authorization, and delivery scope.
+- `protocol/validation.md` - required validation boundaries.
 - `protocol/durability.md` - commit flow, sync paging, persistence guarantees.
-- `protocol/errors.md` - canonical error codes and recovery behavior.
+- `protocol/errors.md` - canonical error set and recovery guidance.
 
 ## Client Runtime
 
-- `client/storage.md` - local tables, snapshots, cursor mapping, retention.
-- `client/drafts.md` - draft lifecycle, rebase, idempotent apply strategy.
-- `client/tree-actions.md` - tree profile action semantics and edge cases.
+- `client/storage.md` - local storage model (`local_drafts` + `committed_events`).
+- `client/drafts.md` - draft lifecycle and idempotent apply rules.
+- `client/tree-actions.md` - tree action semantics (app-level extension).
+- `../examples/real-client-usage/` - production-style client integration examples.
 
-## Scenarios
+## Sync Scenarios
 
-- `sync-scenarios/00-handshake-empty-sync.md`
-- `sync-scenarios/01-local-draft-commit-broadcast.md`
-- `sync-scenarios/02-local-draft-rejected.md`
-- `sync-scenarios/03-duplicate-submit-retry.md`
-- `sync-scenarios/04-multi-partition-event.md`
-- `sync-scenarios/05-reconnect-catch-up-paged.md`
-- `sync-scenarios/06-out-of-order-commit-arrival.md`
-- `sync-scenarios/07-snapshot-prune.md`
-- `sync-scenarios/08-model-local-validation.md`
-- `sync-scenarios/09-same-id-different-payload.md`
-- `sync-scenarios/10-broadcast-vs-origin-commit.md`
-- `sync-scenarios/11-concurrent-drafts-commit-reordered.md`
-- `sync-scenarios/12-partition-added-mid-session.md`
-- `sync-scenarios/13-retry-while-draft-pending.md`
-- `sync-scenarios/14-lww-conflict-concurrent-update.md`
-- `sync-scenarios/15-server-crash-recovery.md`
-- `sync-scenarios/16-batch-submit-offline-catchup.md`
-- `sync-scenarios/17-heartbeat-and-disconnect.md`
-- `sync-scenarios/18-error-and-version-change.md`
+`sync-scenarios/` contains core behavior scenarios aligned with the simplified protocol surface.
 
-## Future Work
+## Future Drafts
 
-- `drafts/collaborative-text.md` - design draft for native OT-based text editing (not implemented).
+- `drafts/collaborative-text.md`
+- `drafts/split-drafts-and-committed-storage.md`
+- `drafts/minimal-protocol-core.md`
 
 ## Glossary
 
 | Term | Definition |
 |------|-----------|
-| `client_id` | Authenticated client/device identifier. Represents event origin client and is distinct from event ids and tree item ids. |
-| `id` | Event id (globally unique UUID assigned by the client when creating an event). Used for dedup and draft-to-commit matching; not a tree item id. |
-| `committed_id` | Server-assigned global monotonic integer. Defines canonical ordering of all committed events. Never reused, survives restarts. |
-| `draft_clock` | Local monotonic counter on each client for ordering drafts. Not transmitted to the server; no cross-client meaning. |
-| `partitions` | Array of strings identifying logical streams an event belongs to. An event can belong to multiple partitions. |
-| `rebase` | Recomputing local view state by replaying committed events in order, then applying drafts on top. Triggered when new committed events arrive. |
-| `snapshot` | Serialized committed-only state for a partition. Used for fast initialization without replaying the full event log. |
-| `model_version` | Integer version of the model/domain schema (event profile / `canonical`). Version upgrades are deployment-driven (client code update + reconnect); on mismatch, clients invalidate snapshots and re-sync. |
-| `sync cycle` | A sequence of paginated `sync` / `sync_response` exchanges until `has_more=false`. Broadcasts received during a cycle are buffered if they exceed the cycle high-watermark. |
-| `LWW` | Last-Write-Wins. Conflict resolution where the event with higher `committed_id` wins. Server commit order is deterministic and final. |
+| `client_id` | Authenticated client/device identifier. |
+| `id` | Global event UUID generated by client. Used for dedupe and draft matching. |
+| `committed_id` | Server-assigned global monotonic commit order. |
+| `draft_clock` | Local monotonic ordering key for drafts only. |
+| `partitions` | Logical stream keys attached to events. |
+| `rebase` | Recompute local state from committed events then apply drafts. |
 
 ## Source of Truth Rules
 
-- Normative behavior lives in `protocol/*.md` and `client/*.md`.
-- `roadmap.md` is execution planning only (not normative protocol text).
-- Keep terminology consistent:
-  - tree profile = `compatibility` wire profile
-  - event profile = `canonical` wire profile
+- Normative behavior: `protocol/*.md` and `client/*.md`.
+- `roadmap.md` and `drafts/*.md` are planning/design materials.

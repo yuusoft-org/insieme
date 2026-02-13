@@ -1,60 +1,45 @@
-# Scenario 03 - Duplicate Submit (Retry)
+# Scenario 03 - Duplicate Submit Retry
 
-Note: All YAML messages include the standard envelope fields (`msg_id`, `timestamp`, `protocol_version`). They are omitted here only when not central to the scenario.
+Note: Envelope metadata (`msg_id`, `timestamp`) is omitted when not central.
 
 ## Goal
-Ensure retries with the same `id` are idempotent and do not create new commits.
+Ensure retry with same `id` and same payload is idempotent.
 
 ## Actors
-- C1 (client_id = "C1")
+- C1
 - Server
 
 ## Preconditions
-- An event with id="evt-uuid-1" is already committed.
-- Server global committed_id=101 for that event.
-- C1 local DB already has the committed row.
-
-**Local DB (C1)**
-```
-id=evt-uuid-1
-committed_id=101
-status=committed
-partitions=["P1"]
-client_id=C1
-```
+- Server already has committed event:
+  - `id=evt-uuid-1`
+  - `committed_id=101`
 
 ## Steps
 
-### 1) C1 retries submit_events (same id)
+### 1) C1 resubmits same event
 
 **C1 -> Server**
 ```yaml
 type: submit_events
+protocol_version: "1.0"
 payload:
   events:
     - id: evt-uuid-1
-      client_id: C1
-      partitions:
-        - P1
+      partitions: [P1]
       event:
         type: treePush
         payload:
           target: explorer
-          value:
-            id: A
-          options:
-            parent: _root
-            position: first
+          value: { id: A }
+          options: { parent: _root, position: first }
 ```
 
-### 2) Server dedupes
-- Lookup by `id`.
-- Finds committed_id=101.
-- Does not create a new commit.
+### 2) Server dedupes by `id`
 
-**Server -> C1** (replay commit result)
+**Server -> C1**
 ```yaml
 type: submit_events_result
+protocol_version: "1.0"
 payload:
   results:
     - id: evt-uuid-1
@@ -63,11 +48,6 @@ payload:
       status_updated_at: 1738451205000
 ```
 
-## Expected Results
-- No new committed row in server storage.
-- C1 local DB remains unchanged.
-- No duplicate broadcast is required (optional if sent, must be idempotent).
-
 ## Assertions
-- Global committed_id sequence does not advance.
-- Only one committed row exists for id="evt-uuid-1".
+- No new commit is created.
+- `committed_id` sequence does not advance for this retry.

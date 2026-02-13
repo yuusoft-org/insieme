@@ -1,51 +1,46 @@
-# Scenario 09 - Same id, Different Payload
+# Scenario 09 - Same `id`, Different Payload
 
-Note: All YAML messages include the standard envelope fields (`msg_id`, `timestamp`, `protocol_version`). They are omitted here only when not central to the scenario.
+Note: Envelope metadata (`msg_id`, `timestamp`) is omitted when not central.
 
 ## Goal
-Ensure the server rejects a re-submit of the same id with different payload.
+Ensure server rejects same `id` when canonical payload differs.
 
 ## Actors
 - C1
 - Server
 
 ## Preconditions
-- Event already committed:
-  - id = "evt-uuid-4"
-  - committed_id = 200
-  - payload = A
+- Server already committed:
+  - `id=evt-uuid-4`
+  - payload A
+  - `committed_id=200`
 
 ## Steps
 
-### 1) C1 submits same id with different payload
+### 1) C1 submits same `id` with payload B
 
 **C1 -> Server**
 ```yaml
 type: submit_events
+protocol_version: "1.0"
 payload:
   events:
     - id: evt-uuid-4
-      client_id: C1
-      partitions:
-        - P1
+      partitions: [P1]
       event:
         type: treePush
         payload:
           target: explorer
-          value:
-            id: DIFFERENT
-          options:
-            parent: _root
-            position: first
+          value: { id: DIFFERENT }
+          options: { parent: _root, position: first }
 ```
 
-### 2) Server detects mismatch
-- Lookup by id returns existing payload A.
-- New payload differs.
+### 2) Server rejects
 
 **Server -> C1**
 ```yaml
 type: submit_events_result
+protocol_version: "1.0"
 payload:
   results:
     - id: evt-uuid-4
@@ -54,14 +49,9 @@ payload:
       errors:
         - field: event
           message: id already committed with different payload
-      status_updated_at: 1738451500000
+      status_updated_at: 1738451209000
 ```
 
-## Expected Results
-- No new committed event.
-- Client keeps the original committed row.
-- Draft with same id (if any) should be rejected.
-
 ## Assertions
-- committed_id sequence does not advance.
-- Server always rejects conflicting payloads for the same id.
+- No new commit is created.
+- Existing committed row for `evt-uuid-4` remains unchanged.

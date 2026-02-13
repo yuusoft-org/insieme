@@ -2,6 +2,8 @@
 
 This roadmap is the implementation plan for the current protocol/interface docs.
 
+Status note: this roadmap still contains extended-protocol tracks (profiles, heartbeat, model-version, etc.). After the protocol simplification, treat those sections as backlog ideas unless they are explicitly re-adopted into `docs/protocol/*.md`.
+
 ## Source of Truth Policy
 
 - Normative protocol/interface requirements remain in existing docs under:

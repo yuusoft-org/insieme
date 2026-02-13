@@ -1,151 +1,64 @@
 # Drafts
 
-This document defines the client-side draft lifecycle, local view computation, ordering strategy, draft clock, and the full data flow for offline-first event handling.
+This document defines the minimal client-side draft lifecycle for offline-first sync.
 
-Interface note:
-- Tree profile (`set`, `unset`, `tree*`) is first-class for free-form dynamic data.
-- Event profile uses `type: event` (schema + data envelope).
-- Both profiles follow the same draft/commit lifecycle.
+## Lifecycle
 
-## Event Lifecycle
+### 1) Create local draft
 
-### 1) Create Draft (local)
+- Validate draft locally (best-effort UX validation).
+- Insert into `local_drafts` with:
+  - `id`
+  - `draft_clock` (storage-assigned monotonic order key)
+  - `partitions`
+  - `event`
+- Apply draft immediately to local view (optimistic UI).
 
-- Validate the event locally before insert using the active profile rules.
-- Insert row with `status='draft'`, `committed_id=NULL`, `partitions=[...]`
-- Apply to UI immediately (optimistic)
-- Enqueue async send to server
+### 2) Submit
 
-### 2) Committed by Server
+- Drain `local_drafts` ordered by `(draft_clock, id)`.
+- Send one `submit_events` request per draft (core mode).
 
-- Update same row: `status='committed'`, set `committed_id`, `status_updated_at` (server-provided time)
-- Draft is removed from overlay automatically (by status)
+### 3) Commit result
 
-### 3) Rejected by Server
+On `submit_events_result` with `status=committed`:
 
-- Update row: `status='rejected'`, set `status_updated_at` (server-provided time, optionally store reason)
-- Draft no longer appears in UI (excluded by status)
-- Common reasons: `validation_failed`, `forbidden`
+- Insert committed row into `committed_events`.
+- Remove matching row from `local_drafts`.
+- Recompute effective view: committed + remaining drafts.
 
-### 4) Remote Committed Event (other clients)
+### 4) Reject result
 
-- Insert row as `status='committed'`, set `committed_id`, `partitions=[...]`
-- `id` is included and matches the origin client's draft id
+On `submit_events_result` with `status=rejected`:
 
-## Local View Computation
+- Remove matching row from `local_drafts`.
+- Optionally store rejected history in a separate app table.
+- Recompute effective view.
 
-The UI state should be computed from:
+### 5) Remote committed event
 
-1. **Committed events** (all rows with `status='committed'` that include the partition)
-   - Ordered by `committed_id` (global incremental id)
-2. **Draft events** (all rows with `status='draft'` that include the partition)
-   - Ordered by `draft_clock` (tie-break with `id` if needed)
+On `event_broadcast` or `sync_response.events`:
 
-Rejected drafts are **excluded** from view computation.
+- Insert into `committed_events` idempotently.
+- Remove matching local draft by `id` if present.
+- Recompute effective view.
 
-### Naming
+## Ordering Rules
 
-- **Committed state**: state built only from committed events.
-- **Local view state** (effective state): committed state + draft overlay.
+- Committed state order: `ORDER BY committed_id`.
+- Draft overlay order: `ORDER BY draft_clock, id`.
+- Effective state: committed state, then draft overlay.
 
-### Ordering Strategy
+## Retry / Idempotency
 
-- **Do not interleave** drafts into the committed stream.
-- Always compute: `committed_state` → then apply all drafts on top.
-- When a new committed event arrives (local commit or remote broadcast), **recompute committed state** and re-apply drafts (rebase).
-- This may cause brief UI reordering during poor connectivity, but LWW + rebase keeps the client simple and convergent.
+- Retries use the same event `id`.
+- Server dedupes by `id`.
+- Client apply path must be idempotent:
+  - repeated committed insert -> no duplicate,
+  - repeated draft cleanup -> safe no-op.
 
-## Draft Clock (Lamport-style)
+## Startup / Recovery
 
-- `draft_clock` is a **monotonic local counter (global, not per partition)**.
-- Draft ordering always uses `(draft_clock, id)` even when filtering by partition.
-- On each local draft: `draft_clock += 1` and store it on the row.
-- On startup: set `draft_clock` to the max value found for the local client (filter by `client_id = local`).
-- Remote events do **not** update the local `draft_clock` (drafts are local-only).
-
-Crash-recovery note: `draft_clock` has no cross-client meaning and does not participate in server dedupe. If no draft rows exist at startup, initializing to `0` is safe. The only requirement is local monotonicity for newly created drafts.
-
-## Full Data Flow
-
-```mermaid
-flowchart TD
-  A[Client creates draft] --> B[Insert local row: status=draft]
-  B --> C[Apply to local view state]
-  C --> D[Async send to server]
-  D -->|commit| E[Server assigns committed_id]
-  D -->|reject| F[Server rejects]
-  E --> G[Update local row: status=committed, committed_id]
-  F --> H[Update local row: status=rejected, reason]
-  G --> I[Recompute local view state]
-  H --> I
-  J[Remote committed events] --> K[Insert local row: status=committed]
-  K --> I
-  L[Reconnect / catch-up] --> M[Fetch committed events since last committed_id]
-  M --> I
-```
-
-### 1) Create Draft (local-first)
-
-- Client generates a UUID `id`.
-- Client increments local `draft_clock` and stores it with the draft row.
-- Validate the event locally before insert using the active profile rules.
-- Insert into local DB as `status='draft'`.
-- Apply draft to **local view state** immediately.
-
-### 2) Async Send to Server
-
-- Client enqueues the draft for delivery.
-- Transport can be:
-  - **WebSocket**: push `submit_events` (single-item or batch).
-  - **Polling**: batch and POST drafts on a schedule.
-- Drafts must be submitted in `draft_clock` order. If new drafts are created while the queue is draining, they are appended to the end of the queue and submitted after earlier drafts.
-
-### 3) Server Response (Commit or Reject)
-
-**Committed by server**
-- Server assigns `committed_id`.
-- Client updates local row: `status='committed'`, set `committed_id`, `status_updated_at`.
-- Recompute **local view state**: committed stream → drafts overlay.
-
-**Rejected by server**
-- Client updates local row: `status='rejected'`, set `status_updated_at`, optional `reject_reason`.
-- Recompute **local view state** (draft removed).
-
-### 4) Remote Committed Events
-
-- Server sends committed events from other clients.
-- Client inserts as `status='committed'` with `committed_id` and `partitions=[...]`.
-- `id` is included and matches the origin client's draft id.
-- Recompute **local view state**.
-
-### 5) Reconnect / Catch-up
-
-- Client requests missed committed events since last `committed_id` (global cursor).
-- Apply all new committed events in order.
-- Rebase drafts on top (recompute **local view state**).
-- After sync completes, retry all pending drafts (status=draft) in `draft_clock` order. The server dedupes by `id`, so retrying already-committed drafts is safe.
-
-### 5a) Out-of-Order Committed Delivery
-
-- Committed events may arrive out of order (polling, reconnect, retries).
-- Always compute committed state using `ORDER BY committed_id`, so storage order does not matter.
-- If keeping an in-memory incremental state, buffer until gaps fill **or** rebuild committed state from the ordered DB stream.
-
-### 6) Duplicate Sends / Retries
-
-- Retries use the same `id`.
-- Server dedupes by `id` and returns the existing `committed_id`.
-- Client updates the same local row (idempotent).
-
-### 7) Commit Delivery Idempotency (Upsert Strategy)
-
-When a committed event arrives (local commit response or broadcast), apply it with **update-then-insert** semantics:
-
-1. **UPDATE** by `id` (primary key) to upgrade a local draft into committed.
-2. If no row was updated, **INSERT** the committed row.
-3. Use `ON CONFLICT(committed_id) DO NOTHING` on the insert to ignore duplicates (retry/broadcast).
-4. If the insert fails due to `id` uniqueness, re-run the UPDATE (another path already inserted it).
-
-This avoids double-apply while ensuring drafts are properly upgraded.
-
-Conflict diagnostic: if `ON CONFLICT(committed_id) DO NOTHING` affects 0 rows, check whether the existing row for that `committed_id` has the same `id`. If the ids differ, this is a protocol integrity violation — log it and trigger a full re-sync.
+- Restore durable committed cursor.
+- Run `sync` until `has_more=false`.
+- Retry remaining local drafts in `(draft_clock, id)` order.
