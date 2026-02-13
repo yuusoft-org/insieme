@@ -6,7 +6,7 @@ This is a design draft for future consideration. It is not part of the current p
 
 Insieme currently operates at the event/action level — discrete operations like "add item", "update field", "move node". This works well for structural collaboration but does not cover character-level text editing, where users expect sub-100ms feedback on every keystroke and concurrent edits must merge gracefully.
 
-The motivation doc states Insieme is "not a real-time text editor" and recommends using a dedicated library (Yjs, Automerge) for text. That remains the recommended approach today. However, integrating two separate collaboration systems is complex in practice — two sync protocols, two conflict resolution strategies, two offline queues, two state management layers. The integration surface is where bugs live.
+The docs README motivation section states Insieme is "not a real-time text editor" and recommends using a dedicated library (Yjs, Automerge) for text. That remains the recommended approach today. However, integrating two separate collaboration systems is complex in practice: two sync protocols, two conflict resolution strategies, two offline queues, and two state management layers. The integration surface is where bugs live.
 
 This document explores how Insieme could natively support collaborative text editing in the future without requiring a second collaboration system.
 

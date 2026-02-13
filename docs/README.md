@@ -6,8 +6,6 @@ Insieme is an offline-first collaborative library built on an authoritative serv
 
 For single-client/local-only use, the client runtime can run fully offline without any server. A server is required only for multi-client collaboration and authoritative commit/validation.
 
-For design philosophy, goals, and trade-offs, see [motivation.md](motivation.md).
-
 ## Interface Profiles
 
 To keep one source of truth and minimize long-term risk:
@@ -39,9 +37,96 @@ sequenceDiagram
     Note over C2: Apply committed event, rebase local drafts
 ```
 
+## Motivation & Design Goals
+
+### Why Insieme Exists
+
+Insieme exists to provide collaborative state that is simple to reason about and robust in production:
+
+- offline-first local UX,
+- authoritative server validation,
+- deterministic convergence.
+
+Existing options often force a tradeoff between always-online assumptions and CRDT complexity. Insieme targets the large class of apps that require server-side validation and authorization.
+
+### Who This Is For
+
+Insieme fits apps where multiple users/devices modify shared state and a server enforces business rules.
+
+Examples:
+- project/task/workflow tools,
+- shared dashboards and config editors,
+- collaborative planning tools,
+- CMS/editorial systems with approval rules.
+
+Important scope note:
+- The client runtime can run fully offline with no server for single-client/local-only apps.
+- A server is required only for multi-client collaboration with authoritative commits.
+
+### Why Not CRDTs
+
+CRDTs are strong for fully peer-to-peer collaboration. For authoritative systems, they add cost without solving the core requirement:
+
+- no central validation/rejection boundary,
+- higher implementation/debug complexity,
+- merge behavior that can be hard to explain and audit.
+
+If your system must reject invalid operations centrally, an authoritative commit model is the simpler and safer default.
+
+### Approach: Authoritative Server + LWW
+
+Insieme uses a server as source of truth:
+
+- clients create drafts locally,
+- server validates and commits or rejects,
+- server assigns global monotonic `committed_id`,
+- clients replay committed events and rebase drafts deterministically.
+
+Conflict resolution is Last-Write-Wins by server commit order.
+
+### Interface Strategy
+
+- One low-level implementation: model/event-sourcing core.
+- Two first-class profiles on top:
+  - tree profile (`set`, `unset`, `tree*`) for free-form dynamic documents,
+  - event profile (`type: event`) for schema-driven command domains.
+
+### Storage Agnostic
+
+Insieme does not own the storage backend. The runtime targets a simple store interface and works with:
+
+- SQLite,
+- IndexedDB,
+- in-memory stores for tests/prototyping,
+- PostgreSQL and other server databases.
+
+### What Insieme Is Not
+
+- not a real-time character-level text editor,
+- not a database,
+- not a full backend framework,
+- not serverless peer-to-peer collaboration.
+
+### Priorities
+
+#### Robustness and Reliability
+
+- protocol-first behavior with explicit invariants,
+- idempotent sync semantics under retries/duplicates/reordering,
+- scenario coverage for edge and failure paths,
+- fail-safe defaults (prefer full re-sync over uncertain local recovery).
+
+#### Performance
+
+- snapshots for fast initialization,
+- incremental state computation,
+- efficient partition-scoped queries,
+- compact wire/storage formats with compression when it provides clear wins,
+- lazy loading for active partitions only.
+
 ## First Read
 
-1. `motivation.md` - design goals, tradeoffs, and interface rationale.
+1. `Motivation & Design Goals` section in this file.
 2. `javascript-interface.md` - small JS interface contract for client and backend.
 3. `roadmap.md` - implementation plan (backend + frontend + test strategy).
 
