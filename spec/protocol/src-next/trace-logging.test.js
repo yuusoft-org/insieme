@@ -195,4 +195,55 @@ describe("src-next trace logging", () => {
     });
     await tick();
   });
+
+  it("propagates msg_id across client/server logs for submit flow", async () => {
+    const serverLogs = [];
+    const clientLogs = [];
+    let nextMsg = 0;
+    const server = createSyncServer({
+      auth: { verifyToken: async () => ({ clientId: "C1", claims: {} }) },
+      authz: { authorizePartitions: async () => true },
+      validation: { validate: async () => {} },
+      store: createInMemorySyncStore(),
+      clock: { now: createNowFactory() },
+      logger: (entry) => serverLogs.push(entry),
+    });
+
+    const transport = createLoopbackTransport({
+      server,
+      connectionId: "conn-C1",
+    });
+    const client = createSyncClient({
+      transport,
+      store: createInMemoryClientStore(),
+      token: "C1",
+      clientId: "C1",
+      partitions: ["P1"],
+      now: createNowFactory(),
+      uuid: () => "evt-msg-1",
+      msgId: () => {
+        nextMsg += 1;
+        return `msg-${nextMsg}`;
+      },
+      logger: (entry) => clientLogs.push(entry),
+    });
+
+    await client.start();
+    await tick();
+    await client.submitEvent({
+      partitions: ["P1"],
+      event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
+    });
+    await tick();
+
+    const serverSubmitLog = serverLogs.find(
+      (entry) => entry.event === "submit_committed",
+    );
+    expect(serverSubmitLog.msg_id).toBe("msg-3");
+
+    const clientSubmitLog = clientLogs.find(
+      (entry) => entry.event === "submit_committed",
+    );
+    expect(clientSubmitLog.msg_id).toBe("msg-3");
+  });
 });

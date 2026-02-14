@@ -206,4 +206,44 @@ describe("src-next createSyncServer", () => {
     expect(firstCommittedId).toBe(1);
     expect(secondCommittedId).toBe(1);
   });
+
+  it("echoes request msg_id on direct responses and errors", async () => {
+    const { server } = createServer();
+    const c1 = createConnectionTransport("c1");
+    const s1 = server.attachConnection(c1);
+
+    await s1.receive({
+      type: "connect",
+      protocol_version: "1.0",
+      msg_id: "msg-connect-1",
+      payload: { token: "jwt", client_id: "C1" },
+    });
+    expect(c1.sent[0]).toMatchObject({
+      type: "connected",
+      msg_id: "msg-connect-1",
+    });
+
+    await s1.receive({
+      type: "sync",
+      protocol_version: "1.0",
+      msg_id: "msg-sync-1",
+      payload: { partitions: ["P1"], since_committed_id: 0, limit: 500 },
+    });
+    expect(c1.sent[1]).toMatchObject({
+      type: "sync_response",
+      msg_id: "msg-sync-1",
+    });
+
+    await s1.receive({
+      type: "unknown",
+      protocol_version: "1.0",
+      msg_id: "msg-err-1",
+      payload: {},
+    });
+    expect(c1.sent[2]).toMatchObject({
+      type: "error",
+      msg_id: "msg-err-1",
+      payload: { code: "bad_request" },
+    });
+  });
 });

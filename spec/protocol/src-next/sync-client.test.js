@@ -592,4 +592,83 @@ describe("src-next createSyncClient", () => {
 
     expect(transport.connect.mock.calls.length).toBe(connectsBefore);
   });
+
+  it("adds outbound msg_id and preserves inbound msg_id in logs", async () => {
+    const logs = [];
+    let nextMsgId = 0;
+    const client = await createStartedClient({
+      transport,
+      store,
+      clientOverrides: {
+        msgId: () => {
+          nextMsgId += 1;
+          return `cli-msg-${nextMsgId}`;
+        },
+        logger: (entry) => logs.push(entry),
+      },
+    });
+
+    expect(transport.sent[0]).toMatchObject({
+      type: "connect",
+      msg_id: "cli-msg-1",
+    });
+
+    transport.emit({
+      type: "connected",
+      msg_id: "cli-msg-1",
+      payload: { client_id: "C1", server_last_committed_id: 0 },
+    });
+    await tick();
+
+    expect(transport.sent[1]).toMatchObject({
+      type: "sync",
+      msg_id: "cli-msg-2",
+    });
+
+    transport.emit({
+      type: "sync_response",
+      msg_id: "cli-msg-2",
+      payload: {
+        partitions: ["P1"],
+        events: [],
+        next_since_committed_id: 0,
+        has_more: false,
+      },
+    });
+    await tick();
+
+    await client.submitEvent({
+      partitions: ["P1"],
+      event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
+    });
+
+    const submit = transport.sent.find(
+      (message) => message.type === "submit_events",
+    );
+    expect(submit).toMatchObject({ msg_id: "cli-msg-3" });
+
+    transport.emit({
+      type: "submit_events_result",
+      msg_id: "cli-msg-3",
+      payload: {
+        results: [
+          {
+            id: "evt-local-1",
+            status: "committed",
+            committed_id: 1,
+            status_updated_at: 1001,
+          },
+        ],
+      },
+    });
+    await tick();
+
+    const connectedLog = logs.find((entry) => entry.event === "connected");
+    expect(connectedLog.msg_id).toBe("cli-msg-1");
+
+    const committedLog = logs.find(
+      (entry) => entry.event === "submit_committed",
+    );
+    expect(committedLog.msg_id).toBe("cli-msg-3");
+  });
 });

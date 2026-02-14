@@ -45,6 +45,7 @@ This file defines a minimal JS API surface aligned with the simplified core prot
  * @param {string[]} deps.partitions
  * @param {() => number} [deps.now]
  * @param {() => string} [deps.uuid]
+ * @param {() => string} [deps.msgId]
  * @param {(item: SubmitItem) => void} [deps.validateLocalEvent]
  * @param {(input: { type: string, payload: any }) => void} [deps.onEvent]
  * @param {(entry: object) => void} [deps.logger]
@@ -141,3 +142,4 @@ export function createSyncServer(deps) {}
 - Server still receives `submit_events` wire message shape with one `events[0]` item.
 - Client store methods that mutate committed/draft/cursor state should be implemented as single DB transactions.
 - All behavior must match `docs/protocol/*.md`.
+- Client-generated `msg_id` values should be stable per outbound message for traceability.

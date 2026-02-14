@@ -169,6 +169,8 @@ Goal: prove behavior under failures and load.
 - [x] Validate partition auth enforcement under mixed scopes.
 - [x] Validate sync pagination under large result sets.
 - [x] Add structured logging for `id` and `committed_id` traceability.
+- [x] Add protocol-level `msg_id` correlation tracing across client and server logs.
+- [x] Add SQLite lock-contention chaos tests (`SQLITE_BUSY`) with recovery assertions.
 
 ## Exit Criteria
 
