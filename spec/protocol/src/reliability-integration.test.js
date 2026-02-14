@@ -4,7 +4,7 @@ import {
   createInMemorySyncStore,
   createSyncClient,
   createSyncServer,
-} from "../../../src-next/index.js";
+} from "../../../src/index.js";
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -141,7 +141,7 @@ const readCommittedIds = (store) =>
     .map((entry) => entry.id)
     .sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
 
-describe("src-next reliability integration", () => {
+describe("src reliability integration", () => {
   it("SC-06: applies out-of-order committed arrivals deterministically", async () => {
     const store = createInMemoryClientStore();
 

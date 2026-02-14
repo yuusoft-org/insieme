@@ -171,6 +171,10 @@ Goal: prove behavior under failures and load.
 - [x] Add structured logging for `id` and `committed_id` traceability.
 - [x] Add protocol-level `msg_id` correlation tracing across client and server logs.
 - [x] Add SQLite lock-contention chaos tests (`SQLITE_BUSY`) with recovery assertions.
+- [x] Add process-crash durability test for SQLite commit persistence and idempotent retry.
+- [x] Add in-app inbound safety guardrails (rate and envelope size limits).
+- [x] Enforce coverage thresholds and repeated reliability runs in CI.
+- [x] Add production rollout reliability checklist.
 
 ## Exit Criteria
 

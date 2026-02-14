@@ -5,7 +5,7 @@ import path from "node:path";
 import {
   createSqliteClientStore,
   createSqliteSyncStore,
-} from "../../../src-next/index.js";
+} from "../../../src/index.js";
 import { createSqliteDb } from "./helpers/sqlite-db.js";
 
 const tempDirs = [];
@@ -27,7 +27,7 @@ const expectSqliteBusy = async (operation) => {
   await expect(operation).rejects.toThrow(/locked|busy/i);
 };
 
-describe("src-next sqlite locking chaos", () => {
+describe("src sqlite locking chaos", () => {
   it("client store write fails with SQLITE_BUSY under concurrent writer lock, then recovers", async () => {
     const dbPath = createDbPath("insieme-chaos-client");
     const writerDb = createSqliteDb(dbPath);

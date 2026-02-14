@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { createInMemoryClientStore } from "../../../src-next/index.js";
+import { createInMemoryClientStore } from "../../../src/index.js";
 
-describe("src-next createInMemoryClientStore", () => {
+describe("src createInMemoryClientStore", () => {
   it("orders drafts by draftClock then id", async () => {
     const store = createInMemoryClientStore();
     await store.init();

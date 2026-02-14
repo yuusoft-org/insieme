@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createInMemorySyncStore,
   createSyncServer,
-} from "../../../src-next/index.js";
+} from "../../../src/index.js";
 
 const createConnectionTransport = (connectionId) => {
   const sent = [];
@@ -27,6 +27,8 @@ const createServer = ({
   validate = async () => {},
   authorize = async () => true,
   verifyToken = async () => ({ clientId: "C1", claims: {} }),
+  now = () => 1000,
+  limits,
 } = {}) => {
   const store = createInMemorySyncStore();
   const server = createSyncServer({
@@ -34,7 +36,8 @@ const createServer = ({
     authz: { authorizePartitions: authorize },
     validation: { validate },
     store,
-    clock: { now: () => 1000 },
+    clock: { now },
+    limits,
   });
 
   return { server, store };
@@ -56,7 +59,7 @@ const syncSession = async ({ session, partitions = ["P1"], since = 0 }) => {
   });
 };
 
-describe("src-next createSyncServer", () => {
+describe("src createSyncServer", () => {
   it("PT-SC-00 [SC-00]: handshake + empty sync", async () => {
     const { server } = createServer();
     const c1 = createConnectionTransport("c1");
@@ -245,5 +248,72 @@ describe("src-next createSyncServer", () => {
       msg_id: "msg-err-1",
       payload: { code: "bad_request" },
     });
+  });
+
+  it("enforces per-connection inbound rate limit and closes session", async () => {
+    let now = 10_000;
+    const { server } = createServer({
+      now: () => now,
+      limits: {
+        maxInboundMessagesPerWindow: 2,
+        rateWindowMs: 1000,
+      },
+    });
+    const c1 = createConnectionTransport("c1");
+    const s1 = server.attachConnection(c1);
+
+    await connectSession({ session: s1 });
+    await s1.receive({
+      type: "sync",
+      protocol_version: "1.0",
+      payload: { partitions: ["P1"], since_committed_id: 0, limit: 10 },
+    });
+
+    await s1.receive({
+      type: "sync",
+      protocol_version: "1.0",
+      msg_id: "limit-msg",
+      payload: { partitions: ["P1"], since_committed_id: 0, limit: 10 },
+    });
+
+    const last = c1.sent[c1.sent.length - 1];
+    expect(last).toMatchObject({
+      type: "error",
+      msg_id: "limit-msg",
+      payload: { code: "rate_limited" },
+    });
+    expect(c1.closed).toBe(true);
+  });
+
+  it("rejects oversized envelopes with bad_request", async () => {
+    const { server } = createServer({
+      limits: {
+        maxEnvelopeBytes: 64,
+      },
+    });
+    const c1 = createConnectionTransport("c1");
+    const s1 = server.attachConnection(c1);
+
+    await s1.receive({
+      type: "connect",
+      protocol_version: "1.0",
+      msg_id: "too-big-1",
+      payload: {
+        token: "x".repeat(200),
+        client_id: "C1",
+      },
+    });
+
+    expect(c1.sent[0]).toMatchObject({
+      type: "error",
+      msg_id: "too-big-1",
+      payload: {
+        code: "bad_request",
+        details: {
+          max_envelope_bytes: 64,
+        },
+      },
+    });
+    expect(c1.closed).toBe(true);
   });
 });

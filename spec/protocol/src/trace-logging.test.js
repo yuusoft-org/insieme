@@ -4,7 +4,7 @@ import {
   createInMemorySyncStore,
   createSyncClient,
   createSyncServer,
-} from "../../../src-next/index.js";
+} from "../../../src/index.js";
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -59,7 +59,7 @@ const createLoopbackTransport = ({ server, connectionId }) => {
   };
 };
 
-describe("src-next trace logging", () => {
+describe("src trace logging", () => {
   it("logs id and committed_id on server commit path", async () => {
     const logs = [];
     const serverStore = createInMemorySyncStore();

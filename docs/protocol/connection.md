@@ -63,6 +63,7 @@ In `active` state, supported requests are:
 
 Invalid shape -> `bad_request` (keep open).
 Unauthorized partition scope -> `forbidden` (keep open).
+Server inbound safety limit breach -> `rate_limited` (close).
 
 ## Reconnect
 

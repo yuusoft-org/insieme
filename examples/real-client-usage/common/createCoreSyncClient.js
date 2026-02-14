@@ -1,4 +1,4 @@
-import { createSyncClient } from "../../../src-next/index.js";
+import { createSyncClient } from "../../../src/index.js";
 
 export const createCoreSyncClient = createSyncClient;
 export { createSyncClient };

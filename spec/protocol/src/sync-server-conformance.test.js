@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createInMemorySyncStore,
   createSyncServer,
-} from "../../../src-next/index.js";
+} from "../../../src/index.js";
 
 const createConnectionTransport = (connectionId) => {
   const sent = [];
@@ -83,7 +83,7 @@ const submitSession = async ({
   });
 };
 
-describe("src-next createSyncServer conformance", () => {
+describe("src createSyncServer conformance", () => {
   it("rejects non-connect messages before handshake [SC-18]", async () => {
     const { server } = createServer();
     const c1 = createConnectionTransport("c1");

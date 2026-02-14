@@ -2,7 +2,7 @@
 
 Insieme is an offline-first sync library built around an authoritative server.
 
-Core runtime exports live in `src-next` and are now the default package entry.
+Core runtime exports live in `src` as the single implementation path.
 
 ## Install
 
@@ -29,8 +29,6 @@ import {
 - `createInMemorySyncStore`: test/dev committed-log store for server.
 - `createSqliteClientStore`: SQLite adapter for the client store interface.
 - `createSqliteSyncStore`: SQLite adapter for authoritative server committed log.
-
-`import { ... } from "insieme/next"` is kept as an alias.
 
 ## Quick Start
 
@@ -87,6 +85,8 @@ Your client store must implement:
 
 See `docs/reference/javascript-interface.md` and `docs/client/storage.md`.
 
+Server runtime also supports optional inbound guardrails via `limits` (message rate and envelope size caps) for defense-in-depth reliability.
+
 ## Protocol Docs
 
 - `docs/protocol/messages.md`
@@ -95,6 +95,7 @@ See `docs/reference/javascript-interface.md` and `docs/client/storage.md`.
 - `docs/protocol/ordering-and-idempotency.md`
 - `docs/protocol/partitions.md`
 - `docs/protocol/errors.md`
+- `docs/production-checklist.md`
 
 ## Examples
 

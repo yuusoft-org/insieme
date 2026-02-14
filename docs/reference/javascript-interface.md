@@ -115,6 +115,13 @@ Client runtime events:
  * }} deps.store
  * @param {{ now: () => number }} deps.clock
  * @param {(entry: object) => void} [deps.logger]
+ * @param {{
+ *   maxInboundMessagesPerWindow?: number,
+ *   rateWindowMs?: number,
+ *   maxEnvelopeBytes?: number,
+ *   closeOnRateLimit?: boolean,
+ *   closeOnOversize?: boolean
+ * }} [deps.limits]
  * @returns {SyncServer}
  */
 export function createSyncServer(deps) {}

@@ -25,14 +25,11 @@ jobs:
       - name: Run lint
         run: npm run lint
 
-      - name: Validate scenario coverage mapping
-        run: npm run check:scenario-coverage
+      - name: Run required CI gates and full suite
+        run: npm run test:ci
 
-      - name: Validate test stack policy
-        run: npm run check:test-stack
+      - name: Enforce runtime coverage thresholds
+        run: npm run test:coverage
 
-      - name: Run conformance suite
-        run: npm run test:conformance
-
-      - name: Run reliability suite
-        run: npm run test:reliability
+      - name: Repeat reliability suite for flake detection
+        run: npm run test:reliability:stress

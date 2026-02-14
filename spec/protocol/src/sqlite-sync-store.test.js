@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { createSqliteSyncStore } from "../../../src-next/index.js";
+import { createSqliteSyncStore } from "../../../src/index.js";
 import { createSqliteDb } from "./helpers/sqlite-db.js";
 
 const tempDirs = [];
@@ -20,7 +20,7 @@ afterEach(() => {
   }
 });
 
-describe("src-next createSqliteSyncStore", () => {
+describe("src createSqliteSyncStore", () => {
   it("runs migrations and dedupes with canonical equality", async () => {
     const db = createSqliteDb(":memory:");
     const store = createSqliteSyncStore(db);
@@ -152,6 +152,18 @@ describe("src-next createSqliteSyncStore", () => {
 
     expect(second.events.map((event) => event.id)).toEqual(["evt-p1-2"]);
     expect(second.nextSinceCommittedId).toBe(3);
+
+    db.close();
+  });
+
+  it("fails fast on unsupported future schema version", async () => {
+    const db = createSqliteDb(":memory:");
+    db.exec("PRAGMA user_version=999;");
+    const store = createSqliteSyncStore(db);
+
+    await expect(store.init()).rejects.toThrow(
+      "Unsupported schema version 999",
+    );
 
     db.close();
   });

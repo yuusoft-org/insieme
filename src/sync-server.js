@@ -3,6 +3,9 @@ import { intersectsPartitions, normalizePartitionSet } from "./canonicalize.js";
 const PROTOCOL_VERSION = "1.0";
 const DEFAULT_SYNC_LIMIT = 500;
 const MAX_SYNC_LIMIT = 1000;
+const DEFAULT_RATE_WINDOW_MS = 1000;
+const DEFAULT_MAX_INBOUND_MESSAGES_PER_WINDOW = 200;
+const DEFAULT_MAX_ENVELOPE_BYTES = 256 * 1024;
 
 /**
  * @param {object} value
@@ -23,6 +26,11 @@ const isStringArray = (value) =>
  */
 const toNumberOr = (value, fallback) => {
   if (typeof value !== "number" || Number.isNaN(value)) return fallback;
+  return value;
+};
+
+const toPositiveIntOr = (value, fallback) => {
+  if (!Number.isInteger(value) || value <= 0) return fallback;
   return value;
 };
 
@@ -162,6 +170,13 @@ const toErrorPayload = (reason, fallbackCode, fallbackMessage) => {
  *   },
  *   clock: { now: () => number },
  *   logger?: (entry: object) => void,
+ *   limits?: {
+ *     maxInboundMessagesPerWindow?: number,
+ *     rateWindowMs?: number,
+ *     maxEnvelopeBytes?: number,
+ *     closeOnRateLimit?: boolean,
+ *     closeOnOversize?: boolean,
+ *   },
  * }} deps
  */
 export const createSyncServer = ({
@@ -171,6 +186,7 @@ export const createSyncServer = ({
   store,
   clock,
   logger = () => {},
+  limits = {},
 }) => {
   /** @type {Map<string, {
    *   transport: { connectionId: string, send: (message: object) => Promise<void>, close: (code?: number, reason?: string) => Promise<void> },
@@ -179,8 +195,23 @@ export const createSyncServer = ({
    *   activePartitions: string[],
    *   syncInProgress: boolean,
    *   syncToCommittedId: null|number,
+   *   rateWindowStartedAt: number,
+   *   rateWindowCount: number,
    * }>} */
   const sessions = new Map();
+  const inboundLimits = {
+    maxInboundMessagesPerWindow: toPositiveIntOr(
+      limits.maxInboundMessagesPerWindow,
+      DEFAULT_MAX_INBOUND_MESSAGES_PER_WINDOW,
+    ),
+    rateWindowMs: toPositiveIntOr(limits.rateWindowMs, DEFAULT_RATE_WINDOW_MS),
+    maxEnvelopeBytes: toPositiveIntOr(
+      limits.maxEnvelopeBytes,
+      DEFAULT_MAX_ENVELOPE_BYTES,
+    ),
+    closeOnRateLimit: limits.closeOnRateLimit !== false,
+    closeOnOversize: limits.closeOnOversize !== false,
+  };
   let nextServerMsgId = 1;
   const log = (entry) => {
     try {
@@ -209,6 +240,78 @@ export const createSyncServer = ({
   };
 
   const isSupportedVersion = (version) => version === PROTOCOL_VERSION;
+
+  const getApproxEnvelopeBytes = (message) => {
+    try {
+      return Buffer.byteLength(JSON.stringify(message), "utf8");
+    } catch {
+      return Number.POSITIVE_INFINITY;
+    }
+  };
+
+  const enforceInboundGuards = async (session, message, msgId) => {
+    const now = clock.now();
+
+    if (
+      session.rateWindowStartedAt === 0 ||
+      now - session.rateWindowStartedAt >= inboundLimits.rateWindowMs
+    ) {
+      session.rateWindowStartedAt = now;
+      session.rateWindowCount = 0;
+    }
+    session.rateWindowCount += 1;
+
+    if (session.rateWindowCount > inboundLimits.maxInboundMessagesPerWindow) {
+      await sendError(
+        session.transport,
+        "rate_limited",
+        "Inbound message rate limit exceeded",
+        {
+          max_messages_per_window: inboundLimits.maxInboundMessagesPerWindow,
+          window_ms: inboundLimits.rateWindowMs,
+        },
+        { msgId },
+      );
+      log({
+        event: "rate_limited",
+        connection_id: session.transport.connectionId,
+        msg_id: msgId,
+        max_messages_per_window: inboundLimits.maxInboundMessagesPerWindow,
+        window_ms: inboundLimits.rateWindowMs,
+      });
+      if (inboundLimits.closeOnRateLimit) {
+        await closeSession(session.transport.connectionId, "rate_limited");
+      }
+      return false;
+    }
+
+    const envelopeBytes = getApproxEnvelopeBytes(message);
+    if (envelopeBytes > inboundLimits.maxEnvelopeBytes) {
+      await sendError(
+        session.transport,
+        "bad_request",
+        "Message exceeds maximum envelope size",
+        {
+          max_envelope_bytes: inboundLimits.maxEnvelopeBytes,
+          actual_envelope_bytes: envelopeBytes,
+        },
+        { msgId },
+      );
+      log({
+        event: "message_too_large",
+        connection_id: session.transport.connectionId,
+        msg_id: msgId,
+        max_envelope_bytes: inboundLimits.maxEnvelopeBytes,
+        actual_envelope_bytes: envelopeBytes,
+      });
+      if (inboundLimits.closeOnOversize) {
+        await closeSession(session.transport.connectionId, "message_too_large");
+      }
+      return false;
+    }
+
+    return true;
+  };
 
   const handleConnect = async (session, payload, context = {}) => {
     if (!isObject(payload)) {
@@ -702,11 +805,22 @@ export const createSyncServer = ({
   };
 
   const handleMessage = async (session, message) => {
+    if (session.state === "closed") return;
+
+    const contextMsgId =
+      isObject(message) && typeof message.msg_id === "string"
+        ? message.msg_id
+        : undefined;
+    const allowed = await enforceInboundGuards(session, message, contextMsgId);
+    if (!allowed) return;
+
     if (!isObject(message)) {
       await sendError(
         session.transport,
         "bad_request",
         "Message must be an object",
+        {},
+        { msgId: contextMsgId },
       );
       return;
     }
@@ -715,7 +829,7 @@ export const createSyncServer = ({
     const payload = message.payload;
     const protocolVersion = message.protocol_version;
     const msgId = message.msg_id;
-    const contextMsgId = typeof msgId === "string" ? msgId : undefined;
+    const parsedMsgId = typeof msgId === "string" ? msgId : undefined;
 
     if (typeof type !== "string" || !isObject(payload)) {
       await sendError(
@@ -723,7 +837,7 @@ export const createSyncServer = ({
         "bad_request",
         "Missing required envelope fields",
         {},
-        { msgId: contextMsgId },
+        { msgId: parsedMsgId },
       );
       return;
     }
@@ -740,7 +854,7 @@ export const createSyncServer = ({
       event: "message_received",
       connection_id: session.transport.connectionId,
       message_type: type,
-      msg_id: contextMsgId,
+      msg_id: parsedMsgId,
     });
 
     if (!isSupportedVersion(protocolVersion)) {
@@ -749,7 +863,7 @@ export const createSyncServer = ({
         "protocol_version_unsupported",
         "Unsupported protocol version",
         {},
-        { msgId: contextMsgId },
+        { msgId: parsedMsgId },
       );
       await closeSession(
         session.transport.connectionId,
@@ -765,12 +879,12 @@ export const createSyncServer = ({
           "bad_request",
           "Only connect is allowed before handshake",
           {},
-          { msgId: contextMsgId },
+          { msgId: parsedMsgId },
         );
         return;
       }
 
-      await handleConnect(session, payload, { msgId: contextMsgId });
+      await handleConnect(session, payload, { msgId: parsedMsgId });
       return;
     }
 
@@ -778,10 +892,10 @@ export const createSyncServer = ({
 
     switch (type) {
       case "submit_events":
-        await handleSubmit(session, payload, { msgId: contextMsgId });
+        await handleSubmit(session, payload, { msgId: parsedMsgId });
         return;
       case "sync":
-        await handleSync(session, payload, { msgId: contextMsgId });
+        await handleSync(session, payload, { msgId: parsedMsgId });
         return;
       default:
         await sendError(
@@ -789,13 +903,13 @@ export const createSyncServer = ({
           "bad_request",
           `Unknown message type: ${type}`,
           {},
-          { msgId: contextMsgId },
+          { msgId: parsedMsgId },
         );
         log({
           event: "bad_request",
           connection_id: session.transport.connectionId,
           message_type: type,
-          msg_id: contextMsgId,
+          msg_id: parsedMsgId,
         });
     }
   };
@@ -809,6 +923,8 @@ export const createSyncServer = ({
         activePartitions: [],
         syncInProgress: false,
         syncToCommittedId: null,
+        rateWindowStartedAt: 0,
+        rateWindowCount: 0,
       };
       sessions.set(transport.connectionId, session);
 

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createSyncClient } from "../../../src-next/index.js";
+import { createSyncClient } from "../../../src/index.js";
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -60,7 +60,7 @@ const createStartedClient = async ({
   return client;
 };
 
-describe("src-next createSyncClient", () => {
+describe("src createSyncClient", () => {
   let transport;
   let store;
 

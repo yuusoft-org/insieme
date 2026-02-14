@@ -22,9 +22,6 @@ CREATE TABLE local_drafts (
   created_at INTEGER NOT NULL
 );
 
-CREATE INDEX local_drafts_order
-  ON local_drafts(draft_clock, id);
-
 CREATE TABLE committed_events (
   committed_id INTEGER PRIMARY KEY,
   id TEXT NOT NULL UNIQUE,
@@ -33,17 +30,15 @@ CREATE TABLE committed_events (
   partitions TEXT NOT NULL,
   status_updated_at INTEGER NOT NULL
 );
-
-CREATE INDEX committed_events_order
-  ON committed_events(committed_id);
 ```
 
 Notes:
 
 - `id` is global event UUID and dedupe key.
 - `draft_clock` is local ordering only.
+- `draft_clock` and `committed_id` primary keys already provide ordered access paths in SQLite.
 - `partitions` should be stored as a normalized set representation.
-- Reference adapter: `src-next/sqlite-client-store.js` (`createSqliteClientStore`).
+- Reference adapter: `src/sqlite-client-store.js` (`createSqliteClientStore`).
 
 ## Optional Tables
 

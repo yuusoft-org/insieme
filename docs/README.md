@@ -52,6 +52,10 @@ sequenceDiagram
 
 - `reference/javascript-interface.md` - minimal JS client/server factory interface.
 
+## Operations
+
+- `production-checklist.md` - rollout and reliability hardening checklist.
+
 ## Sync Scenarios
 
 `sync-scenarios/` contains core behavior scenarios aligned with the simplified protocol surface.

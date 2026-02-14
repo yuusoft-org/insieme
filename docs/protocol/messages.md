@@ -23,6 +23,7 @@ Envelope rules:
 - Missing required envelope fields **MUST** be rejected with `bad_request`.
 - Unsupported `protocol_version` **MUST** be rejected with `protocol_version_unsupported` and the connection **MUST** close.
 - Unknown extra fields **MUST** be ignored for forward compatibility.
+- Servers **MAY** enforce inbound safety limits (message rate/size). On limit breach, server returns `rate_limited` or `bad_request` and may close the connection.
 
 ## Client -> Server
 

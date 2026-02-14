@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { createInMemorySyncStore } from "../../../src-next/index.js";
+import { createInMemorySyncStore } from "../../../src/index.js";
 
-describe("src-next createInMemorySyncStore", () => {
+describe("src createInMemorySyncStore", () => {
   it("dedupes by id and canonical payload", async () => {
     const store = createInMemorySyncStore();
 

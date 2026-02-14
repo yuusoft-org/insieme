@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { createSqliteClientStore } from "../../../src-next/index.js";
+import { createSqliteClientStore } from "../../../src/index.js";
 import { createSqliteDb } from "./helpers/sqlite-db.js";
 
 const tempDirs = [];
@@ -20,7 +20,7 @@ afterEach(() => {
   }
 });
 
-describe("src-next createSqliteClientStore", () => {
+describe("src createSqliteClientStore", () => {
   it("runs migrations and sets schema version", async () => {
     const db = createSqliteDb(":memory:");
     const store = createSqliteClientStore(db);
@@ -122,6 +122,18 @@ describe("src-next createSqliteClientStore", () => {
         ],
       }),
     ).rejects.toThrow("committed event invariant violation");
+
+    db.close();
+  });
+
+  it("fails fast on unsupported future schema version", async () => {
+    const db = createSqliteDb(":memory:");
+    db.exec("PRAGMA user_version=999;");
+    const store = createSqliteClientStore(db);
+
+    await expect(store.init()).rejects.toThrow(
+      "Unsupported schema version 999",
+    );
 
     db.close();
   });

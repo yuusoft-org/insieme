@@ -15,10 +15,10 @@ Execution order: harness -> scenarios -> focused unit tests -> implementation.
 
 | Scenario | File | Primary Assertions | Planned Test ID | Status |
 |---|---|---|---|---|
-| 00 | `docs/sync-scenarios/00-handshake-empty-sync.md` | connect lifecycle + empty sync response | `PT-SC-00` | added (`spec/protocol/src-next/sync-client.test.js`, `spec/protocol/src-next/sync-server.test.js`) |
-| 01 | `docs/sync-scenarios/01-local-draft-commit-broadcast.md` | local commit + peer broadcast | `PT-SC-01` | added (`spec/protocol/src-next/sync-client.test.js`, `spec/protocol/src-next/sync-server.test.js`) |
-| 02 | `docs/sync-scenarios/02-local-draft-rejected.md` | rejection path removes draft | `PT-SC-02` | added (`spec/protocol/src-next/sync-client.test.js`, `spec/protocol/src-next/sync-server.test.js`) |
-| 03 | `docs/sync-scenarios/03-duplicate-submit-retry.md` | same-id retry dedupe result | `PT-SC-03` | added (`spec/protocol/src-next/sync-client.test.js`, `spec/protocol/src-next/sync-server.test.js`) |
+| 00 | `docs/sync-scenarios/00-handshake-empty-sync.md` | connect lifecycle + empty sync response | `PT-SC-00` | added (`spec/protocol/src/sync-client.test.js`, `spec/protocol/src/sync-server.test.js`) |
+| 01 | `docs/sync-scenarios/01-local-draft-commit-broadcast.md` | local commit + peer broadcast | `PT-SC-01` | added (`spec/protocol/src/sync-client.test.js`, `spec/protocol/src/sync-server.test.js`) |
+| 02 | `docs/sync-scenarios/02-local-draft-rejected.md` | rejection path removes draft | `PT-SC-02` | added (`spec/protocol/src/sync-client.test.js`, `spec/protocol/src/sync-server.test.js`) |
+| 03 | `docs/sync-scenarios/03-duplicate-submit-retry.md` | same-id retry dedupe result | `PT-SC-03` | added (`spec/protocol/src/sync-client.test.js`, `spec/protocol/src/sync-server.test.js`) |
 | 04 | `docs/sync-scenarios/04-multi-partition-event.md` | partition intersection fanout | `PT-SC-04` | planned |
 | 05 | `docs/sync-scenarios/05-reconnect-catch-up-paged.md` | paged sync cursor progression | `PT-SC-05` | planned |
 | 06 | `docs/sync-scenarios/06-out-of-order-commit-arrival.md` | idempotent committed apply | `PT-SC-06` | planned |

@@ -13,6 +13,7 @@ Normative keywords in this document are to be interpreted as described in RFC 21
 | `bad_request` | keep open | Malformed message, missing required fields, or unknown message type. |
 | `forbidden` | keep open | Authenticated client lacks required partition/resource access. |
 | `validation_failed` | keep open | Event payload or domain validation failure. |
+| `rate_limited` | close | Connection exceeded server inbound safety limits. |
 | `server_error` | close | Unexpected internal failure. |
 
 ## Error Payload
@@ -39,4 +40,5 @@ Fields:
 - `bad_request`: fix payload and retry.
 - `forbidden`: change scope/ACL before retry.
 - `validation_failed`: correct event data before retry.
+- `rate_limited`: back off, reconnect, then resume `sync`/draft retry.
 - `server_error`: reconnect, sync, retry pending drafts by `id`.
