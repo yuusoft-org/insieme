@@ -1,6 +1,6 @@
 {
   "name": "insieme",
-  "version": "0.0.8",
+  "version": "1.0.0-rc1",
   "description": "An offline-first collaborative library with authoritative server for real-time data synchronization",
   "keywords": [
     "offline-first",
@@ -17,10 +17,6 @@
   },
   "homepage": "https://github.com/yuusoft-org/insieme#readme",
   "type": "module",
-  "dependencies": {
-    "ajv": "^8.17.1",
-    "immer": "^11.1.3"
-  },
   "main": "./src/index.js",
   "exports": {
     ".": {
@@ -28,23 +24,30 @@
     }
   },
   "devDependencies": {
-    "@vitest/coverage-v8": "^4.0.8",
+    "@vitest/coverage-v8": "^4.0.18",
     "husky": "^9.1.7",
     "lint-staged": "^16.2.6",
     "oxlint": "^1.26.0",
-    "puty": "^0.0.5-rc1",
+    "typescript": "^5.9.3",
     "vitest": "^4.0.18"
   },
   "scripts": {
-    "lint": "oxlint && bunx prettier --check src",
-    "lint:fix": "bunx prettier --check --write src",
+    "lint": "oxlint && npx prettier --check src spec tasks/*.mjs README.md .github/workflows/ci.yaml",
+    "lint:fix": "npx prettier --write src spec tasks/*.mjs README.md .github/workflows/ci.yaml",
     "test": "vitest --run",
+    "test:conformance": "vitest --run spec/protocol/src/**/*.test.js",
+    "test:reliability": "vitest --run spec/protocol/src/reliability-integration.test.js spec/protocol/src/trace-logging.test.js",
+    "test:reliability:stress": "for i in 1 2 3; do vitest --run spec/protocol/src/reliability-integration.test.js spec/protocol/src/sqlite-locking-chaos.test.js spec/protocol/src/sqlite-process-crash.test.js; done",
     "test:coverage": "vitest --run --coverage",
-    "types": "bunx tsc"
+    "check:scenario-coverage": "node tasks/validate-scenario-coverage.mjs",
+    "check:test-stack": "node tasks/validate-test-stack.mjs",
+    "ops:sqlite:integrity": "node tasks/sqlite-integrity-check.mjs",
+    "test:ci": "npm run check:test-stack && npm run check:scenario-coverage && npm run test",
+    "types": "npx tsc --noEmit"
   },
   "lint-staged": {
     "src/**/*.{js}": [
-      "oxlint && bunx prettier --write"
+      "oxlint && npx prettier --write"
     ]
   }
 }
