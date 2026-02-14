@@ -14,6 +14,7 @@ npm install insieme
 
 ```js
 import {
+  createOfflineTransport,
   createSyncClient,
   createSyncServer,
   createInMemoryClientStore,
@@ -25,6 +26,7 @@ import {
 
 - `createSyncClient`: client runtime (`connect -> sync -> submit/flush`).
 - `createSyncServer`: server session/protocol runtime.
+- `createOfflineTransport`: local transport for fully offline mode, with optional later online attachment.
 - `createInMemoryClientStore`: test/dev store for drafts + committed events.
 - `createInMemorySyncStore`: test/dev committed-log store for server.
 - `createSqliteClientStore`: SQLite adapter for the client store interface.
@@ -56,13 +58,9 @@ const server = createSyncServer({
 });
 
 const clientStore = createInMemoryClientStore();
+const offlineTransport = createOfflineTransport();
 const client = createSyncClient({
-  transport: {
-    connect: async () => {},
-    disconnect: async () => {},
-    send: async (_message) => {},
-    onMessage: (_handler) => () => {},
-  },
+  transport: offlineTransport,
   store: clientStore,
   token: "jwt",
   clientId: "C1",
@@ -70,6 +68,12 @@ const client = createSyncClient({
 });
 
 await client.start();
+```
+
+Seamless online upgrade later:
+
+```js
+await offlineTransport.setOnlineTransport(realWebSocketTransport);
 ```
 
 ## Client Store Interface

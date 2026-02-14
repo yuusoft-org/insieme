@@ -70,6 +70,7 @@ Server inbound safety limit breach -> `rate_limited` (close).
 
 - On reconnect, client **MUST** run `connect` then `sync`.
 - Connection-local runtime state is not durable and is reconstructed after reconnect.
+- For local-only/offline deployment, an offline transport can satisfy the same `connect` -> `sync` sequence without network.
 
 ## Transport Keepalive
 

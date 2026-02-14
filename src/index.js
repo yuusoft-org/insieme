@@ -1,5 +1,6 @@
 export { createSyncClient } from "./sync-client.js";
 export { createSyncServer } from "./sync-server.js";
+export { createOfflineTransport } from "./offline-transport.js";
 export { createInMemorySyncStore } from "./in-memory-sync-store.js";
 export { createInMemoryClientStore } from "./in-memory-client-store.js";
 export {

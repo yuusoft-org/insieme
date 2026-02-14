@@ -21,6 +21,33 @@ This file defines a minimal JS API surface aligned with the simplified core prot
 
 ## Client Interface
 
+### Offline Transport (Optional)
+
+```js
+/**
+ * @param {{
+ *   serverLastCommittedId?: number,
+ *   maxBufferedSubmits?: number,
+ *   onBufferedSubmit?: (entry: { id?: string, bufferedCount: number }) => void
+ * }} [options]
+ * @returns {{
+ *   connect: () => Promise<void>,
+ *   disconnect: () => Promise<void>,
+ *   send: (message: object) => Promise<void>,
+ *   onMessage: (handler: (message: object) => void) => () => void,
+ *   setOnlineTransport: (transport: object) => Promise<void>,
+ *   setOffline: () => Promise<void>,
+ *   getState: () => {
+ *     connected: boolean,
+ *     online: boolean,
+ *     waitingForOnlineConnected: boolean,
+ *     bufferedSubmitCount: number
+ *   }
+ * }}
+ */
+export function createOfflineTransport(options) {}
+```
+
 ### Factory
 
 ```js

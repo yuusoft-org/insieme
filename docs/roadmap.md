@@ -175,6 +175,7 @@ Goal: prove behavior under failures and load.
 - [x] Add in-app inbound safety guardrails (rate and envelope size limits).
 - [x] Enforce coverage thresholds and repeated reliability runs in CI.
 - [x] Add production rollout reliability checklist.
+- [x] Add offline transport with seamless online attachment path.
 
 ## Exit Criteria
 
