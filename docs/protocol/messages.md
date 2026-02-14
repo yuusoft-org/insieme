@@ -76,7 +76,9 @@ payload:
 Rules:
 
 - `since_committed_id` is exclusive.
-- `limit` is optional and server-clamped.
+- `limit` is optional.
+- If omitted, server **MUST** use default `500`.
+- If provided, server **MUST** clamp to `[1, 1000]`.
 
 ## Server -> Client
 

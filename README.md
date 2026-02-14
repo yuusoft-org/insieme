@@ -86,6 +86,7 @@ Your client store must implement:
 See `docs/reference/javascript-interface.md` and `docs/client/storage.md`.
 
 Server runtime also supports optional inbound guardrails via `limits` (message rate and envelope size caps) for defense-in-depth reliability.
+For deployments that can re-check token/session validity on every active request, provide `auth.validateSession`.
 
 ## Protocol Docs
 
@@ -100,3 +101,11 @@ Server runtime also supports optional inbound guardrails via `limits` (message r
 ## Examples
 
 Real usage examples are in `examples/real-client-usage/`.
+
+## Ops Helper
+
+Run SQLite integrity checks:
+
+```bash
+npm run ops:sqlite:integrity -- /path/to/client.db /path/to/server.db
+```

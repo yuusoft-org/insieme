@@ -17,11 +17,11 @@ Legend:
 | I-006 | high | must-fix-before-implementation | resolved | `docs/reference/javascript-interface.md:35`, `examples/real-client-usage/common/createCoreSyncClient.js:1` | Interface docs and example runtime API drifted (`submit/sync/on` vs `submitEvent/syncNow/...`). | Aligned reference doc to runtime-facing API and added alias export `createSyncClient` in `examples/real-client-usage/common/createCoreSyncClient.js:195`. |
 | I-007 | medium | must-fix-before-implementation | resolved | `docs/client/storage.md:16`, `examples/real-client-usage/common/createSqliteStore.js:47` | Storage schema docs used `type/payload` columns while examples stored a single `event` object. | Aligned schema docs to `event` JSON shape in `docs/client/storage.md:20`. |
 | I-008 | high | must-fix-before-implementation | resolved | `src/repository.js:56`, `src/repository.js:65`, `src/repository.js:333`, `src/repository.js:504` | Repository/runtime was event-index-centric and not aligned to committed cursor vocabulary. | Added committed-cursor-first boundaries (`committedId`, `sinceCommittedId`, `untilCommittedId`) with backward-compatible aliases (`eventIndex`, `since`, `untilEventIndex`) in `src/repository.js` and `README.md`. |
-| I-009 | medium | can-defer | open | `docs/protocol/messages.md:77`, `docs/protocol/durability.md:63` | `sync.limit` is clamped but normative default/min/max bounds are not specified, leaving server behavior non-uniform. | Add explicit bounds/default guidance in protocol docs and conformance tests; defer if single implementation only. |
-| I-010 | low | can-defer | open | `docs/protocol/errors.md:16`, `docs/protocol/connection.md:64` | `server_error` exists in canonical code set, but trigger/shape examples and close timing details are minimal. | Add one normative failure-path example for internal error mapping and close semantics. |
+| I-009 | medium | can-defer | resolved | `docs/protocol/messages.md:77`, `docs/protocol/durability.md:63` | `sync.limit` is clamped but normative default/min/max bounds are not specified, leaving server behavior non-uniform. | Added explicit default/min/max bounds in protocol docs and coverage in `spec/protocol/src/sync-server.test.js`. |
+| I-010 | low | can-defer | resolved | `docs/protocol/errors.md:16`, `docs/protocol/connection.md:64` | `server_error` exists in canonical code set, but trigger/shape examples and close timing details are minimal. | Added normative `server_error` mapping and example payload in `docs/protocol/errors.md`. |
 
 ## Summary
 
-- Open issues: 2
+- Open issues: 0
 - Open `must-fix-before-implementation`: 0
-- Open `can-defer`: 2 (`I-009`, `I-010`)
+- Open `can-defer`: 0

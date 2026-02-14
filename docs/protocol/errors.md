@@ -42,3 +42,20 @@ Fields:
 - `validation_failed`: correct event data before retry.
 - `rate_limited`: back off, reconnect, then resume `sync`/draft retry.
 - `server_error`: reconnect, sync, retry pending drafts by `id`.
+
+## Server Error Mapping
+
+- On unexpected internal exception, server **MUST** send `error` with `code=server_error` and then close the connection.
+- Server **SHOULD** include minimally useful diagnostics in `details` when safe to expose.
+
+Example:
+
+```yaml
+type: error
+protocol_version: "1.0"
+payload:
+  code: server_error
+  message: Unexpected server error
+  details:
+    phase: submit_events
+```

@@ -64,3 +64,7 @@ Snapshots are optional.
 
 - Server **MAY** enforce max message size and request rate.
 - `sync.limit` **MUST** be clamped to server bounds.
+- Core default bounds are:
+  - default: `500` when omitted,
+  - min: `1`,
+  - max: `1000`.

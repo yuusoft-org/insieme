@@ -53,6 +53,7 @@ Field semantics:
 - Authenticated connection identity is authoritative for all later requests.
 - Partition authorization **MUST** be checked for both submit and sync.
 - If token expires during a connection, server **MUST** send `auth_failed` and close.
+- Implementations that can validate session state per message **SHOULD** do so before handling active requests.
 
 ## Active Requests
 

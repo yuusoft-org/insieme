@@ -95,7 +95,10 @@ Client runtime events:
 ```js
 /**
  * @param {Object} deps
- * @param {{ verifyToken: (token: string) => Promise<{ clientId: string, claims: object }> }} deps.auth
+ * @param {{
+ *   verifyToken: (token: string) => Promise<{ clientId: string, claims: object }>,
+ *   validateSession?: (identity: { clientId: string, claims: object }) => Promise<boolean>
+ * }} deps.auth
  * @param {{ authorizePartitions: (identity: object, partitions: string[]) => Promise<boolean> }} deps.authz
  * @param {{ validate: (item: SubmitItem, ctx: object) => Promise<void> }} deps.validation
  * @param {{

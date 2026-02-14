@@ -23,6 +23,7 @@ Use this checklist before production rollout.
 - [ ] Use `synchronous=FULL` (or justify downgrade).
 - [ ] Set `busy_timeout` to a non-zero value for production.
 - [ ] Run periodic integrity checks (`PRAGMA integrity_check`).
+  Use `npm run ops:sqlite:integrity -- /path/to/client.db /path/to/server.db`.
 - [ ] Back up database files with tested restore process.
 
 ## Crash Recovery

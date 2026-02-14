@@ -27,12 +27,13 @@ const createServer = ({
   validate = async () => {},
   authorize = async () => true,
   verifyToken = async () => ({ clientId: "C1", claims: {} }),
+  validateSession,
   now = () => 1000,
   limits,
 } = {}) => {
   const store = createInMemorySyncStore();
   const server = createSyncServer({
-    auth: { verifyToken },
+    auth: { verifyToken, validateSession },
     authz: { authorizePartitions: authorize },
     validation: { validate },
     store,
@@ -315,5 +316,75 @@ describe("src createSyncServer", () => {
       },
     });
     expect(c1.closed).toBe(true);
+  });
+
+  it("auth-fails and closes when session becomes invalid mid-connection", async () => {
+    let active = true;
+    const { server } = createServer({
+      validateSession: async () => active,
+    });
+    const c1 = createConnectionTransport("c1");
+    const s1 = server.attachConnection(c1);
+
+    await connectSession({ session: s1 });
+    expect(c1.sent[0].type).toBe("connected");
+
+    active = false;
+    await syncSession({ session: s1, partitions: ["P1"] });
+
+    const last = c1.sent[c1.sent.length - 1];
+    expect(last).toMatchObject({
+      type: "error",
+      payload: {
+        code: "auth_failed",
+      },
+    });
+    expect(c1.closed).toBe(true);
+  });
+
+  it("clamps sync.limit to protocol default/min/max bounds", async () => {
+    const seenLimits = [];
+    const server = createSyncServer({
+      auth: { verifyToken: async () => ({ clientId: "C1", claims: {} }) },
+      authz: { authorizePartitions: async () => true },
+      validation: { validate: async () => {} },
+      store: {
+        commitOrGetExisting: async () => {
+          throw new Error("not used");
+        },
+        listCommittedSince: async ({ limit, sinceCommittedId }) => {
+          seenLimits.push(limit);
+          return {
+            events: [],
+            hasMore: false,
+            nextSinceCommittedId: sinceCommittedId,
+          };
+        },
+        getMaxCommittedId: async () => 0,
+      },
+      clock: { now: () => 1000 },
+    });
+
+    const c1 = createConnectionTransport("c1");
+    const s1 = server.attachConnection(c1);
+    await connectSession({ session: s1 });
+
+    await s1.receive({
+      type: "sync",
+      protocol_version: "1.0",
+      payload: { partitions: ["P1"], since_committed_id: 0, limit: 99999 },
+    });
+    await s1.receive({
+      type: "sync",
+      protocol_version: "1.0",
+      payload: { partitions: ["P1"], since_committed_id: 0, limit: -5 },
+    });
+    await s1.receive({
+      type: "sync",
+      protocol_version: "1.0",
+      payload: { partitions: ["P1"], since_committed_id: 0 },
+    });
+
+    expect(seenLimits).toEqual([1000, 1, 500]);
   });
 });

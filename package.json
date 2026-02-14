@@ -17,7 +17,6 @@
   },
   "homepage": "https://github.com/yuusoft-org/insieme#readme",
   "type": "module",
-  "dependencies": {},
   "main": "./src/index.js",
   "exports": {
     ".": {
@@ -29,6 +28,7 @@
     "husky": "^9.1.7",
     "lint-staged": "^16.2.6",
     "oxlint": "^1.26.0",
+    "typescript": "^5.9.3",
     "vitest": "^4.0.18"
   },
   "scripts": {
@@ -41,6 +41,7 @@
     "test:coverage": "vitest --run --coverage",
     "check:scenario-coverage": "node tasks/validate-scenario-coverage.mjs",
     "check:test-stack": "node tasks/validate-test-stack.mjs",
+    "ops:sqlite:integrity": "node tasks/sqlite-integrity-check.mjs",
     "test:ci": "npm run check:test-stack && npm run check:scenario-coverage && npm run test",
     "types": "npx tsc --noEmit"
   },

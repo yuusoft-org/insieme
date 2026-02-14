@@ -160,7 +160,10 @@ const toErrorPayload = (reason, fallbackCode, fallbackMessage) => {
 
 /**
  * @param {{
- *   auth: { verifyToken: (token: string) => Promise<{ clientId: string, claims: object }> },
+ *   auth: {
+ *     verifyToken: (token: string) => Promise<{ clientId: string, claims: object }>,
+ *     validateSession?: (identity: { clientId: string, claims: object }) => Promise<boolean>,
+ *   },
  *   authz: { authorizePartitions: (identity: object, partitions: string[]) => Promise<boolean> },
  *   validation: { validate: (item: object, ctx: object) => Promise<void> },
  *   store: {
@@ -213,6 +216,8 @@ export const createSyncServer = ({
     closeOnOversize: limits.closeOnOversize !== false,
   };
   let nextServerMsgId = 1;
+  const validateSession =
+    typeof auth.validateSession === "function" ? auth.validateSession : null;
   const log = (entry) => {
     try {
       logger({ component: "sync_server", ...entry });
@@ -240,6 +245,35 @@ export const createSyncServer = ({
   };
 
   const isSupportedVersion = (version) => version === PROTOCOL_VERSION;
+
+  const ensureSessionAuthorized = async (session, msgId) => {
+    if (!validateSession || !session.identity) return true;
+
+    let authorized = false;
+    try {
+      authorized = (await validateSession(session.identity)) === true;
+    } catch {
+      authorized = false;
+    }
+
+    if (authorized) return true;
+
+    await sendError(
+      session.transport,
+      "auth_failed",
+      "Session is no longer authorized",
+      {},
+      { msgId },
+    );
+    log({
+      event: "session_auth_failed",
+      connection_id: session.transport.connectionId,
+      client_id: session.identity.clientId,
+      msg_id: msgId,
+    });
+    await closeSession(session.transport.connectionId, "auth_failed");
+    return false;
+  };
 
   const getApproxEnvelopeBytes = (message) => {
     try {
@@ -889,6 +923,11 @@ export const createSyncServer = ({
     }
 
     if (session.state !== "active") return;
+    const sessionAuthorized = await ensureSessionAuthorized(
+      session,
+      parsedMsgId,
+    );
+    if (!sessionAuthorized) return;
 
     switch (type) {
       case "submit_events":
