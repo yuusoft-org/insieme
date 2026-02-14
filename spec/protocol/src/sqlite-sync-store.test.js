@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { createSqliteSyncStore } from "../../../src/index.js";
-import { createSqliteDb } from "./helpers/sqlite-db.js";
+import { createSqliteDb, hasNodeSqlite } from "./helpers/sqlite-db.js";
 
 const tempDirs = [];
 
@@ -20,7 +20,9 @@ afterEach(() => {
   }
 });
 
-describe("src createSqliteSyncStore", () => {
+const describeSqlite = hasNodeSqlite ? describe : describe.skip;
+
+describeSqlite("src createSqliteSyncStore", () => {
   it("runs migrations and dedupes with canonical equality", async () => {
     const db = createSqliteDb(":memory:");
     const store = createSqliteSyncStore(db);

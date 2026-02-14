@@ -8,7 +8,7 @@ import {
   createSyncClient,
   createSyncServer,
 } from "../../../src/index.js";
-import { createSqliteDb } from "./helpers/sqlite-db.js";
+import { createSqliteDb, hasNodeSqlite } from "./helpers/sqlite-db.js";
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -89,7 +89,9 @@ const createLoopbackTransport = ({ server, connectionId }) => {
   };
 };
 
-describe("src sqlite end-to-end reliability", () => {
+const describeSqlite = hasNodeSqlite ? describe : describe.skip;
+
+describeSqlite("src sqlite end-to-end reliability", () => {
   it("recovers through server/client restart and drains offline draft deterministically", async () => {
     const { serverDbPath, clientDbPath } = createPaths();
 

@@ -5,7 +5,7 @@ import path from "node:path";
 import os from "node:os";
 import { spawnSync } from "node:child_process";
 import { createSqliteSyncStore } from "../../../src/index.js";
-import { createSqliteDb } from "./helpers/sqlite-db.js";
+import { createSqliteDb, hasNodeSqlite } from "./helpers/sqlite-db.js";
 
 const tempDirs = [];
 
@@ -22,7 +22,9 @@ afterEach(() => {
   }
 });
 
-describe("src sqlite process crash safety", () => {
+const describeSqlite = hasNodeSqlite ? describe : describe.skip;
+
+describeSqlite("src sqlite process crash safety", () => {
   it("keeps committed row durable across process crash and dedupes retry", async () => {
     const dbPath = createDbPath();
     const scriptPath = fileURLToPath(

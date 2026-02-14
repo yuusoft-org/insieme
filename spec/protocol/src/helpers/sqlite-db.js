@@ -1,6 +1,17 @@
-import { DatabaseSync } from "node:sqlite";
+let DatabaseSync = null;
+try {
+  // Node >=22 provides node:sqlite (still experimental in some releases).
+  ({ DatabaseSync } = await import("node:sqlite"));
+} catch {
+  DatabaseSync = null;
+}
+
+export const hasNodeSqlite = typeof DatabaseSync === "function";
 
 export const createSqliteDb = (location = ":memory:") => {
+  if (!hasNodeSqlite) {
+    throw new Error("node:sqlite is not available in this Node runtime");
+  }
   const raw = new DatabaseSync(location);
   let txDepth = 0;
 

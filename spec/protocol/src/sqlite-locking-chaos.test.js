@@ -6,7 +6,7 @@ import {
   createSqliteClientStore,
   createSqliteSyncStore,
 } from "../../../src/index.js";
-import { createSqliteDb } from "./helpers/sqlite-db.js";
+import { createSqliteDb, hasNodeSqlite } from "./helpers/sqlite-db.js";
 
 const tempDirs = [];
 
@@ -27,7 +27,9 @@ const expectSqliteBusy = async (operation) => {
   await expect(operation).rejects.toThrow(/locked|busy/i);
 };
 
-describe("src sqlite locking chaos", () => {
+const describeSqlite = hasNodeSqlite ? describe : describe.skip;
+
+describeSqlite("src sqlite locking chaos", () => {
   it("client store write fails with SQLITE_BUSY under concurrent writer lock, then recovers", async () => {
     const dbPath = createDbPath("insieme-chaos-client");
     const writerDb = createSqliteDb(dbPath);

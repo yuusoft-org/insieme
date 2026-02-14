@@ -36,7 +36,9 @@ jobs:
         run: npm run test:ci
 
       - name: Enforce runtime coverage thresholds
+        if: matrix.node-version == '24'
         run: npm run test:coverage
 
       - name: Repeat reliability suite for flake detection
+        if: matrix.node-version == '24'
         run: npm run test:reliability:stress
