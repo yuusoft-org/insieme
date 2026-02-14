@@ -19,6 +19,7 @@ import {
   createInMemoryClientStore,
   createInMemorySyncStore,
   createSqliteClientStore,
+  createSqliteSyncStore,
 } from "insieme";
 ```
 
@@ -27,6 +28,7 @@ import {
 - `createInMemoryClientStore`: test/dev store for drafts + committed events.
 - `createInMemorySyncStore`: test/dev committed-log store for server.
 - `createSqliteClientStore`: SQLite adapter for the client store interface.
+- `createSqliteSyncStore`: SQLite adapter for authoritative server committed log.
 
 `import { ... } from "insieme/next"` is kept as an alias.
 

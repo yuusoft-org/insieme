@@ -166,7 +166,13 @@ export const createSyncServer = ({
    *   syncToCommittedId: null|number,
    * }>} */
   const sessions = new Map();
-  const log = (entry) => logger({ component: "sync_server", ...entry });
+  const log = (entry) => {
+    try {
+      logger({ component: "sync_server", ...entry });
+    } catch {
+      // logging must not affect protocol flow
+    }
+  };
 
   const closeSession = async (connectionId, reason) => {
     const session = sessions.get(connectionId);

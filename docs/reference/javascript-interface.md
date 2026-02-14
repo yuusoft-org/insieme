@@ -48,6 +48,16 @@ This file defines a minimal JS API surface aligned with the simplified core prot
  * @param {(item: SubmitItem) => void} [deps.validateLocalEvent]
  * @param {(input: { type: string, payload: any }) => void} [deps.onEvent]
  * @param {(entry: object) => void} [deps.logger]
+ * @param {{
+ *   enabled?: boolean,
+ *   initialDelayMs?: number,
+ *   maxDelayMs?: number,
+ *   factor?: number,
+ *   jitter?: number,
+ *   maxAttempts?: number,
+ *   handshakeTimeoutMs?: number
+ * }} [deps.reconnect]
+ * @param {(ms: number) => Promise<void>} [deps.sleep]
  * @returns {SyncClient}
  */
 export function createSyncClient(deps) {}
@@ -75,6 +85,7 @@ Client runtime events:
 - `rejected`
 - `broadcast`
 - `error`
+- `reconnect_scheduled`
 
 ## Backend Interface
 

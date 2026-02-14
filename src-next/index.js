@@ -6,6 +6,7 @@ export {
   createSqliteClientStore,
   createSqliteStore,
 } from "./sqlite-client-store.js";
+export { createSqliteSyncStore } from "./sqlite-sync-store.js";
 export {
   deepSortKeys,
   normalizePartitionSet,

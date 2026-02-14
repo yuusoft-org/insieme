@@ -43,6 +43,7 @@ const createStartedClient = async ({
   clientId = "C1",
   token = "jwt",
   partitions = ["P1"],
+  clientOverrides = {},
 } = {}) => {
   const client = createSyncClient({
     transport,
@@ -52,6 +53,7 @@ const createStartedClient = async ({
     partitions,
     now: () => 1000,
     uuid: () => "evt-local-1",
+    ...clientOverrides,
   });
 
   await client.start();
@@ -420,5 +422,174 @@ describe("src-next createSyncClient", () => {
     );
     expect(syncCalls).toHaveLength(1);
     expect(syncCalls[0].payload.since_committed_id).toBe(77);
+  });
+
+  it("recovers from sync send failure without locking draft flush", async () => {
+    const client = await createStartedClient({ transport, store });
+
+    transport.emit({
+      type: "connected",
+      payload: { client_id: "C1", server_last_committed_id: 1 },
+    });
+    await tick();
+
+    transport.emit({
+      type: "sync_response",
+      payload: {
+        partitions: ["P1"],
+        events: [],
+        next_since_committed_id: 1,
+        has_more: false,
+      },
+    });
+    await tick();
+
+    let failNextSync = true;
+    transport.send.mockImplementation(async (message) => {
+      transport.sent.push(message);
+      if (message.type === "sync" && failNextSync) {
+        failNextSync = false;
+        throw new Error("network down");
+      }
+    });
+
+    await expect(client.syncNow()).rejects.toThrow("network down");
+
+    await client.submitEvent({
+      partitions: ["P1"],
+      event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
+    });
+
+    const submitMessages = transport.sent.filter(
+      (message) => message.type === "submit_events",
+    );
+    expect(submitMessages.length).toBeGreaterThan(0);
+  });
+
+  it("emits bad_server_message for invalid envelopes", async () => {
+    const events = [];
+    await createStartedClient({
+      transport,
+      store,
+      clientOverrides: {
+        onEvent: (event) => events.push(event),
+      },
+    });
+
+    transport.emit({ foo: "bar" });
+    await tick();
+
+    const errorEvent = events.find((entry) => entry.type === "error");
+    expect(errorEvent).toBeTruthy();
+    expect(errorEvent.payload.code).toBe("bad_server_message");
+  });
+
+  it("disconnects when message handler throws runtime error", async () => {
+    const events = [];
+    store.applyCommittedBatch.mockRejectedValueOnce(new Error("store failure"));
+
+    await createStartedClient({
+      transport,
+      store,
+      clientOverrides: {
+        onEvent: (event) => events.push(event),
+      },
+    });
+
+    transport.emit({
+      type: "sync_response",
+      payload: {
+        partitions: ["P1"],
+        events: [],
+        next_since_committed_id: 0,
+        has_more: false,
+      },
+    });
+    await tick();
+
+    expect(transport.disconnect).toHaveBeenCalled();
+    const error = events.find((entry) => entry.type === "error");
+    expect(error).toBeTruthy();
+    expect(error.payload.code).toBe("client_runtime_error");
+  });
+
+  it("reconnects with backoff policy after server_error", async () => {
+    transport.send.mockImplementation(async (message) => {
+      transport.sent.push(message);
+      if (message.type === "connect") {
+        transport.emit({
+          type: "connected",
+          payload: { client_id: "C1", server_last_committed_id: 0 },
+        });
+      }
+      if (message.type === "sync") {
+        transport.emit({
+          type: "sync_response",
+          payload: {
+            partitions: ["P1"],
+            events: [],
+            next_since_committed_id: 0,
+            has_more: false,
+          },
+        });
+      }
+    });
+
+    await createStartedClient({
+      transport,
+      store,
+      clientOverrides: {
+        reconnect: {
+          enabled: true,
+          initialDelayMs: 0,
+          maxDelayMs: 1,
+          factor: 1,
+          jitter: 0,
+          handshakeTimeoutMs: 100,
+        },
+        sleep: async () => {},
+      },
+    });
+    await tick();
+
+    const connectsBefore = transport.connect.mock.calls.length;
+
+    transport.emit({
+      type: "error",
+      payload: { code: "server_error", message: "boom", details: {} },
+    });
+    await tick();
+    await tick();
+
+    expect(transport.disconnect).toHaveBeenCalled();
+    expect(transport.connect.mock.calls.length).toBeGreaterThan(connectsBefore);
+  });
+
+  it("does not reconnect after auth_failed", async () => {
+    await createStartedClient({
+      transport,
+      store,
+      clientOverrides: {
+        reconnect: {
+          enabled: true,
+          initialDelayMs: 0,
+          maxDelayMs: 1,
+          factor: 1,
+          jitter: 0,
+          handshakeTimeoutMs: 20,
+        },
+        sleep: async () => {},
+      },
+    });
+
+    const connectsBefore = transport.connect.mock.calls.length;
+    transport.emit({
+      type: "error",
+      payload: { code: "auth_failed", message: "auth failed", details: {} },
+    });
+    await tick();
+    await tick();
+
+    expect(transport.connect.mock.calls.length).toBe(connectsBefore);
   });
 });

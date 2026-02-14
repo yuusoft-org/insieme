@@ -124,4 +124,47 @@ describe("src-next createInMemoryClientStore", () => {
     expect(committed.map((event) => event.id)).toEqual(["evt-1", "evt-2"]);
     expect(await store.loadCursor()).toBe(2);
   });
+
+  it("keeps cursor monotonic when an older nextCursor is received", async () => {
+    const store = createInMemoryClientStore();
+
+    await store.applyCommittedBatch({ events: [], nextCursor: 10 });
+    await store.applyCommittedBatch({ events: [], nextCursor: 4 });
+
+    expect(await store.loadCursor()).toBe(10);
+  });
+
+  it("throws on conflicting duplicate committed ids", async () => {
+    const store = createInMemoryClientStore();
+
+    await store.applyCommittedBatch({
+      events: [
+        {
+          id: "evt-1",
+          client_id: "C1",
+          partitions: ["P1"],
+          committed_id: 1,
+          event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
+          status_updated_at: 10,
+        },
+      ],
+      nextCursor: 1,
+    });
+
+    await expect(
+      store.applyCommittedBatch({
+        events: [
+          {
+            id: "evt-1",
+            client_id: "C1",
+            partitions: ["P1"],
+            committed_id: 2,
+            event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
+            status_updated_at: 11,
+          },
+        ],
+        nextCursor: 2,
+      }),
+    ).rejects.toThrow("committed event invariant violation");
+  });
 });

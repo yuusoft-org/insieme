@@ -1,3 +1,5 @@
+import { canonicalizeSubmitItem } from "./canonicalize.js";
+
 const sortDrafts = (left, right) => {
   if (left.draftClock !== right.draftClock) {
     return left.draftClock - right.draftClock;
@@ -15,7 +17,7 @@ export const createInMemoryClientStore = () => {
   /** @type {{ committed_id: number, id: string, client_id: string, partitions: string[], event: object, status_updated_at: number }[]} */
   const committed = [];
 
-  /** @type {Map<string, { committed_id: number, id: string, client_id: string, partitions: string[], event: object, status_updated_at: number }>} */
+  /** @type {Map<string, { canonical: string, committedEvent: { committed_id: number, id: string, client_id: string, partitions: string[], event: object, status_updated_at: number } }>} */
   const committedById = new Map();
 
   let nextDraftClock = 1;
@@ -28,9 +30,24 @@ export const createInMemoryClientStore = () => {
 
   const upsertCommitted = (event) => {
     const existing = committedById.get(event.id);
-    if (existing) return;
+    const canonical = canonicalizeSubmitItem({
+      partitions: event.partitions,
+      event: event.event,
+    });
+    if (existing) {
+      if (
+        existing.committedEvent.committed_id !== event.committed_id ||
+        existing.committedEvent.client_id !== event.client_id ||
+        existing.canonical !== canonical
+      ) {
+        throw new Error(
+          `committed event invariant violation for id ${event.id}: conflicting duplicate`,
+        );
+      }
+      return;
+    }
 
-    committedById.set(event.id, event);
+    committedById.set(event.id, { canonical, committedEvent: event });
     committed.push(event);
     committed.sort((left, right) => left.committed_id - right.committed_id);
   };
@@ -83,7 +100,7 @@ export const createInMemoryClientStore = () => {
         removeDraftById(event.id);
       }
 
-      if (nextCursor !== undefined) cursor = nextCursor;
+      if (nextCursor !== undefined) cursor = Math.max(cursor, nextCursor);
     },
 
     _debug: {

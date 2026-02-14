@@ -32,6 +32,16 @@
  *   validateLocalEvent?: (item: SubmitItem) => void,
  *   onEvent?: (input: { type: string, payload: any }) => void,
  *   logger?: (entry: object) => void,
+ *   reconnect?: {
+ *     enabled?: boolean,
+ *     initialDelayMs?: number,
+ *     maxDelayMs?: number,
+ *     factor?: number,
+ *     jitter?: number,
+ *     maxAttempts?: number,
+ *     handshakeTimeoutMs?: number,
+ *   },
+ *   sleep?: (ms: number) => Promise<void>,
  * }} deps
  */
 export const createSyncClient = ({
@@ -45,16 +55,67 @@ export const createSyncClient = ({
   validateLocalEvent = () => {},
   onEvent = () => {},
   logger = () => {},
+  reconnect = {},
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 }) => {
+  const reconnectPolicy = {
+    enabled: reconnect.enabled === true,
+    initialDelayMs:
+      Number.isFinite(reconnect.initialDelayMs) && reconnect.initialDelayMs >= 0
+        ? reconnect.initialDelayMs
+        : 250,
+    maxDelayMs:
+      Number.isFinite(reconnect.maxDelayMs) && reconnect.maxDelayMs >= 0
+        ? reconnect.maxDelayMs
+        : 5000,
+    factor:
+      Number.isFinite(reconnect.factor) && reconnect.factor >= 1
+        ? reconnect.factor
+        : 2,
+    jitter:
+      Number.isFinite(reconnect.jitter) &&
+      reconnect.jitter >= 0 &&
+      reconnect.jitter <= 1
+        ? reconnect.jitter
+        : 0.2,
+    maxAttempts:
+      reconnect.maxAttempts === undefined ||
+      reconnect.maxAttempts === null ||
+      reconnect.maxAttempts === Number.POSITIVE_INFINITY
+        ? Number.POSITIVE_INFINITY
+        : Number.isFinite(reconnect.maxAttempts) && reconnect.maxAttempts >= 0
+          ? reconnect.maxAttempts
+          : Number.POSITIVE_INFINITY,
+    handshakeTimeoutMs:
+      Number.isFinite(reconnect.handshakeTimeoutMs) &&
+      reconnect.handshakeTimeoutMs > 0
+        ? reconnect.handshakeTimeoutMs
+        : 5000,
+  };
+
+  let started = false;
   let connected = false;
   let syncInFlight = false;
   let stopped = false;
   let activePartitions = [...partitions];
+  let reconnectInFlight = false;
+  let reconnectAttempts = 0;
   /** @type {null|(() => void)} */
   let unsubscribeTransport = null;
+  /** @type {Promise<void>} */
+  let inboundQueue = Promise.resolve();
+  /** @type {Map<number, { resolve: () => void, reject: (reason?: unknown) => void }>} */
+  const connectWaiters = new Map();
+  let connectWaiterId = 0;
 
   const emit = (type, payload) => onEvent({ type, payload });
-  const log = (entry) => logger({ component: "sync_client", ...entry });
+  const log = (entry) => {
+    try {
+      logger({ component: "sync_client", ...entry });
+    } catch {
+      // logging must not affect client runtime behavior
+    }
+  };
 
   const send = (type, payload) =>
     transport.send({
@@ -63,6 +124,162 @@ export const createSyncClient = ({
       timestamp: now(),
       payload,
     });
+
+  const waitForConnected = (timeoutMs) => {
+    if (connected) return Promise.resolve();
+
+    const waiterId = connectWaiterId + 1;
+    connectWaiterId = waiterId;
+
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        connectWaiters.delete(waiterId);
+        reject(new Error("connected timeout"));
+      }, timeoutMs);
+      connectWaiters.set(waiterId, {
+        resolve: () => {
+          clearTimeout(timer);
+          resolve();
+        },
+        reject: (reason) => {
+          clearTimeout(timer);
+          reject(reason);
+        },
+      });
+    });
+  };
+
+  const settleConnectWaiters = (ok, reason) => {
+    for (const [waiterId, waiter] of connectWaiters) {
+      connectWaiters.delete(waiterId);
+      if (ok) {
+        waiter.resolve();
+      } else {
+        waiter.reject(reason);
+      }
+    }
+  };
+
+  const computeReconnectDelayMs = (attempt) => {
+    if (attempt <= 0) return 0;
+    const expo =
+      reconnectPolicy.initialDelayMs * reconnectPolicy.factor ** (attempt - 1);
+    const capped = Math.min(reconnectPolicy.maxDelayMs, expo);
+    const jitterRange = capped * reconnectPolicy.jitter;
+    const randomOffset =
+      jitterRange > 0 ? (Math.random() * 2 - 1) * jitterRange : 0;
+    return Math.max(0, Math.round(capped + randomOffset));
+  };
+
+  const connectHandshake = async () => {
+    await transport.connect();
+    await send("connect", {
+      token,
+      client_id: clientId,
+    });
+    await waitForConnected(reconnectPolicy.handshakeTimeoutMs);
+  };
+
+  const runReconnectLoop = async (trigger) => {
+    if (!reconnectPolicy.enabled || reconnectInFlight || stopped || !started) {
+      return;
+    }
+    reconnectInFlight = true;
+
+    while (!stopped && started && !connected) {
+      if (reconnectAttempts >= reconnectPolicy.maxAttempts) {
+        emit("error", {
+          code: "reconnect_exhausted",
+          message: "Reconnect attempts exhausted",
+          details: { attempts: reconnectAttempts },
+        });
+        break;
+      }
+
+      const delayMs = computeReconnectDelayMs(reconnectAttempts);
+      if (delayMs > 0) {
+        emit("reconnect_scheduled", {
+          attempt: reconnectAttempts + 1,
+          delayMs,
+          trigger,
+        });
+        await sleep(delayMs);
+      }
+
+      if (stopped || !started || connected) break;
+
+      try {
+        await connectHandshake();
+        reconnectAttempts = 0;
+        reconnectInFlight = false;
+        return;
+      } catch (error) {
+        reconnectAttempts += 1;
+        log({
+          event: "reconnect_attempt_failed",
+          attempt: reconnectAttempts,
+          trigger,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        try {
+          await transport.disconnect();
+        } catch {
+          // best-effort disconnect before next attempt
+        }
+      }
+    }
+
+    reconnectInFlight = false;
+  };
+
+  const handleTransportFailure = async ({
+    code,
+    message,
+    reconnectAllowed,
+    emitError = true,
+  }) => {
+    syncInFlight = false;
+    connected = false;
+    settleConnectWaiters(false, new Error(message));
+    try {
+      await transport.disconnect();
+    } catch {
+      // best-effort disconnect
+    }
+
+    if (emitError) {
+      emit("error", {
+        code,
+        message,
+        details: {},
+      });
+    }
+
+    if (reconnectAllowed) {
+      void runReconnectLoop(code);
+    }
+  };
+
+  const withInboundErrorHandling = async (fn) => {
+    try {
+      await fn();
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Unexpected client runtime error";
+      log({
+        event: "handler_error",
+        message,
+      });
+      await handleTransportFailure({
+        code: "client_runtime_error",
+        message,
+        reconnectAllowed: reconnectPolicy.enabled,
+        emitError: true,
+      });
+    }
+  };
 
   const flushDraftQueue = async () => {
     if (!connected || syncInFlight || stopped) return;
@@ -103,15 +320,22 @@ export const createSyncClient = ({
       since_committed_id: since,
     });
 
-    await send("sync", {
-      partitions: activePartitions,
-      since_committed_id: since,
-      limit: 500,
-    });
+    try {
+      await send("sync", {
+        partitions: activePartitions,
+        since_committed_id: since,
+        limit: 500,
+      });
+    } catch (error) {
+      syncInFlight = false;
+      throw error;
+    }
   };
 
   const onConnected = async (payload) => {
     connected = true;
+    reconnectAttempts = 0;
+    settleConnectWaiters(true);
     log({
       event: "connected",
       client_id: payload?.client_id,
@@ -158,11 +382,16 @@ export const createSyncClient = ({
     });
 
     if (payload.has_more) {
-      await send("sync", {
-        partitions: activePartitions,
-        since_committed_id: payload.next_since_committed_id,
-        limit: 500,
-      });
+      try {
+        await send("sync", {
+          partitions: activePartitions,
+          since_committed_id: payload.next_since_committed_id,
+          limit: 500,
+        });
+      } catch (error) {
+        syncInFlight = false;
+        throw error;
+      }
       return;
     }
 
@@ -186,7 +415,6 @@ export const createSyncClient = ({
   };
 
   const onError = async (payload) => {
-    emit("error", payload);
     log({
       event: "error_received",
       code: payload.code,
@@ -197,16 +425,38 @@ export const createSyncClient = ({
       payload.code === "protocol_version_unsupported" ||
       payload.code === "server_error"
     ) {
-      connected = false;
-      await transport.disconnect();
+      const reconnectAllowed =
+        reconnectPolicy.enabled && payload.code === "server_error";
+      await handleTransportFailure({
+        code: payload.code,
+        message: payload.message || "server error",
+        reconnectAllowed,
+        emitError: true,
+      });
       log({
         event: "transport_disconnected",
         code: payload.code,
       });
+      return;
     }
+
+    emit("error", payload);
   };
 
   const handleServerMessage = async (message) => {
+    if (
+      !message ||
+      typeof message !== "object" ||
+      typeof message.type !== "string"
+    ) {
+      emit("error", {
+        code: "bad_server_message",
+        message: "Server message envelope is invalid",
+        details: {},
+      });
+      return;
+    }
+
     switch (message.type) {
       case "connected":
         await onConnected(message.payload);
@@ -230,23 +480,51 @@ export const createSyncClient = ({
 
   return {
     start: async () => {
-      await store.init();
-      await transport.connect();
-      log({ event: "transport_connected" });
-      unsubscribeTransport = transport.onMessage((message) => {
-        void handleServerMessage(message);
-      });
+      if (started) return;
+      stopped = false;
+      started = true;
+      try {
+        await store.init();
+        await transport.connect();
+        log({ event: "transport_connected" });
+        unsubscribeTransport = transport.onMessage((message) => {
+          inboundQueue = inboundQueue
+            .catch(() => {})
+            .then(() =>
+              withInboundErrorHandling(() => handleServerMessage(message)),
+            );
+        });
 
-      await send("connect", {
-        token,
-        client_id: clientId,
-      });
+        await send("connect", {
+          token,
+          client_id: clientId,
+        });
+      } catch (error) {
+        await handleTransportFailure({
+          code: "transport_connect_failed",
+          message:
+            error instanceof Error ? error.message : "Transport connect failed",
+          reconnectAllowed: reconnectPolicy.enabled,
+          emitError: true,
+        });
+        if (!reconnectPolicy.enabled) {
+          started = false;
+        }
+        throw error;
+      }
     },
 
     stop: async () => {
+      if (!started) return;
       stopped = true;
       if (unsubscribeTransport) unsubscribeTransport();
       await transport.disconnect();
+      connected = false;
+      syncInFlight = false;
+      reconnectInFlight = false;
+      reconnectAttempts = 0;
+      settleConnectWaiters(false, new Error("stopped"));
+      started = false;
       log({ event: "stopped" });
     },
 

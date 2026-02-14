@@ -157,4 +157,42 @@ describe("src-next trace logging", () => {
     expect(committed.id).toBe("evt-client-log-1");
     expect(committed.committed_id).toBe(1);
   });
+
+  it("continues protocol flow even if logger throws", async () => {
+    const server = createSyncServer({
+      auth: { verifyToken: async () => ({ clientId: "C1", claims: {} }) },
+      authz: { authorizePartitions: async () => true },
+      validation: { validate: async () => {} },
+      store: createInMemorySyncStore(),
+      clock: { now: createNowFactory() },
+      logger: () => {
+        throw new Error("logger failed");
+      },
+    });
+
+    const transport = createLoopbackTransport({
+      server,
+      connectionId: "conn-C1",
+    });
+    const client = createSyncClient({
+      transport,
+      store: createInMemoryClientStore(),
+      token: "C1",
+      clientId: "C1",
+      partitions: ["P1"],
+      now: createNowFactory(),
+      uuid: () => "evt-safe-1",
+      logger: () => {
+        throw new Error("client logger failed");
+      },
+    });
+
+    await client.start();
+    await tick();
+    await client.submitEvent({
+      partitions: ["P1"],
+      event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
+    });
+    await tick();
+  });
 });
