@@ -94,24 +94,26 @@ export const createSqliteClientStore = (db) => {
     return Number.isNaN(parsed) ? 0 : parsed;
   };
 
-  const applySubmitResultTxn = db.transaction(({ result, fallbackClientId }) => {
-    if (result.status === "committed") {
-      const draft = getDraftByIdStmt.get({ id: result.id });
+  const applySubmitResultTxn = db.transaction(
+    ({ result, fallbackClientId }) => {
+      if (result.status === "committed") {
+        const draft = getDraftByIdStmt.get({ id: result.id });
 
-      if (draft) {
-        insertCommittedStmt.run({
-          committed_id: result.committed_id,
-          id: result.id,
-          client_id: draft.client_id || fallbackClientId,
-          partitions: draft.partitions,
-          event: draft.event,
-          status_updated_at: result.status_updated_at,
-        });
+        if (draft) {
+          insertCommittedStmt.run({
+            committed_id: result.committed_id,
+            id: result.id,
+            client_id: draft.client_id || fallbackClientId,
+            partitions: draft.partitions,
+            event: draft.event,
+            status_updated_at: result.status_updated_at,
+          });
+        }
       }
-    }
 
-    deleteDraftByIdStmt.run({ id: result.id });
-  });
+      deleteDraftByIdStmt.run({ id: result.id });
+    },
+  );
 
   const applyCommittedBatchTxn = db.transaction(({ events, nextCursor }) => {
     for (const event of events) {

@@ -146,9 +146,17 @@ const toErrorPayload = (reason, fallbackCode, fallbackMessage) => {
  *     getMaxCommittedId: () => Promise<number>,
  *   },
  *   clock: { now: () => number },
+ *   logger?: (entry: object) => void,
  * }} deps
  */
-export const createSyncServer = ({ auth, authz, validation, store, clock }) => {
+export const createSyncServer = ({
+  auth,
+  authz,
+  validation,
+  store,
+  clock,
+  logger = () => {},
+}) => {
   /** @type {Map<string, {
    *   transport: { connectionId: string, send: (message: object) => Promise<void>, close: (code?: number, reason?: string) => Promise<void> },
    *   state: "await_connect"|"active"|"closed",
@@ -158,6 +166,7 @@ export const createSyncServer = ({ auth, authz, validation, store, clock }) => {
    *   syncToCommittedId: null|number,
    * }>} */
   const sessions = new Map();
+  const log = (entry) => logger({ component: "sync_server", ...entry });
 
   const closeSession = async (connectionId, reason) => {
     const session = sessions.get(connectionId);
@@ -165,13 +174,22 @@ export const createSyncServer = ({ auth, authz, validation, store, clock }) => {
     session.state = "closed";
     sessions.delete(connectionId);
     await session.transport.close(undefined, reason);
+    log({
+      event: "session_closed",
+      connection_id: connectionId,
+      reason,
+    });
   };
 
   const isSupportedVersion = (version) => version === PROTOCOL_VERSION;
 
   const handleConnect = async (session, payload) => {
     if (!isObject(payload)) {
-      await sendError(session.transport, "bad_request", "Missing connect payload");
+      await sendError(
+        session.transport,
+        "bad_request",
+        "Missing connect payload",
+      );
       return;
     }
 
@@ -191,19 +209,32 @@ export const createSyncServer = ({ auth, authz, validation, store, clock }) => {
     try {
       identity = await auth.verifyToken(token);
     } catch {
-      await sendError(session.transport, "auth_failed", "Authentication failed");
+      await sendError(
+        session.transport,
+        "auth_failed",
+        "Authentication failed",
+      );
       await closeSession(session.transport.connectionId, "auth_failed");
       return;
     }
 
     if (!identity || identity.clientId !== clientId) {
-      await sendError(session.transport, "auth_failed", "Authenticated identity mismatch");
+      await sendError(
+        session.transport,
+        "auth_failed",
+        "Authenticated identity mismatch",
+      );
       await closeSession(session.transport.connectionId, "auth_failed");
       return;
     }
 
     session.state = "active";
     session.identity = identity;
+    log({
+      event: "connected",
+      connection_id: session.transport.connectionId,
+      client_id: clientId,
+    });
 
     const maxCommittedId = await store.getMaxCommittedId();
     await sendMessage(session.transport, "connected", {
@@ -218,23 +249,40 @@ export const createSyncServer = ({ auth, authz, validation, store, clock }) => {
         session.state === "active" &&
         session.transport.connectionId !== originConnectionId &&
         !session.syncInProgress &&
-        intersectsPartitions(session.activePartitions, committedEvent.partitions),
+        intersectsPartitions(
+          session.activePartitions,
+          committedEvent.partitions,
+        ),
     );
 
     for (const session of recipients) {
       await sendMessage(session.transport, "event_broadcast", committedEvent);
+      log({
+        event: "broadcast_sent",
+        connection_id: session.transport.connectionId,
+        id: committedEvent.id,
+        committed_id: committedEvent.committed_id,
+      });
     }
   };
 
   const handleSubmit = async (session, payload) => {
     if (!session.identity) {
-      await sendError(session.transport, "auth_failed", "Unauthenticated session");
+      await sendError(
+        session.transport,
+        "auth_failed",
+        "Unauthenticated session",
+      );
       await closeSession(session.transport.connectionId, "auth_failed");
       return;
     }
 
     if (!isObject(payload) || !Array.isArray(payload.events)) {
-      await sendError(session.transport, "bad_request", "Missing payload.events");
+      await sendError(
+        session.transport,
+        "bad_request",
+        "Missing payload.events",
+      );
       return;
     }
 
@@ -249,7 +297,11 @@ export const createSyncServer = ({ auth, authz, validation, store, clock }) => {
 
     const item = payload.events[0];
     if (!isObject(item)) {
-      await sendError(session.transport, "bad_request", "events[0] must be an object");
+      await sendError(
+        session.transport,
+        "bad_request",
+        "events[0] must be an object",
+      );
       return;
     }
 
@@ -258,12 +310,20 @@ export const createSyncServer = ({ auth, authz, validation, store, clock }) => {
     const event = item.event;
 
     if (typeof id !== "string" || id.length === 0) {
-      await sendError(session.transport, "bad_request", "events[0].id is required");
+      await sendError(
+        session.transport,
+        "bad_request",
+        "events[0].id is required",
+      );
       return;
     }
 
     if (!isObject(event)) {
-      await sendError(session.transport, "bad_request", "events[0].event is required");
+      await sendError(
+        session.transport,
+        "bad_request",
+        "events[0].event is required",
+      );
       return;
     }
 
@@ -279,6 +339,12 @@ export const createSyncServer = ({ auth, authz, validation, store, clock }) => {
             status_updated_at: clock.now(),
           },
         ],
+      });
+      log({
+        event: "submit_rejected",
+        connection_id: session.transport.connectionId,
+        id,
+        reason: partitionCheck.code,
       });
       return;
     }
@@ -300,6 +366,12 @@ export const createSyncServer = ({ auth, authz, validation, store, clock }) => {
             status_updated_at: clock.now(),
           },
         ],
+      });
+      log({
+        event: "submit_rejected",
+        connection_id: session.transport.connectionId,
+        id,
+        reason: "forbidden",
       });
       return;
     }
@@ -338,11 +410,17 @@ export const createSyncServer = ({ auth, authz, validation, store, clock }) => {
           },
         ],
       });
+      log({
+        event: "submit_rejected",
+        connection_id: session.transport.connectionId,
+        id,
+        reason: payloadError.code,
+      });
       return;
     }
 
     try {
-      const { committedEvent } = await store.commitOrGetExisting({
+      const { deduped, committedEvent } = await store.commitOrGetExisting({
         id,
         clientId: session.identity.clientId,
         partitions: normalizedPartitions,
@@ -359,6 +437,14 @@ export const createSyncServer = ({ auth, authz, validation, store, clock }) => {
             status_updated_at: committedEvent.status_updated_at,
           },
         ],
+      });
+      log({
+        event: "submit_committed",
+        connection_id: session.transport.connectionId,
+        id: committedEvent.id,
+        committed_id: committedEvent.committed_id,
+        client_id: committedEvent.client_id,
+        deduped,
       });
 
       await broadcastCommitted({
@@ -386,6 +472,12 @@ export const createSyncServer = ({ auth, authz, validation, store, clock }) => {
             },
           ],
         });
+        log({
+          event: "submit_rejected",
+          connection_id: session.transport.connectionId,
+          id,
+          reason: payloadError.code,
+        });
         return;
       }
 
@@ -395,7 +487,11 @@ export const createSyncServer = ({ auth, authz, validation, store, clock }) => {
 
   const handleSync = async (session, payload) => {
     if (!session.identity) {
-      await sendError(session.transport, "auth_failed", "Unauthenticated session");
+      await sendError(
+        session.transport,
+        "auth_failed",
+        "Unauthenticated session",
+      );
       await closeSession(session.transport.connectionId, "auth_failed");
       return;
     }
@@ -407,7 +503,11 @@ export const createSyncServer = ({ auth, authz, validation, store, clock }) => {
 
     const partitionCheck = validateSyncPartitions(payload.partitions);
     if (!partitionCheck.ok) {
-      await sendError(session.transport, partitionCheck.code, partitionCheck.message);
+      await sendError(
+        session.transport,
+        partitionCheck.code,
+        partitionCheck.message,
+      );
       return;
     }
 
@@ -417,12 +517,20 @@ export const createSyncServer = ({ auth, authz, validation, store, clock }) => {
       normalizedPartitions,
     );
     if (!authorized) {
-      await sendError(session.transport, "forbidden", "partition access denied");
+      await sendError(
+        session.transport,
+        "forbidden",
+        "partition access denied",
+      );
       return;
     }
 
     const rawSince = payload.since_committed_id;
-    if (typeof rawSince !== "number" || Number.isNaN(rawSince) || rawSince < 0) {
+    if (
+      typeof rawSince !== "number" ||
+      Number.isNaN(rawSince) ||
+      rawSince < 0
+    ) {
       await sendError(
         session.transport,
         "bad_request",
@@ -442,6 +550,14 @@ export const createSyncServer = ({ auth, authz, validation, store, clock }) => {
     if (session.syncToCommittedId === null) {
       session.syncToCommittedId = await store.getMaxCommittedId();
     }
+    log({
+      event: "sync_started",
+      connection_id: session.transport.connectionId,
+      partitions: normalizedPartitions,
+      since_committed_id: rawSince,
+      limit,
+      sync_to_committed_id: session.syncToCommittedId,
+    });
 
     const page = await store.listCommittedSince({
       partitions: normalizedPartitions,
@@ -456,6 +572,14 @@ export const createSyncServer = ({ auth, authz, validation, store, clock }) => {
       next_since_committed_id: page.nextSinceCommittedId,
       has_more: page.hasMore,
     });
+    log({
+      event: "sync_page_sent",
+      connection_id: session.transport.connectionId,
+      partitions: normalizedPartitions,
+      event_count: page.events.length,
+      next_since_committed_id: page.nextSinceCommittedId,
+      has_more: page.hasMore,
+    });
 
     if (!page.hasMore) {
       session.syncInProgress = false;
@@ -465,7 +589,11 @@ export const createSyncServer = ({ auth, authz, validation, store, clock }) => {
 
   const handleMessage = async (session, message) => {
     if (!isObject(message)) {
-      await sendError(session.transport, "bad_request", "Message must be an object");
+      await sendError(
+        session.transport,
+        "bad_request",
+        "Message must be an object",
+      );
       return;
     }
 
@@ -474,7 +602,11 @@ export const createSyncServer = ({ auth, authz, validation, store, clock }) => {
     const protocolVersion = message.protocol_version;
 
     if (typeof type !== "string" || !isObject(payload)) {
-      await sendError(session.transport, "bad_request", "Missing required envelope fields");
+      await sendError(
+        session.transport,
+        "bad_request",
+        "Missing required envelope fields",
+      );
       return;
     }
 
@@ -484,7 +616,10 @@ export const createSyncServer = ({ auth, authz, validation, store, clock }) => {
         "protocol_version_unsupported",
         "Unsupported protocol version",
       );
-      await closeSession(session.transport.connectionId, "protocol_version_unsupported");
+      await closeSession(
+        session.transport.connectionId,
+        "protocol_version_unsupported",
+      );
       return;
     }
 
@@ -512,7 +647,16 @@ export const createSyncServer = ({ auth, authz, validation, store, clock }) => {
         await handleSync(session, payload);
         return;
       default:
-        await sendError(session.transport, "bad_request", `Unknown message type: ${type}`);
+        await sendError(
+          session.transport,
+          "bad_request",
+          `Unknown message type: ${type}`,
+        );
+        log({
+          event: "bad_request",
+          connection_id: session.transport.connectionId,
+          message_type: type,
+        });
     }
   };
 
@@ -533,7 +677,15 @@ export const createSyncServer = ({ auth, authz, validation, store, clock }) => {
           try {
             await handleMessage(session, message);
           } catch {
-            await sendError(session.transport, "server_error", "Unexpected server error");
+            await sendError(
+              session.transport,
+              "server_error",
+              "Unexpected server error",
+            );
+            log({
+              event: "server_error",
+              connection_id: session.transport.connectionId,
+            });
             await closeSession(session.transport.connectionId, "server_error");
           }
         },

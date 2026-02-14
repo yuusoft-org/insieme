@@ -47,6 +47,7 @@ This file defines a minimal JS API surface aligned with the simplified core prot
  * @param {() => string} [deps.uuid]
  * @param {(item: SubmitItem) => void} [deps.validateLocalEvent]
  * @param {(input: { type: string, payload: any }) => void} [deps.onEvent]
+ * @param {(entry: object) => void} [deps.logger]
  * @returns {SyncClient}
  */
 export function createSyncClient(deps) {}
@@ -59,9 +60,9 @@ export function createSyncClient(deps) {}
  * @typedef {Object} SyncClient
  * @property {() => Promise<void>} start
  * @property {() => Promise<void>} stop
- * @property {(partitions: string[]) => Promise<void>} setPartitions
+ * @property {(partitions: string[], options?: { sinceCommittedId?: number }) => Promise<void>} setPartitions
  * @property {(item: { partitions: string[], event: { type: string, payload: object } }) => Promise<string>} submitEvent
- * @property {() => Promise<void>} syncNow
+ * @property {(options?: { sinceCommittedId?: number }) => Promise<void>} syncNow
  * @property {() => Promise<void>} flushDrafts
  */
 ```
@@ -101,6 +102,7 @@ Client runtime events:
  *   getMaxCommittedId: () => Promise<number>
  * }} deps.store
  * @param {{ now: () => number }} deps.clock
+ * @param {(entry: object) => void} [deps.logger]
  * @returns {SyncServer}
  */
 export function createSyncServer(deps) {}

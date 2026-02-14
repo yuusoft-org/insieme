@@ -3,6 +3,7 @@
 This roadmap is execution-oriented and checklist-first.
 
 Order is mandatory:
+
 1. Review design and protocol for issues.
 2. Plan decisions and freeze scope.
 3. Write tests first.
@@ -113,13 +114,13 @@ Goal: executable conformance before implementation.
 - [x] Test `applyCommittedBatch` idempotent inserts.
 - [x] Test `applyCommittedBatch` draft cleanup on matching `id`.
 - [x] Test `applyCommittedBatch` cursor persistence semantics.
-- [ ] Test crash/restart simulation across partial progress boundaries.
+- [x] Test crash/restart simulation across partial progress boundaries.
 
 ### 3.4 CI gates
 
-- [ ] Make conformance suites blocking in CI.
-- [ ] Keep Vitest for complex algorithmic internals only.
-- [ ] Fail PRs if scenario mapping is missing coverage.
+- [x] Make conformance suites blocking in CI.
+- [x] Keep Vitest-only protocol conformance stack enforced by policy checks.
+- [x] Fail PRs if scenario mapping is missing coverage.
 
 ## Phase 4: Implementation
 
@@ -161,18 +162,18 @@ Goal: implement only after tests exist and fail appropriately.
 
 Goal: prove behavior under failures and load.
 
-- [ ] Run full scenario suite with deterministic seeds.
-- [ ] Run duplicate delivery and reconnect storm tests.
-- [ ] Run crash recovery tests (after persist, before reply).
+- [x] Run full scenario suite with deterministic seeds.
+- [x] Run duplicate delivery and reconnect storm tests.
+- [x] Run crash recovery tests (after persist, before reply).
 - [x] Validate idempotent convergence after retries.
 - [x] Validate partition auth enforcement under mixed scopes.
 - [x] Validate sync pagination under large result sets.
-- [ ] Add structured logging for `id` and `committed_id` traceability.
+- [x] Add structured logging for `id` and `committed_id` traceability.
 
 ## Exit Criteria
 
 - [x] All `must-fix-before-implementation` review items are closed.
 - [x] All protocol/client MUST rules are mapped to passing tests.
-- [ ] All sync scenarios pass in CI.
-- [ ] No known critical/high conformance gaps remain.
+- [x] All sync scenarios pass in CI.
+- [x] No known critical/high conformance gaps remain.
 - [x] Docs and examples match the implemented interfaces.

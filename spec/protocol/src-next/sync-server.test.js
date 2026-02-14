@@ -57,7 +57,7 @@ const syncSession = async ({ session, partitions = ["P1"], since = 0 }) => {
 };
 
 describe("src-next createSyncServer", () => {
-  it("PT-SC-00: handshake + empty sync", async () => {
+  it("PT-SC-00 [SC-00]: handshake + empty sync", async () => {
     const { server } = createServer();
     const c1 = createConnectionTransport("c1");
     const s1 = server.attachConnection(c1);
@@ -80,7 +80,7 @@ describe("src-next createSyncServer", () => {
     });
   });
 
-  it("PT-SC-01: submit committed + peer broadcast only", async () => {
+  it("PT-SC-01 [SC-01][SC-10]: submit committed + peer broadcast only", async () => {
     const { server } = createServer({
       verifyToken: async (token) => ({
         clientId: token === "jwt-c2" ? "C2" : "C1",
@@ -112,7 +112,9 @@ describe("src-next createSyncServer", () => {
       },
     });
 
-    const c1SubmitResult = c1.sent.find((m) => m.type === "submit_events_result");
+    const c1SubmitResult = c1.sent.find(
+      (m) => m.type === "submit_events_result",
+    );
     expect(c1SubmitResult).toBeTruthy();
     expect(c1SubmitResult.payload.results[0]).toMatchObject({
       id: "evt-1",
@@ -131,7 +133,7 @@ describe("src-next createSyncServer", () => {
     });
   });
 
-  it("PT-SC-02: rejected submit on validation failure", async () => {
+  it("PT-SC-02 [SC-02]: rejected submit on validation failure", async () => {
     const { server } = createServer({
       validate: async () => {
         const error = new Error("invalid event");
@@ -170,7 +172,7 @@ describe("src-next createSyncServer", () => {
     });
   });
 
-  it("PT-SC-03: duplicate retry returns existing commit", async () => {
+  it("PT-SC-03 [SC-03]: duplicate retry returns existing commit", async () => {
     const { server } = createServer();
     const c1 = createConnectionTransport("c1");
     const s1 = server.attachConnection(c1);

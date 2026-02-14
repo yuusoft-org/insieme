@@ -72,7 +72,9 @@ export const createInMemorySyncStore = (startCommittedId = 0) => {
     }) => {
       const normalizedPartitions = normalizePartitionSet(partitions);
       const upperBound =
-        syncToCommittedId !== undefined ? syncToCommittedId : Number.POSITIVE_INFINITY;
+        syncToCommittedId !== undefined
+          ? syncToCommittedId
+          : Number.POSITIVE_INFINITY;
 
       const filtered = committed.filter(
         (event) =>

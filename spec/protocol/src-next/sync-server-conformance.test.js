@@ -84,7 +84,7 @@ const submitSession = async ({
 };
 
 describe("src-next createSyncServer conformance", () => {
-  it("rejects non-connect messages before handshake", async () => {
+  it("rejects non-connect messages before handshake [SC-18]", async () => {
     const { server } = createServer();
     const c1 = createConnectionTransport("c1");
     const s1 = server.attachConnection(c1);
@@ -98,7 +98,7 @@ describe("src-next createSyncServer conformance", () => {
     expect(c1.closed).toBe(false);
   });
 
-  it("rejects unsupported protocol_version and closes", async () => {
+  it("rejects unsupported protocol_version and closes [SC-18]", async () => {
     const { server } = createServer();
     const c1 = createConnectionTransport("c1");
     const s1 = server.attachConnection(c1);
@@ -116,7 +116,7 @@ describe("src-next createSyncServer conformance", () => {
     expect(c1.closed).toBe(true);
   });
 
-  it("closes when authentication fails", async () => {
+  it("closes when authentication fails [SC-18]", async () => {
     const { server } = createServer({
       verifyToken: async () => {
         throw new Error("invalid token");
@@ -134,7 +134,7 @@ describe("src-next createSyncServer conformance", () => {
     expect(c1.closed).toBe(true);
   });
 
-  it("closes when authenticated client identity mismatches connect client_id", async () => {
+  it("closes when authenticated client identity mismatches connect client_id [SC-18]", async () => {
     const { server } = createServer({
       verifyToken: async () => ({ clientId: "C-OTHER", claims: {} }),
     });
@@ -150,7 +150,7 @@ describe("src-next createSyncServer conformance", () => {
     expect(c1.closed).toBe(true);
   });
 
-  it("rejects unauthorized sync with forbidden and keeps session open", async () => {
+  it("rejects unauthorized sync with forbidden and keeps session open [SC-18]", async () => {
     const { server } = createServer({
       authorize: async (_identity, partitions) => partitions[0] !== "P-DENIED",
     });
@@ -168,7 +168,7 @@ describe("src-next createSyncServer conformance", () => {
     expect(c1.closed).toBe(false);
   });
 
-  it("rejects unauthorized submit as forbidden result", async () => {
+  it("rejects unauthorized submit as forbidden result [SC-18]", async () => {
     const { server } = createServer({ authorize: async () => false });
     const c1 = createConnectionTransport("c1");
     const s1 = server.attachConnection(c1);
@@ -177,7 +177,9 @@ describe("src-next createSyncServer conformance", () => {
     await syncSession({ session: s1 });
     await submitSession({ session: s1, id: "evt-1" });
 
-    const result = c1.sent.find((message) => message.type === "submit_events_result");
+    const result = c1.sent.find(
+      (message) => message.type === "submit_events_result",
+    );
     expect(result).toBeTruthy();
     expect(result.payload.results[0]).toMatchObject({
       id: "evt-1",
@@ -186,7 +188,7 @@ describe("src-next createSyncServer conformance", () => {
     });
   });
 
-  it("rejects duplicate retry when same id has different canonical payload", async () => {
+  it("rejects duplicate retry when same id has different canonical payload [SC-09]", async () => {
     const { server } = createServer();
     const c1 = createConnectionTransport("c1");
     const s1 = server.attachConnection(c1);
@@ -205,7 +207,9 @@ describe("src-next createSyncServer conformance", () => {
       event: { type: "event", payload: { schema: "x", data: { n: 2 } } },
     });
 
-    const results = c1.sent.filter((message) => message.type === "submit_events_result");
+    const results = c1.sent.filter(
+      (message) => message.type === "submit_events_result",
+    );
     expect(results).toHaveLength(2);
 
     expect(results[0].payload.results[0]).toMatchObject({
@@ -221,7 +225,7 @@ describe("src-next createSyncServer conformance", () => {
     });
   });
 
-  it("keeps sync cycle bounded and suppresses broadcasts until final page", async () => {
+  it("keeps sync cycle bounded and suppresses broadcasts until final page [SC-05]", async () => {
     const { server } = createServer({
       verifyToken: async (token) => ({
         clientId: token === "jwt-c2" ? "C2" : "C1",
@@ -241,11 +245,15 @@ describe("src-next createSyncServer conformance", () => {
     await connectSession({ session: s2, clientId: "C2", token: "jwt-c2" });
     await syncSession({ session: s2, partitions: ["P1"], since: 0, limit: 1 });
 
-    const firstSyncPage = c2.sent.find((message) =>
-      message.type === "sync_response" && message.payload.next_since_committed_id === 1,
+    const firstSyncPage = c2.sent.find(
+      (message) =>
+        message.type === "sync_response" &&
+        message.payload.next_since_committed_id === 1,
     );
     expect(firstSyncPage).toBeTruthy();
-    expect(firstSyncPage.payload.events.map((event) => event.id)).toEqual(["evt-1"]);
+    expect(firstSyncPage.payload.events.map((event) => event.id)).toEqual([
+      "evt-1",
+    ]);
     expect(firstSyncPage.payload.has_more).toBe(true);
 
     await submitSession({ session: s1, id: "evt-3", partitions: ["P1"] });
@@ -257,9 +265,13 @@ describe("src-next createSyncServer conformance", () => {
 
     await syncSession({ session: s2, partitions: ["P1"], since: 1, limit: 1 });
 
-    const syncResponses = c2.sent.filter((message) => message.type === "sync_response");
+    const syncResponses = c2.sent.filter(
+      (message) => message.type === "sync_response",
+    );
     expect(syncResponses).toHaveLength(2);
-    expect(syncResponses[1].payload.events.map((event) => event.id)).toEqual(["evt-2"]);
+    expect(syncResponses[1].payload.events.map((event) => event.id)).toEqual([
+      "evt-2",
+    ]);
     expect(syncResponses[1].payload.has_more).toBe(false);
     expect(syncResponses[1].payload.next_since_committed_id).toBe(2);
 
@@ -273,12 +285,17 @@ describe("src-next createSyncServer conformance", () => {
         has_more: false,
       },
     });
-    expect(finalSync.payload.events.map((event) => event.id)).toEqual(["evt-3"]);
+    expect(finalSync.payload.events.map((event) => event.id)).toEqual([
+      "evt-3",
+    ]);
   });
 
-  it("broadcasts only to sessions whose active partitions intersect", async () => {
+  it("broadcasts only to sessions whose active partitions intersect [SC-04]", async () => {
     const { server } = createServer({
-      verifyToken: async (token) => ({ clientId: token.toUpperCase(), claims: {} }),
+      verifyToken: async (token) => ({
+        clientId: token.toUpperCase(),
+        claims: {},
+      }),
     });
 
     const c1 = createConnectionTransport("c1");
@@ -301,8 +318,12 @@ describe("src-next createSyncServer conformance", () => {
       partitions: ["P1", "P2"],
     });
 
-    const c2Broadcasts = c2.sent.filter((message) => message.type === "event_broadcast");
-    const c3Broadcasts = c3.sent.filter((message) => message.type === "event_broadcast");
+    const c2Broadcasts = c2.sent.filter(
+      (message) => message.type === "event_broadcast",
+    );
+    const c3Broadcasts = c3.sent.filter(
+      (message) => message.type === "event_broadcast",
+    );
 
     expect(c2Broadcasts).toHaveLength(1);
     expect(c2Broadcasts[0].payload.id).toBe("evt-100");

@@ -201,7 +201,10 @@ describe("src-next createSyncClient", () => {
     await tick();
 
     expect(store.applySubmitResult).toHaveBeenCalledWith({
-      result: expect.objectContaining({ id: "evt-local-1", status: "rejected" }),
+      result: expect.objectContaining({
+        id: "evt-local-1",
+        status: "rejected",
+      }),
       fallbackClientId: "C1",
     });
   });
@@ -276,7 +279,9 @@ describe("src-next createSyncClient", () => {
     });
     await tick();
 
-    const syncCalls = transport.sent.filter((message) => message.type === "sync");
+    const syncCalls = transport.sent.filter(
+      (message) => message.type === "sync",
+    );
     expect(syncCalls).toHaveLength(2);
     expect(syncCalls[1].payload.since_committed_id).toBe(1);
     expect(store.applyCommittedBatch).toHaveBeenNthCalledWith(2, {
@@ -299,7 +304,9 @@ describe("src-next createSyncClient", () => {
       event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
     });
 
-    let submits = transport.sent.filter((message) => message.type === "submit_events");
+    let submits = transport.sent.filter(
+      (message) => message.type === "submit_events",
+    );
     expect(submits).toHaveLength(0);
 
     store.loadDraftsOrdered.mockResolvedValue([
@@ -323,7 +330,9 @@ describe("src-next createSyncClient", () => {
     });
     await tick();
 
-    submits = transport.sent.filter((message) => message.type === "submit_events");
+    submits = transport.sent.filter(
+      (message) => message.type === "submit_events",
+    );
     expect(submits).toHaveLength(1);
     expect(submits[0].payload.events[0].id).toBe("evt-local-1");
   });
@@ -333,7 +342,11 @@ describe("src-next createSyncClient", () => {
 
     transport.emit({
       type: "error",
-      payload: { code: "server_error", message: "Unexpected server error", details: {} },
+      payload: {
+        code: "server_error",
+        message: "Unexpected server error",
+        details: {},
+      },
     });
     await tick();
 
@@ -361,15 +374,35 @@ describe("src-next createSyncClient", () => {
     await tick();
 
     store.loadCursor.mockResolvedValue(42);
-    await client.setPartitions(["P2", "P3"]);
+    await client.setPartitions(["P2", "P3"], { sinceCommittedId: 42 });
 
-    const syncCalls = transport.sent.filter((message) => message.type === "sync");
+    const syncCalls = transport.sent.filter(
+      (message) => message.type === "sync",
+    );
     const latestSync = syncCalls[syncCalls.length - 1];
     expect(latestSync.payload).toMatchObject({
       partitions: ["P2", "P3"],
       since_committed_id: 42,
       limit: 500,
     });
+  });
+
+  it("syncNow supports sinceCommittedId override for full partition catch-up [SC-12]", async () => {
+    const client = await createStartedClient({ transport, store });
+
+    transport.emit({
+      type: "connected",
+      payload: { client_id: "C1", server_last_committed_id: 10 },
+    });
+    await tick();
+
+    await client.syncNow({ sinceCommittedId: 0 });
+
+    const syncCalls = transport.sent.filter(
+      (message) => message.type === "sync",
+    );
+    const latestSync = syncCalls[syncCalls.length - 1];
+    expect(latestSync.payload.since_committed_id).toBe(0);
   });
 
   it("uses durable cursor from store on startup sync", async () => {
@@ -382,7 +415,9 @@ describe("src-next createSyncClient", () => {
     });
     await tick();
 
-    const syncCalls = transport.sent.filter((message) => message.type === "sync");
+    const syncCalls = transport.sent.filter(
+      (message) => message.type === "sync",
+    );
     expect(syncCalls).toHaveLength(1);
     expect(syncCalls[0].payload.since_committed_id).toBe(77);
   });

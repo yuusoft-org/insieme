@@ -1,4 +1,4 @@
-name: Lint, Format and Test
+name: Reliability CI
 
 on:
   push:
@@ -13,17 +13,26 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+      - name: Setup Node
+        uses: actions/setup-node@v5
         with:
-          bun-version: 1.2.2
+          node-version: "22"
+          cache: "npm"
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: npm ci
 
       - name: Run lint
-        run: bun run lint
+        run: npm run lint
 
-      - name: Run tests
-        run: bun run test
+      - name: Validate scenario coverage mapping
+        run: npm run check:scenario-coverage
 
+      - name: Validate test stack policy
+        run: npm run check:test-stack
+
+      - name: Run conformance suite
+        run: npm run test:conformance
+
+      - name: Run reliability suite
+        run: npm run test:reliability

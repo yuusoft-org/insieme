@@ -17,8 +17,7 @@
   },
   "homepage": "https://github.com/yuusoft-org/insieme#readme",
   "type": "module",
-  "dependencies": {
-  },
+  "dependencies": {},
   "main": "./src-next/index.js",
   "exports": {
     ".": {
@@ -36,15 +35,20 @@
     "vitest": "^4.0.18"
   },
   "scripts": {
-    "lint": "oxlint && bunx prettier --check src-next",
-    "lint:fix": "bunx prettier --check --write src-next",
+    "lint": "oxlint && npx prettier --check src-next spec tasks/*.mjs README.md .github/workflows/ci.yaml",
+    "lint:fix": "npx prettier --write src-next spec tasks/*.mjs README.md .github/workflows/ci.yaml",
     "test": "vitest --run",
+    "test:conformance": "vitest --run spec/protocol/src-next/**/*.test.js",
+    "test:reliability": "vitest --run spec/protocol/src-next/reliability-integration.test.js spec/protocol/src-next/trace-logging.test.js",
     "test:coverage": "vitest --run --coverage",
-    "types": "bunx tsc"
+    "check:scenario-coverage": "node tasks/validate-scenario-coverage.mjs",
+    "check:test-stack": "node tasks/validate-test-stack.mjs",
+    "test:ci": "npm run check:test-stack && npm run check:scenario-coverage && npm run test",
+    "types": "npx tsc --noEmit"
   },
   "lint-staged": {
     "src-next/**/*.{js}": [
-      "oxlint && bunx prettier --write"
+      "oxlint && npx prettier --write"
     ]
   }
 }

@@ -31,6 +31,7 @@
  *   uuid?: () => string,
  *   validateLocalEvent?: (item: SubmitItem) => void,
  *   onEvent?: (input: { type: string, payload: any }) => void,
+ *   logger?: (entry: object) => void,
  * }} deps
  */
 export const createSyncClient = ({
@@ -43,6 +44,7 @@ export const createSyncClient = ({
   uuid = () => crypto.randomUUID(),
   validateLocalEvent = () => {},
   onEvent = () => {},
+  logger = () => {},
 }) => {
   let connected = false;
   let syncInFlight = false;
@@ -52,6 +54,7 @@ export const createSyncClient = ({
   let unsubscribeTransport = null;
 
   const emit = (type, payload) => onEvent({ type, payload });
+  const log = (entry) => logger({ component: "sync_client", ...entry });
 
   const send = (type, payload) =>
     transport.send({
@@ -65,6 +68,10 @@ export const createSyncClient = ({
     if (!connected || syncInFlight || stopped) return;
 
     const drafts = await store.loadDraftsOrdered();
+    log({
+      event: "flush_drafts",
+      draft_count: drafts.length,
+    });
     for (const draft of drafts) {
       await send("submit_events", {
         events: [
@@ -75,14 +82,26 @@ export const createSyncClient = ({
           },
         ],
       });
+      log({
+        event: "submit_sent",
+        id: draft.id,
+      });
     }
   };
 
-  const syncFromCursor = async () => {
+  const syncFromCursor = async (sinceOverride) => {
     if (stopped) return;
 
     syncInFlight = true;
-    const since = await store.loadCursor();
+    const since =
+      typeof sinceOverride === "number"
+        ? sinceOverride
+        : await store.loadCursor();
+    log({
+      event: "sync_requested",
+      partitions: activePartitions,
+      since_committed_id: since,
+    });
 
     await send("sync", {
       partitions: activePartitions,
@@ -93,6 +112,11 @@ export const createSyncClient = ({
 
   const onConnected = async (payload) => {
     connected = true;
+    log({
+      event: "connected",
+      client_id: payload?.client_id,
+      server_last_committed_id: payload?.server_last_committed_id,
+    });
     emit("connected", payload);
     await syncFromCursor();
   };
@@ -102,8 +126,18 @@ export const createSyncClient = ({
       await store.applySubmitResult({ result, fallbackClientId: clientId });
 
       if (result.status === "committed") {
+        log({
+          event: "submit_committed",
+          id: result.id,
+          committed_id: result.committed_id,
+        });
         emit("committed", result);
       } else {
+        log({
+          event: "submit_rejected",
+          id: result.id,
+          reason: result.reason,
+        });
         emit("rejected", result);
       }
     }
@@ -116,6 +150,12 @@ export const createSyncClient = ({
     });
 
     emit("sync_page", payload);
+    log({
+      event: "sync_page_applied",
+      event_count: (payload.events || []).length,
+      next_since_committed_id: payload.next_since_committed_id,
+      has_more: payload.has_more,
+    });
 
     if (payload.has_more) {
       await send("sync", {
@@ -128,16 +168,29 @@ export const createSyncClient = ({
 
     syncInFlight = false;
     emit("synced", { cursor: payload.next_since_committed_id });
+    log({
+      event: "synced",
+      cursor: payload.next_since_committed_id,
+    });
     await flushDraftQueue();
   };
 
   const onBroadcast = async (payload) => {
     await store.applyCommittedBatch({ events: [payload] });
+    log({
+      event: "broadcast_applied",
+      id: payload.id,
+      committed_id: payload.committed_id,
+    });
     emit("broadcast", payload);
   };
 
   const onError = async (payload) => {
     emit("error", payload);
+    log({
+      event: "error_received",
+      code: payload.code,
+    });
 
     if (
       payload.code === "auth_failed" ||
@@ -146,6 +199,10 @@ export const createSyncClient = ({
     ) {
       connected = false;
       await transport.disconnect();
+      log({
+        event: "transport_disconnected",
+        code: payload.code,
+      });
     }
   };
 
@@ -175,6 +232,7 @@ export const createSyncClient = ({
     start: async () => {
       await store.init();
       await transport.connect();
+      log({ event: "transport_connected" });
       unsubscribeTransport = transport.onMessage((message) => {
         void handleServerMessage(message);
       });
@@ -189,11 +247,12 @@ export const createSyncClient = ({
       stopped = true;
       if (unsubscribeTransport) unsubscribeTransport();
       await transport.disconnect();
+      log({ event: "stopped" });
     },
 
-    setPartitions: async (nextPartitions) => {
+    setPartitions: async (nextPartitions, options = {}) => {
       activePartitions = [...nextPartitions];
-      await syncFromCursor();
+      await syncFromCursor(options.sinceCommittedId);
     },
 
     submitEvent: async ({ partitions: eventPartitions, event }) => {
@@ -208,18 +267,26 @@ export const createSyncClient = ({
 
       validateLocalEvent(draft);
       await store.insertDraft(draft);
+      log({
+        event: "draft_inserted",
+        id,
+      });
 
       if (connected && !syncInFlight) {
         await send("submit_events", {
           events: [{ id, partitions: eventPartitions, event }],
+        });
+        log({
+          event: "submit_sent",
+          id,
         });
       }
 
       return id;
     },
 
-    syncNow: async () => {
-      await syncFromCursor();
+    syncNow: async (options = {}) => {
+      await syncFromCursor(options.sinceCommittedId);
     },
 
     flushDrafts: async () => {
