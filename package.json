@@ -1,6 +1,6 @@
 {
   "name": "insieme",
-  "version": "1.0.0-rc1",
+  "version": "1.0.0-rc2",
   "description": "An offline-first collaborative library with authoritative server for real-time data synchronization",
   "keywords": [
     "offline-first",
@@ -49,5 +49,8 @@
     "src/**/*.{js}": [
       "oxlint && npx prettier --write"
     ]
+  },
+  "dependencies": {
+    "immer": "^11.1.4"
   }
 }
