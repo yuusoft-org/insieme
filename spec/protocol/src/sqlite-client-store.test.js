@@ -30,7 +30,7 @@ describeSqlite("src createSqliteClientStore", () => {
     await store.init();
 
     const row = db._raw.prepare("PRAGMA user_version").get();
-    expect(row.user_version).toBe(1);
+    expect(row.user_version).toBe(2);
 
     db.close();
   });
@@ -138,5 +138,77 @@ describeSqlite("src createSqliteClientStore", () => {
     );
 
     db.close();
+  });
+
+  it("persists and backfills materialized views from committed events", async () => {
+    const dbPath = createDbPath();
+
+    {
+      const db = createSqliteDb(dbPath);
+      const store = createSqliteClientStore(db);
+      await store.init();
+
+      await store.applyCommittedBatch({
+        events: [
+          {
+            id: "evt-1",
+            client_id: "C1",
+            partitions: ["P1"],
+            committed_id: 1,
+            event: { type: "increment", payload: {} },
+            status_updated_at: 10,
+          },
+          {
+            id: "evt-2",
+            client_id: "C1",
+            partitions: ["P1", "P2"],
+            committed_id: 2,
+            event: { type: "increment", payload: {} },
+            status_updated_at: 11,
+          },
+        ],
+        nextCursor: 2,
+      });
+
+      db.close();
+    }
+
+    {
+      const db = createSqliteDb(dbPath);
+      const store = createSqliteClientStore(db, {
+        materializedViews: [
+          {
+            name: "counter",
+            version: "1",
+            initialState: () => ({ count: 0 }),
+            reduce: ({ state, event }) => ({
+              count: state.count + (event.event.type === "increment" ? 1 : 0),
+            }),
+          },
+        ],
+      });
+      await store.init();
+
+      expect(
+        await store.loadMaterializedView({
+          viewName: "counter",
+          partition: "P1",
+        }),
+      ).toEqual({ count: 2 });
+      expect(
+        await store.loadMaterializedView({
+          viewName: "counter",
+          partition: "P2",
+        }),
+      ).toEqual({ count: 1 });
+      expect(
+        await store.loadMaterializedView({
+          viewName: "counter",
+          partition: "P3",
+        }),
+      ).toEqual({ count: 0 });
+
+      db.close();
+    }
   });
 });

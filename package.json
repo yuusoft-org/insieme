@@ -49,5 +49,8 @@
     "src/**/*.{js}": [
       "oxlint && npx prettier --write"
     ]
+  },
+  "dependencies": {
+    "immer": "^11.1.4"
   }
 }

@@ -89,6 +89,46 @@ Your client store must implement:
 
 See `docs/reference/javascript-interface.md` and `docs/client/storage.md`.
 
+Optional materialized-view extension (supported by both `createInMemoryClientStore` and `createSqliteClientStore`):
+
+```js
+const reducer = createReducer({
+  schemaHandlers: {
+    "counter.increment": ({ state, data }) => {
+      state.count = (state.count || 0) + data.amount;
+    },
+  },
+});
+
+const store = createSqliteClientStore(db, {
+  materializedViews: [
+    {
+      name: "event-count",
+      version: "1",
+      initialState: () => ({ count: 0 }),
+      reduce: reducer, // optional: omit to use built-in reducer
+    },
+  ],
+});
+
+const p1View = await store.loadMaterializedView({
+  viewName: "event-count",
+  partition: "workspace-1",
+});
+```
+
+Materialized views are updated only when a committed event is newly inserted
+(deduped duplicates are ignored), and SQLite stores persist/rebuild them by
+view `name` + `version`.
+
+Operational guidance:
+
+- Keep view count small: usually `1-3`, generally up to `~10` lightweight views.
+- Reuse the same domain reducer logic you already use for state replay to avoid duplicated logic paths.
+- Built-in reducer is exported as `reduceEvent` (`set`, `unset`, `tree*` actions).
+- For `type: "event"` payloads, use `createReducer({ schemaHandlers })`.
+- Full guide: `docs/client/materialized-views.md`.
+
 Server runtime also supports optional inbound guardrails via `limits` (message rate and envelope size caps) for defense-in-depth reliability.
 For deployments that can re-check token/session validity on every active request, provide `auth.validateSession`.
 

@@ -46,6 +46,7 @@ Optional only when product requirements need them:
 
 - `snapshots` for faster local startup,
 - `rejected_drafts` for UI/audit history.
+- `materialized_view_state` + `materialized_view_offsets` for partitioned derived state caching.
 
 ## Query Patterns
 

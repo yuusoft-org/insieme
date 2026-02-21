@@ -65,7 +65,8 @@ export function createOfflineTransport(options) {}
  *   insertDraft: (item: SubmitItem) => Promise<void>,
  *   loadDraftsOrdered: () => Promise<SubmitItem[]>,
  *   applySubmitResult: (input: { result: object, fallbackClientId: string }) => Promise<void>,
- *   applyCommittedBatch: (input: { events: object[], nextCursor?: number }) => Promise<void>
+ *   applyCommittedBatch: (input: { events: object[], nextCursor?: number }) => Promise<void>,
+ *   loadMaterializedView?: (input: { viewName: string, partition: string }) => Promise<unknown>
  * }} deps.store
  * @param {string} deps.token
  * @param {string} deps.clientId
@@ -180,3 +181,36 @@ export function createSyncServer(deps) {}
 - Client store methods that mutate committed/draft/cursor state should be implemented as single DB transactions.
 - All behavior must match `docs/protocol/*.md`.
 - Client-generated `msg_id` values should be stable per outbound message for traceability.
+
+## Optional Materialized Views
+
+Client store adapters may expose an optional materialized-view API:
+
+- factory option: `materializedViews: [{ name, version?, initialState?, reduce? }]`
+- runtime method: `loadMaterializedView({ viewName, partition })`
+
+Reducer contract:
+
+```js
+reduce({
+  state,      // previous state for this (viewName, partition)
+  event,      // committed event shape from storage
+  partition,  // active partition being reduced
+}) => nextState;
+```
+
+The reducer runs only for newly inserted committed events (deduped replays are ignored).
+
+If `reduce` is omitted, stores use the built-in reducer (`reduceEvent`)
+for `set`, `unset`, `treePush`, `treeDelete`, `treeUpdate`, and `treeMove`.
+
+For schema-based `event` profile payloads (`event.type === "event"`), use
+`createReducer({ schemaHandlers: { "<schema>": fn } })`.
+Handlers run in an immer recipe context, so they may mutate `state` directly
+or return a replacement object.
+
+Operational guidance:
+
+- Keep materialized views to a small set (`1-3` typical, usually up to `~10` lightweight views).
+- Reuse your app's event apply reducer as the single source of truth for both replay and materialized views.
+- See `docs/client/materialized-views.md` for usage patterns.
