@@ -28,11 +28,10 @@ payload:
     - id: evt-uuid-4
       partitions: [P1]
       event:
-        type: treePush
+        type: event
         payload:
-          target: explorer
-          value: { id: DIFFERENT }
-          options: { parent: _root, position: first }
+          schema: explorer.folderCreated
+          data: { id: DIFFERENT, parent: _root, position: first }
 ```
 
 ### 2) Server rejects

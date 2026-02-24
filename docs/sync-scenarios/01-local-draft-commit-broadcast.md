@@ -29,11 +29,10 @@ payload:
     - id: evt-uuid-1
       partitions: [P1]
       event:
-        type: treePush
+        type: event
         payload:
-          target: explorer
-          value: { id: A }
-          options: { parent: _root, position: first }
+          schema: explorer.folderCreated
+          data: { id: A, parent: _root, position: first }
 ```
 
 ### 2) Server commits
@@ -65,11 +64,10 @@ payload:
   partitions: [P1]
   committed_id: 101
   event:
-    type: treePush
+    type: event
     payload:
-      target: explorer
-      value: { id: A }
-      options: { parent: _root, position: first }
+      schema: explorer.folderCreated
+      data: { id: A, parent: _root, position: first }
   status_updated_at: 1738451205000
 ```
 

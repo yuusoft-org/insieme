@@ -1,6 +1,6 @@
 {
   "name": "insieme",
-  "version": "1.0.0-rc2",
+  "version": "1.0.1",
   "description": "An offline-first collaborative library with authoritative server for real-time data synchronization",
   "keywords": [
     "offline-first",
@@ -32,8 +32,8 @@
     "vitest": "^4.0.18"
   },
   "scripts": {
-    "lint": "oxlint && npx prettier --check src spec tasks/*.mjs README.md .github/workflows/ci.yaml",
-    "lint:fix": "npx prettier --write src spec tasks/*.mjs README.md .github/workflows/ci.yaml",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
     "test": "vitest --run",
     "test:conformance": "vitest --run spec/protocol/src/**/*.test.js",
     "test:reliability": "vitest --run spec/protocol/src/reliability-integration.test.js spec/protocol/src/trace-logging.test.js",
@@ -47,7 +47,7 @@
   },
   "lint-staged": {
     "src/**/*.{js}": [
-      "oxlint && npx prettier --write"
+      "oxlint --fix"
     ]
   },
   "dependencies": {

@@ -178,14 +178,14 @@ Defer initially:
 
 ## Validation Scope (Minimal)
 
-- Validate event payload for the single active app mode only.
+- Validate event payload for the active application model only.
 - Reject unknown event types.
 - Reject malformed partition shape.
 - Keep server-authoritative validation.
 
 Defer:
 - dual-profile negotiation,
-- dynamic tree policy matrix in protocol core (keep as app-level extension doc).
+- app-specific policy matrices beyond schema validation.
 
 ## Client Runtime Simplification
 

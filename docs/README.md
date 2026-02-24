@@ -46,7 +46,6 @@ sequenceDiagram
 - `client/storage.md` - local storage model (`local_drafts` + `committed_events`).
 - `client/drafts.md` - draft lifecycle and idempotent apply rules.
 - `client/materialized-views.md` - optional derived-state views (sizing + reducer reuse pattern).
-- `client/tree-actions.md` - tree action semantics (app-level extension).
 - `../examples/real-client-usage/` - production-style client integration examples.
 
 ## Interface Reference

@@ -186,7 +186,7 @@ export function createSyncServer(deps) {}
 
 Client store adapters may expose an optional materialized-view API:
 
-- factory option: `materializedViews: [{ name, version?, initialState?, reduce? }]`
+- factory option: `materializedViews: [{ name, version?, initialState?, reduce }]`
 - runtime method: `loadMaterializedView({ viewName, partition })`
 
 Reducer contract:
@@ -201,13 +201,14 @@ reduce({
 
 The reducer runs only for newly inserted committed events (deduped replays are ignored).
 
-If `reduce` is omitted, stores use the built-in reducer (`reduceEvent`)
-for `set`, `unset`, `treePush`, `treeDelete`, `treeUpdate`, and `treeMove`.
+`reduce` is required for every materialized view definition.
 
 For schema-based `event` profile payloads (`event.type === "event"`), use
 `createReducer({ schemaHandlers: { "<schema>": fn } })`.
 Handlers run in an immer recipe context, so they may mutate `state` directly
 or return a replacement object.
+Default reducer fallback throws for unknown event types/schemas unless
+`fallback` is overridden.
 
 Operational guidance:
 

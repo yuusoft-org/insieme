@@ -17,7 +17,7 @@ For each `submit_events` request (core mode: one event):
 3. `id` is present and well-formed for your UUID policy.
 4. `partitions` are valid and authorized.
 5. Event payload passes app/domain validation.
-6. Event type is recognized by the active application mode.
+6. Event type/schema is recognized by the active application model.
 
 If any check fails, server **MUST** reject with:
 
@@ -29,7 +29,6 @@ If any check fails, server **MUST** reject with:
 
 The following are intentionally outside protocol core and should live in app-specific docs/modules:
 
-- strict tree target/action policy matrices,
 - profile negotiation rules,
 - model-version contract details,
 - custom semantic invariants beyond base protocol.

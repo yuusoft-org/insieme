@@ -1,5 +1,3 @@
-import { reduceEvent } from "./reducer.js";
-
 const cloneValue = (value) => {
   if (value === undefined) return undefined;
   return structuredClone(value);
@@ -52,17 +50,16 @@ export const normalizeMaterializedViewDefinitions = (definitions) => {
     }
     names.add(entry.name);
 
-    const reduce = entry.reduce === undefined ? reduceEvent : entry.reduce;
-    if (typeof reduce !== "function") {
+    if (typeof entry.reduce !== "function") {
       throw new Error(
-        `materializedViews[${index}].reduce must be a function when provided`,
+        `materializedViews[${index}].reduce must be a function`,
       );
     }
 
     return {
       name: entry.name,
       version: normalizeVersion(entry.version),
-      reduce,
+      reduce: entry.reduce,
       createInitialState: toStateFactory(entry),
     };
   });
