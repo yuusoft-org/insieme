@@ -28,11 +28,10 @@ payload:
     - id: evt-uuid-mp1
       partitions: [P1, P2]
       event:
-        type: treePush
+        type: event
         payload:
-          target: explorer
-          value: { id: X }
-          options: { parent: _root, position: first }
+          schema: explorer.folderCreated
+          data: { id: X, parent: _root, position: first }
 ```
 
 ### 2) Server commits and delivers

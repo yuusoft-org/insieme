@@ -248,49 +248,16 @@ describe("src createInMemoryClientStore", () => {
     ).toEqual({ count: 0 });
   });
 
-  it("uses built-in reducer when materialized view reduce is omitted", async () => {
-    const store = createInMemoryClientStore({
-      materializedViews: [
-        {
-          name: "tree-projection",
-          initialState: () => ({}),
-        },
-      ],
-    });
-
-    await store.applyCommittedBatch({
-      events: [
-        {
-          id: "evt-tree-1",
-          client_id: "C1",
-          partitions: ["P1"],
-          committed_id: 1,
-          event: {
-            type: "treePush",
-            payload: {
-              target: "explorer",
-              value: { id: "A", name: "Folder A", type: "folder" },
-              options: { parent: "_root", position: "first" },
-            },
+  it("requires explicit reduce in materialized view definitions", () => {
+    expect(() =>
+      createInMemoryClientStore({
+        materializedViews: [
+          {
+            name: "counter",
+            initialState: () => ({ count: 0 }),
           },
-          status_updated_at: 10,
-        },
-      ],
-      nextCursor: 1,
-    });
-
-    expect(
-      await store.loadMaterializedView({
-        viewName: "tree-projection",
-        partition: "P1",
+        ],
       }),
-    ).toEqual({
-      explorer: {
-        items: {
-          A: { id: "A", name: "Folder A", type: "folder" },
-        },
-        tree: [{ id: "A", children: [] }],
-      },
-    });
+    ).toThrow("reduce must be a function");
   });
 });

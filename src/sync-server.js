@@ -96,6 +96,46 @@ const validateSyncPartitions = (partitions) => {
 };
 
 /**
+ * @param {unknown} event
+ * @returns {{ ok: true, value: { type: "event", payload: { schema: string, data?: unknown } } } | { ok: false, code: string, message: string }}
+ */
+const validateDomainModelEvent = (event) => {
+  if (!isObject(event)) {
+    return {
+      ok: false,
+      code: "bad_request",
+      message: "events[0].event is required",
+    };
+  }
+
+  if (event.type !== "event") {
+    return {
+      ok: false,
+      code: "validation_failed",
+      message: "events[0].event.type must be 'event'",
+    };
+  }
+
+  if (!isObject(event.payload) || typeof event.payload.schema !== "string") {
+    return {
+      ok: false,
+      code: "validation_failed",
+      message: "events[0].event.payload.schema is required",
+    };
+  }
+
+  if (event.payload.schema.trim().length === 0) {
+    return {
+      ok: false,
+      code: "validation_failed",
+      message: "events[0].event.payload.schema must be a non-empty string",
+    };
+  }
+
+  return { ok: true, value: event };
+};
+
+/**
  * @param {{ send: (message: object) => Promise<void> }} transport
  * @param {string} type
  * @param {object} payload
@@ -510,14 +550,42 @@ export const createSyncServer = ({
       return;
     }
 
-    if (!isObject(event)) {
-      await sendError(
+    const domainEventCheck = validateDomainModelEvent(event);
+    if (!domainEventCheck.ok) {
+      if (domainEventCheck.code === "bad_request") {
+        await sendError(
+          session.transport,
+          "bad_request",
+          domainEventCheck.message,
+          {},
+          { msgId: context.msgId },
+        );
+        return;
+      }
+
+      await sendMessage(
         session.transport,
-        "bad_request",
-        "events[0].event is required",
-        {},
+        "submit_events_result",
+        {
+          results: [
+            {
+              id,
+              status: "rejected",
+              reason: domainEventCheck.code,
+              errors: [{ message: domainEventCheck.message }],
+              status_updated_at: clock.now(),
+            },
+          ],
+        },
         { msgId: context.msgId },
       );
+      log({
+        event: "submit_rejected",
+        connection_id: session.transport.connectionId,
+        id,
+        reason: domainEventCheck.code,
+        msg_id: context.msgId,
+      });
       return;
     }
 

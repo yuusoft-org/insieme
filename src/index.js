@@ -14,4 +14,4 @@ export {
   canonicalizeSubmitItem,
   intersectsPartitions,
 } from "./canonicalize.js";
-export { createReducer, reduceEvent } from "./reducer.js";
+export { createReducer } from "./reducer.js";

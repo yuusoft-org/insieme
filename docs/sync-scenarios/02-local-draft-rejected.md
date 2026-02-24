@@ -26,11 +26,10 @@ payload:
     - id: evt-uuid-rj1
       partitions: [P1]
       event:
-        type: treePush
+        type: event
         payload:
-          target: explorer
-          value: { id: A }
-          options: { parent: does-not-exist, position: first }
+          schema: explorer.folderCreated
+          data: { id: A, parent: does-not-exist, position: first }
 ```
 
 ### 2) Server rejects
@@ -45,7 +44,7 @@ payload:
       status: rejected
       reason: validation_failed
       errors:
-        - field: event.payload.options.parent
+        - field: event.payload.data.parent
           message: parent not found
       status_updated_at: 1738451205100
 ```

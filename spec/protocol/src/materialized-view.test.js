@@ -7,23 +7,26 @@ import {
 } from "../../../src/materialized-view.js";
 
 describe("src materialized-view", () => {
-  it("normalizes default reducer and version", () => {
+  it("normalizes explicit reducer and version", () => {
     const [definition] = normalizeMaterializedViewDefinitions([
       {
         name: "v1",
         initialState: { count: 0 },
+        reduce: ({ state, event }) => ({
+          count: (state.count || 0) + (event.event.type === "increment" ? 1 : 0),
+        }),
       },
     ]);
 
     expect(definition.version).toBe("1");
     const next = definition.reduce({
-      state: {},
+      state: { count: 0 },
       event: {
-        event: { type: "set", payload: { target: "x", value: 1 } },
+        event: { type: "increment", payload: {} },
       },
       partition: "P1",
     });
-    expect(next).toEqual({ x: 1 });
+    expect(next).toEqual({ count: 1 });
   });
 
   it("supports initialState value/function and deep-clone semantics", () => {
@@ -78,13 +81,19 @@ describe("src materialized-view", () => {
       "materializedViews[0] must be an object",
     );
     expect(() =>
-      normalizeMaterializedViewDefinitions([{ name: "", reduce: () => {} }]),
+      normalizeMaterializedViewDefinitions([{ name: "", reduce: () => ({}) }]),
     ).toThrow("name must be a non-empty string");
+    expect(() => normalizeMaterializedViewDefinitions([{ name: "x" }])).toThrow(
+      "reduce must be a function",
+    );
     expect(() =>
       normalizeMaterializedViewDefinitions([{ name: "x", reduce: "nope" }]),
     ).toThrow("reduce must be a function");
     expect(() =>
-      normalizeMaterializedViewDefinitions([{ name: "x" }, { name: "x" }]),
+      normalizeMaterializedViewDefinitions([
+        { name: "x", reduce: () => ({}) },
+        { name: "x", reduce: () => ({}) },
+      ]),
     ).toThrow("duplicate name");
   });
 });

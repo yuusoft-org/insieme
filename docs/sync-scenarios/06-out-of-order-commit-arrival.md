@@ -26,7 +26,7 @@ payload:
   id: evt-uuid-130
   committed_id: 130
   partitions: [P1]
-  event: { type: treePush, payload: { target: explorer, value: { id: B } } }
+  event: { type: event, payload: { schema: explorer.folderCreated, data: { id: B } } }
   status_updated_at: 1738451207000
 ```
 
@@ -40,7 +40,7 @@ payload:
   id: evt-uuid-129
   committed_id: 129
   partitions: [P1]
-  event: { type: treePush, payload: { target: explorer, value: { id: A } } }
+  event: { type: event, payload: { schema: explorer.folderCreated, data: { id: A } } }
   status_updated_at: 1738451206900
 ```
 

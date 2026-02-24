@@ -49,7 +49,7 @@ payload:
       length: 3
 ```
 
-- `target`: path to the text field in state (same targeting as `set`).
+- `target`: path to the text field in state (same targeting model as other domain events).
 - `base_committed_id`: the last `committed_id` the client had applied to this field when generating the operations. The server uses this to determine which concurrent operations to transform against.
 - `ops`: ordered list of OT operations.
 
@@ -72,10 +72,11 @@ The server is the single transform authority. Clients send raw operations; the s
 
 ### Merge strategy routing
 
-`textEdit` events use OT merge, not LWW. All other event types continue to use LWW.
+`textEdit` events use OT merge. All other domain events keep their existing
+app-defined merge behavior.
 
 The server must route merge strategy by event type:
-- `set`, `unset`, `treePush`, `treeDelete`, `treeUpdate`, `treeMove`: LWW (existing behavior).
+- existing domain events (`type: event`, schema-based): app-defined merge policy (often LWW).
 - `textEdit`: OT transform.
 
 This means the protocol needs a way for the server to distinguish merge strategies. Since it's determined by event type, no additional field is needed — `textEdit` implicitly means OT.
@@ -107,6 +108,8 @@ This follows the existing draft rebase pattern.
 
 ## Current recommendation
 
-Use Insieme for structural collaboration (tree profile for free-form structures and/or event profile for schema-driven commands) and integrate a dedicated text library (Yjs, Automerge) for character-level editing. This is the proven approach used by production apps like Notion and Linear.
+Use Insieme for schema-driven domain commands (`type: event`) and integrate a
+dedicated text library (Yjs, Automerge) for character-level editing. This is
+the proven approach used by production apps like Notion and Linear.
 
 If the integration complexity becomes a real problem for Insieme users, this design provides a path to native text support without requiring a second collaboration system. The protocol is designed to allow this extension — `textEdit` is a new event type with a different merge strategy, not a change to existing semantics.

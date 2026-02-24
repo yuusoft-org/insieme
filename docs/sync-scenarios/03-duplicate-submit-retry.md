@@ -27,11 +27,10 @@ payload:
     - id: evt-uuid-1
       partitions: [P1]
       event:
-        type: treePush
+        type: event
         payload:
-          target: explorer
-          value: { id: A }
-          options: { parent: _root, position: first }
+          schema: explorer.folderCreated
+          data: { id: A, parent: _root, position: first }
 ```
 
 ### 2) Server dedupes by `id`

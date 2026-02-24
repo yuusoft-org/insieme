@@ -51,25 +51,15 @@ Work is roughly:
 
 Keep reducers deterministic and fast.
 
-## Built-In Shared Reducer
+## Domain/Model Reducers
+
+Materialized views require an explicit reducer per view definition.
 
 The runtime exports:
 
-- `reduceEvent`
 - `createReducer(...)`
 
-`reduceEvent` handles:
-
-- `set`
-- `unset`
-- `treePush`
-- `treeDelete`
-- `treeUpdate`
-- `treeMove`
-
-If a materialized view definition omits `reduce`, stores use `reduceEvent`.
-
-`createReducer` also supports schema-driven `event` payloads:
+`createReducer` supports schema-driven `event` payloads:
 
 ```js
 const reducer = createReducer({
@@ -82,6 +72,8 @@ const reducer = createReducer({
 ```
 
 Handlers run through `immer`, so mutating `state` inside a handler is safe.
+By default, `createReducer` throws for unknown event types/schemas; pass
+`fallback` if you want a different policy.
 
 ## Reusing Existing Event Reducers
 

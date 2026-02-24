@@ -176,6 +176,42 @@ describe("src createSyncServer", () => {
     });
   });
 
+  it("rejects unsupported non-domain event types before app validation", async () => {
+    const { server } = createServer();
+    const c1 = createConnectionTransport("c1");
+    const s1 = server.attachConnection(c1);
+
+    await connectSession({ session: s1 });
+    await syncSession({ session: s1, partitions: ["P1"] });
+
+    await s1.receive({
+      type: "submit_events",
+      protocol_version: "1.0",
+      payload: {
+        events: [
+          {
+            id: "evt-invalid-1",
+            partitions: ["P1"],
+            event: {
+              type: "legacy.action",
+              payload: {
+                any: "value",
+              },
+            },
+          },
+        ],
+      },
+    });
+
+    const result = c1.sent.find((m) => m.type === "submit_events_result");
+    expect(result).toBeTruthy();
+    expect(result.payload.results[0]).toMatchObject({
+      id: "evt-invalid-1",
+      status: "rejected",
+      reason: "validation_failed",
+    });
+  });
+
   it("PT-SC-03 [SC-03]: duplicate retry returns existing commit", async () => {
     const { server } = createServer();
     const c1 = createConnectionTransport("c1");
