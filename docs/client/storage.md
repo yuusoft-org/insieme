@@ -36,9 +36,23 @@ Notes:
 
 - `id` is global event UUID and dedupe key.
 - `draft_clock` is local ordering only.
-- `draft_clock` and `committed_id` primary keys already provide ordered access paths in SQLite.
+- `draft_clock` and `committed_id` primary keys already provide ordered access paths in SQLite/LibSQL.
 - `partitions` should be stored as a normalized set representation.
-- Reference adapter: `src/sqlite-client-store.js` (`createSqliteClientStore`).
+- Reference adapters:
+  - `src/sqlite-client-store.js` (`createSqliteClientStore`)
+  - `src/libsql-client-store.js` (`createLibsqlClientStore`)
+
+## Adapter Wiring
+
+For `@libsql/client`:
+
+```js
+import { createClient } from "@libsql/client";
+import { createLibsqlClientStore } from "insieme";
+
+const client = createClient({ url: "file:./insieme-client.db" });
+const store = createLibsqlClientStore(client);
+```
 
 ## Optional Tables
 

@@ -26,6 +26,13 @@ Use this checklist before production rollout.
   Use `npm run ops:sqlite:integrity -- /path/to/client.db /path/to/server.db`.
 - [ ] Back up database files with tested restore process.
 
+## LibSQL / Turso Durability
+
+- [ ] Use `@libsql/client` adapters: `createLibsqlClientStore` and `createLibsqlSyncStore`.
+- [ ] Keep adapter `applyPragmas` disabled unless using local file URLs that support SQLite pragmas.
+- [ ] Validate idempotent retry behavior against network interruptions and transient remote failures.
+- [ ] Monitor database request latency and timeout/error rates in production telemetry.
+
 ## Crash Recovery
 
 - [ ] Verify restart behavior with pending drafts and persisted commits.
