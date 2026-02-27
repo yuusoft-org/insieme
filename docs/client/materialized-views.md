@@ -11,9 +11,10 @@ This document defines how to use the optional client-store materialized-view ext
 ## API
 
 Configure views when creating a client store:
+(`createSqliteClientStore(db, ...)` works the same way.)
 
 ```js
-const store = createSqliteClientStore(db, {
+const store = createLibsqlClientStore(client, {
   materializedViews: [
     {
       name: "event-count",
@@ -99,7 +100,7 @@ const reducer = createReducer({
   },
 });
 
-const store = createSqliteClientStore(db, {
+const store = createLibsqlClientStore(client, {
   materializedViews: [
     {
       name: "counter",
@@ -120,4 +121,4 @@ This avoids duplicating event logic between:
 
 - `version` defaults to `"1"` when omitted.
 - Change `version` when reducer semantics or state shape changes.
-- SQLite store will rebuild that view from committed events on next init.
+- SQLite and LibSQL stores rebuild that view from committed events on next init.

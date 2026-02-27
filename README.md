@@ -21,6 +21,8 @@ import {
   createInMemorySyncStore,
   createSqliteClientStore,
   createSqliteSyncStore,
+  createLibsqlClientStore,
+  createLibsqlSyncStore,
 } from "insieme";
 ```
 
@@ -31,6 +33,21 @@ import {
 - `createInMemorySyncStore`: test/dev committed-log store for server.
 - `createSqliteClientStore`: SQLite adapter for the client store interface.
 - `createSqliteSyncStore`: SQLite adapter for authoritative server committed log.
+- `createLibsqlClientStore`: `@libsql/client` adapter for the client store interface.
+- `createLibsqlSyncStore`: `@libsql/client` adapter for authoritative server committed log.
+
+## LibSQL Usage
+
+```js
+import { createClient } from "@libsql/client";
+import { createLibsqlClientStore, createLibsqlSyncStore } from "insieme";
+
+const clientDb = createClient({ url: "file:./insieme-client.db" });
+const serverDb = createClient({ url: "file:./insieme-server.db" });
+
+const clientStore = createLibsqlClientStore(clientDb);
+const syncStore = createLibsqlSyncStore(serverDb);
+```
 
 ## Quick Start
 

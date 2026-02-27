@@ -9,6 +9,11 @@ export {
 } from "./sqlite-client-store.js";
 export { createSqliteSyncStore } from "./sqlite-sync-store.js";
 export {
+  createLibsqlClientStore,
+  createLibsqlStore,
+} from "./libsql-client-store.js";
+export { createLibsqlSyncStore } from "./libsql-sync-store.js";
+export {
   deepSortKeys,
   normalizePartitionSet,
   canonicalizeSubmitItem,

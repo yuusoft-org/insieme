@@ -178,9 +178,20 @@ export function createSyncServer(deps) {}
 
 - Client submit path is single-item in core mode.
 - Server still receives `submit_events` wire message shape with one `events[0]` item.
-- Client store methods that mutate committed/draft/cursor state should be implemented as single DB transactions.
+- Client store methods that mutate committed/draft/cursor state should use single DB transactions when available, or equivalent idempotent/monotonic SQL semantics when transactional APIs are not available.
 - All behavior must match `docs/protocol/*.md`.
 - Client-generated `msg_id` values should be stable per outbound message for traceability.
+
+## Built-in Store Adapters
+
+Runtime exports include two persistence families:
+
+- SQLite-style DB object (`exec`, `prepare`, optional `transaction`):
+  - `createSqliteClientStore(db, options?)`
+  - `createSqliteSyncStore(db, options?)`
+- LibSQL client (`execute({ sql, args? })`):
+  - `createLibsqlClientStore(client, options?)`
+  - `createLibsqlSyncStore(client, options?)`
 
 ## Optional Materialized Views
 
