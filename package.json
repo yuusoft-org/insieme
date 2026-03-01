@@ -42,8 +42,8 @@
     "check:scenario-coverage": "node tasks/validate-scenario-coverage.mjs",
     "check:test-stack": "node tasks/validate-test-stack.mjs",
     "ops:sqlite:integrity": "node tasks/sqlite-integrity-check.mjs",
-    "test:ci": "bun run check:test-stack && bun run check:scenario-coverage && bun run test",
-    "types": "bunx tsc --noEmit"
+    "test:ci": "node tasks/validate-test-stack.mjs && node tasks/validate-scenario-coverage.mjs && vitest --run",
+    "types": "tsc --noEmit"
   },
   "lint-staged": {
     "src/**/*.{js}": [
