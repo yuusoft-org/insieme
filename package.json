@@ -17,10 +17,20 @@
   },
   "homepage": "https://github.com/yuusoft-org/insieme#readme",
   "type": "module",
-  "main": "./src/index.js",
+  "main": "./src/client.js",
   "exports": {
     ".": {
-      "import": "./src/index.js"
+      "browser": "./src/browser.js",
+      "import": "./src/client.js"
+    },
+    "./client": {
+      "import": "./src/client.js"
+    },
+    "./browser": {
+      "import": "./src/browser.js"
+    },
+    "./server": {
+      "import": "./src/server.js"
     }
   },
   "devDependencies": {

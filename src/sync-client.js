@@ -117,6 +117,7 @@ export const createSyncClient = ({
   let lastError = null;
   let reconnectInFlight = false;
   let reconnectAttempts = 0;
+  let connectedServerLastCommittedId = null;
   /** @type {null|(() => void)} */
   let unsubscribeTransport = null;
   /** @type {Promise<void>} */
@@ -263,6 +264,7 @@ export const createSyncClient = ({
   }) => {
     syncInFlight = false;
     connected = false;
+    connectedServerLastCommittedId = null;
     settleConnectWaiters(false, new Error(message));
     try {
       await transport.disconnect();
@@ -378,6 +380,11 @@ export const createSyncClient = ({
     connected = true;
     reconnectAttempts = 0;
     lastError = null;
+    connectedServerLastCommittedId = Number.isFinite(
+      Number(payload?.global_last_committed_id),
+    )
+      ? Math.max(0, Math.floor(Number(payload.global_last_committed_id)))
+      : null;
     settleConnectWaiters(true);
     log({
       event: "connected",
@@ -597,6 +604,7 @@ export const createSyncClient = ({
       if (unsubscribeTransport) unsubscribeTransport();
       await transport.disconnect();
       connected = false;
+      connectedServerLastCommittedId = null;
       syncInFlight = false;
       reconnectInFlight = false;
       reconnectAttempts = 0;
@@ -669,6 +677,7 @@ export const createSyncClient = ({
       syncInFlight,
       reconnectInFlight,
       reconnectAttempts,
+      connectedServerLastCommittedId,
       activePartitions: [...activePartitions],
       lastError: lastError ? { ...lastError } : null,
     }),

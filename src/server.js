@@ -1,5 +1,5 @@
-export { createSyncClient } from "./sync-client.js";
 export { createSyncServer } from "./sync-server.js";
+export { createSyncClient } from "./sync-client.js";
 export { createOfflineTransport } from "./offline-transport.js";
 export { createBrowserWebSocketTransport } from "./browser-websocket-transport.js";
 export { attachWsConnection } from "./ws-server-bridge.js";
