@@ -43,7 +43,7 @@
     "check:test-stack": "node tasks/validate-test-stack.mjs",
     "ops:sqlite:integrity": "node tasks/sqlite-integrity-check.mjs",
     "test:ci": "npm run check:test-stack && npm run check:scenario-coverage && npm run test",
-    "types": "npx tsc --noEmit"
+    "types": "tsc --noEmit"
   },
   "lint-staged": {
     "src/**/*.{js}": [

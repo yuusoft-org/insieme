@@ -30,7 +30,7 @@ jobs:
         run: npm run lint
 
       - name: Type check
-        run: npm run types
+        run: npm exec -- tsc --noEmit
 
       - name: Run required CI gates and full suite
         run: npm run test:ci
