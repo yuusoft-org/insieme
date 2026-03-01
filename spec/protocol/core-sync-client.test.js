@@ -77,7 +77,7 @@ describe("core sync client scenario mapping", () => {
 
     transport.emit({
       type: "connected",
-      payload: { client_id: "C1", server_last_committed_id: 0 },
+      payload: { client_id: "C1", global_last_committed_id: 0 },
     });
     await tick();
 
@@ -108,7 +108,7 @@ describe("core sync client scenario mapping", () => {
 
     transport.emit({
       type: "connected",
-      payload: { client_id: "C1", server_last_committed_id: 0 },
+      payload: { client_id: "C1", global_last_committed_id: 0 },
     });
     await tick();
 
@@ -165,7 +165,7 @@ describe("core sync client scenario mapping", () => {
 
     transport.emit({
       type: "connected",
-      payload: { client_id: "C1", server_last_committed_id: 0 },
+      payload: { client_id: "C1", global_last_committed_id: 0 },
     });
     await tick();
 
@@ -214,7 +214,7 @@ describe("core sync client scenario mapping", () => {
 
     transport.emit({
       type: "connected",
-      payload: { client_id: "C1", server_last_committed_id: 0 },
+      payload: { client_id: "C1", global_last_committed_id: 0 },
     });
     await tick();
 

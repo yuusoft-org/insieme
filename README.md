@@ -7,7 +7,7 @@ Core runtime exports live in `src` as the single implementation path.
 ## Install
 
 ```bash
-npm install insieme
+bun add insieme
 ```
 
 ## Exports
@@ -169,5 +169,5 @@ Real usage examples are in `examples/real-client-usage/`.
 Run SQLite integrity checks:
 
 ```bash
-npm run ops:sqlite:integrity -- /path/to/client.db /path/to/server.db
+bun run ops:sqlite:integrity -- /path/to/client.db /path/to/server.db
 ```

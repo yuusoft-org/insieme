@@ -96,46 +96,6 @@ const validateSyncPartitions = (partitions) => {
 };
 
 /**
- * @param {unknown} event
- * @returns {{ ok: true, value: { type: "event", payload: { schema: string, data?: unknown } } } | { ok: false, code: string, message: string }}
- */
-const validateDomainModelEvent = (event) => {
-  if (!isObject(event)) {
-    return {
-      ok: false,
-      code: "bad_request",
-      message: "events[0].event is required",
-    };
-  }
-
-  if (event.type !== "event") {
-    return {
-      ok: false,
-      code: "validation_failed",
-      message: "events[0].event.type must be 'event'",
-    };
-  }
-
-  if (!isObject(event.payload) || typeof event.payload.schema !== "string") {
-    return {
-      ok: false,
-      code: "validation_failed",
-      message: "events[0].event.payload.schema is required",
-    };
-  }
-
-  if (event.payload.schema.trim().length === 0) {
-    return {
-      ok: false,
-      code: "validation_failed",
-      message: "events[0].event.payload.schema must be a non-empty string",
-    };
-  }
-
-  return { ok: true, value: event };
-};
-
-/**
  * @param {{ send: (message: object) => Promise<void> }} transport
  * @param {string} type
  * @param {object} payload
@@ -209,6 +169,7 @@ const toErrorPayload = (reason, fallbackCode, fallbackMessage) => {
  *   store: {
  *     commitOrGetExisting: (input: { id: string, clientId: string, partitions: string[], event: object, now: number }) => Promise<{ deduped: boolean, committedEvent: { id: string, client_id: string, partitions: string[], committed_id: number, event: object, status_updated_at: number } }>,
  *     listCommittedSince: (input: { partitions: string[], sinceCommittedId: number, limit: number, syncToCommittedId?: number }) => Promise<{ events: object[], hasMore: boolean, nextSinceCommittedId: number }>,
+ *     getMaxCommittedIdForPartitions: (input: { partitions: string[] }) => Promise<number>,
  *     getMaxCommittedId: () => Promise<number>,
  *   },
  *   clock: { now: () => number },
@@ -455,7 +416,7 @@ export const createSyncServer = ({
       "connected",
       {
         client_id: clientId,
-        server_last_committed_id: maxCommittedId,
+        global_last_committed_id: maxCommittedId,
       },
       { msgId: context.msgId },
     );
@@ -550,42 +511,14 @@ export const createSyncServer = ({
       return;
     }
 
-    const domainEventCheck = validateDomainModelEvent(event);
-    if (!domainEventCheck.ok) {
-      if (domainEventCheck.code === "bad_request") {
-        await sendError(
-          session.transport,
-          "bad_request",
-          domainEventCheck.message,
-          {},
-          { msgId: context.msgId },
-        );
-        return;
-      }
-
-      await sendMessage(
+    if (!isObject(event)) {
+      await sendError(
         session.transport,
-        "submit_events_result",
-        {
-          results: [
-            {
-              id,
-              status: "rejected",
-              reason: domainEventCheck.code,
-              errors: [{ message: domainEventCheck.message }],
-              status_updated_at: clock.now(),
-            },
-          ],
-        },
+        "bad_request",
+        "events[0].event must be an object",
+        {},
         { msgId: context.msgId },
       );
-      log({
-        event: "submit_rejected",
-        connection_id: session.transport.connectionId,
-        id,
-        reason: domainEventCheck.code,
-        msg_id: context.msgId,
-      });
       return;
     }
 
@@ -659,7 +592,7 @@ export const createSyncServer = ({
           event,
           createdAt: clock.now(),
         },
-        { identity: session.identity },
+        { identity: session.identity, now: clock.now() },
       );
     } catch (err) {
       const payloadError = toErrorPayload(
@@ -860,7 +793,9 @@ export const createSyncServer = ({
     session.syncInProgress = true;
 
     if (session.syncToCommittedId === null) {
-      session.syncToCommittedId = await store.getMaxCommittedId();
+      session.syncToCommittedId = await store.getMaxCommittedIdForPartitions({
+        partitions: normalizedPartitions,
+      });
     }
     log({
       event: "sync_started",
@@ -887,6 +822,7 @@ export const createSyncServer = ({
         events: page.events,
         next_since_committed_id: page.nextSinceCommittedId,
         has_more: page.hasMore,
+        sync_to_committed_id: session.syncToCommittedId,
       },
       { msgId: context.msgId },
     );

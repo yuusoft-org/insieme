@@ -4,7 +4,7 @@ const paths = process.argv.slice(2);
 
 if (paths.length === 0) {
   console.error(
-    "Usage: npm run ops:sqlite:integrity -- <db-path> [<db-path> ...]",
+    "Usage: bun run ops:sqlite:integrity -- <db-path> [<db-path> ...]",
   );
   process.exit(2);
 }

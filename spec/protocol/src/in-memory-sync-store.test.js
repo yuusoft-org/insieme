@@ -95,4 +95,40 @@ describe("src createInMemorySyncStore", () => {
     expect(second.hasMore).toBe(false);
     expect(second.nextSinceCommittedId).toBe(2);
   });
+
+  it("returns partition-scoped max committed id", async () => {
+    const store = createInMemorySyncStore();
+
+    await store.commitOrGetExisting({
+      id: "evt-p1-1",
+      clientId: "C1",
+      partitions: ["P1"],
+      event: { type: "legacy.action", payload: { n: 1 } },
+      now: 1,
+    });
+    await store.commitOrGetExisting({
+      id: "evt-p2-1",
+      clientId: "C1",
+      partitions: ["P2"],
+      event: { type: "legacy.action", payload: { n: 2 } },
+      now: 2,
+    });
+    await store.commitOrGetExisting({
+      id: "evt-p1-2",
+      clientId: "C1",
+      partitions: ["P1"],
+      event: { type: "legacy.action", payload: { n: 3 } },
+      now: 3,
+    });
+
+    await expect(
+      store.getMaxCommittedIdForPartitions({ partitions: ["P1"] }),
+    ).resolves.toBe(3);
+    await expect(
+      store.getMaxCommittedIdForPartitions({ partitions: ["P2"] }),
+    ).resolves.toBe(2);
+    await expect(
+      store.getMaxCommittedIdForPartitions({ partitions: ["P9"] }),
+    ).resolves.toBe(0);
+  });
 });

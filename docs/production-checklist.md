@@ -23,7 +23,7 @@ Use this checklist before production rollout.
 - [ ] Use `synchronous=FULL` (or justify downgrade).
 - [ ] Set `busy_timeout` to a non-zero value for production.
 - [ ] Run periodic integrity checks (`PRAGMA integrity_check`).
-  Use `npm run ops:sqlite:integrity -- /path/to/client.db /path/to/server.db`.
+  Use `bun run ops:sqlite:integrity -- /path/to/client.db /path/to/server.db`.
 - [ ] Back up database files with tested restore process.
 
 ## LibSQL / Turso Durability
@@ -41,8 +41,8 @@ Use this checklist before production rollout.
 
 ## CI and Release Gates
 
-- [ ] `npm run lint` passes.
-- [ ] `npm run test:ci` passes.
-- [ ] `npm run test:coverage` passes threshold gates.
-- [ ] `npm run test:reliability:stress` passes repeated runs.
+- [ ] `bun run lint` passes.
+- [ ] `bun run test:ci` passes.
+- [ ] `bun run test:coverage` passes threshold gates.
+- [ ] `bun run test:reliability:stress` passes repeated runs.
 - [ ] Publish only from non-dirty tree and tagged commit.

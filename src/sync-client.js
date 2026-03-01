@@ -61,6 +61,18 @@ export const createSyncClient = ({
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 }) => {
   const isObject = (value) => !!value && typeof value === "object";
+  const isTransportDisconnectedError = (error) => {
+    const code = isObject(error) ? error.code : null;
+    if (code === "transport_disconnected") return true;
+    const message =
+      error instanceof Error ? error.message : String(error || "");
+    const normalizedMessage = message.toLowerCase();
+    return (
+      normalizedMessage.includes("disconnected") ||
+      normalizedMessage.includes("not connected") ||
+      normalizedMessage.includes("websocket is not connected")
+    );
+  };
 
   const reconnectPolicy = {
     enabled: reconnect.enabled === true,
@@ -300,20 +312,34 @@ export const createSyncClient = ({
       draft_count: drafts.length,
     });
     for (const draft of drafts) {
-      const outboundMsgId = await send("submit_events", {
-        events: [
-          {
-            id: draft.id,
-            partitions: draft.partitions,
-            event: draft.event,
-          },
-        ],
-      });
-      log({
-        event: "submit_sent",
-        id: draft.id,
-        msg_id: outboundMsgId,
-      });
+      try {
+        const outboundMsgId = await send("submit_events", {
+          events: [
+            {
+              id: draft.id,
+              partitions: draft.partitions,
+              event: draft.event,
+            },
+          ],
+        });
+        log({
+          event: "submit_sent",
+          id: draft.id,
+          msg_id: outboundMsgId,
+        });
+      } catch (error) {
+        const disconnected = isTransportDisconnectedError(error);
+        await handleTransportFailure({
+          code: disconnected
+            ? "transport_disconnected"
+            : "transport_send_failed",
+          message:
+            error instanceof Error ? error.message : "Transport send failed",
+          reconnectAllowed: reconnectPolicy.enabled,
+          emitError: true,
+        });
+        return;
+      }
     }
   };
 
@@ -350,7 +376,7 @@ export const createSyncClient = ({
     log({
       event: "connected",
       client_id: payload?.client_id,
-      server_last_committed_id: payload?.server_last_committed_id,
+      global_last_committed_id: payload?.global_last_committed_id,
       msg_id: messageContext.msgId,
     });
     emit("connected", payload);
@@ -393,6 +419,7 @@ export const createSyncClient = ({
       event_count: (payload.events || []).length,
       next_since_committed_id: payload.next_since_committed_id,
       has_more: payload.has_more,
+      sync_to_committed_id: payload.sync_to_committed_id,
       msg_id: messageContext.msgId,
     });
 
@@ -590,14 +617,27 @@ export const createSyncClient = ({
       });
 
       if (connected && !syncInFlight) {
-        const outboundMsgId = await send("submit_events", {
-          events: [{ id, partitions: eventPartitions, event }],
-        });
-        log({
-          event: "submit_sent",
-          id,
-          msg_id: outboundMsgId,
-        });
+        try {
+          const outboundMsgId = await send("submit_events", {
+            events: [{ id, partitions: eventPartitions, event }],
+          });
+          log({
+            event: "submit_sent",
+            id,
+            msg_id: outboundMsgId,
+          });
+        } catch (error) {
+          const disconnected = isTransportDisconnectedError(error);
+          await handleTransportFailure({
+            code: disconnected
+              ? "transport_disconnected"
+              : "transport_send_failed",
+            message:
+              error instanceof Error ? error.message : "Transport send failed",
+            reconnectAllowed: reconnectPolicy.enabled,
+            emitError: true,
+          });
+        }
       }
 
       return id;
