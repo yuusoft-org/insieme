@@ -30,7 +30,7 @@ describe("src createOfflineTransport", () => {
       msg_id: "offline-connect-1",
       payload: {
         client_id: "C1",
-        server_last_committed_id: 11,
+        global_last_committed_id: 11,
       },
     });
     expect(received[1]).toMatchObject({
@@ -41,6 +41,7 @@ describe("src createOfflineTransport", () => {
         events: [],
         next_since_committed_id: 4,
         has_more: false,
+        sync_to_committed_id: 4,
       },
     });
   });
@@ -60,7 +61,7 @@ describe("src createOfflineTransport", () => {
             protocol_version: "1.0",
             payload: {
               client_id: message.payload.client_id,
-              server_last_committed_id: 0,
+              global_last_committed_id: 0,
             },
           });
         }
@@ -225,7 +226,7 @@ describe("src createOfflineTransport", () => {
                 protocol_version: "1.0",
                 payload: {
                   client_id: message.payload.client_id,
-                  server_last_committed_id: 0,
+                  global_last_committed_id: 0,
                 },
               });
             }

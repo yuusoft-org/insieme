@@ -154,6 +154,15 @@ describeLibsql("src createLibsqlSyncStore", () => {
 
     expect(second.events.map((event) => event.id)).toEqual(["evt-p1-2"]);
     expect(second.nextSinceCommittedId).toBe(3);
+    await expect(
+      store.getMaxCommittedIdForPartitions({ partitions: ["P1"] }),
+    ).resolves.toBe(3);
+    await expect(
+      store.getMaxCommittedIdForPartitions({ partitions: ["P2"] }),
+    ).resolves.toBe(2);
+    await expect(
+      store.getMaxCommittedIdForPartitions({ partitions: ["P9"] }),
+    ).resolves.toBe(0);
 
     db.close();
   });

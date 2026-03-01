@@ -54,6 +54,8 @@ export const createSqliteSyncStore = (
   let listRangeStmt = null;
   /** @type {null|ReturnType<typeof db.prepare>} */
   let getMaxCommittedIdStmt = null;
+  /** @type {null|ReturnType<typeof db.prepare>} */
+  let getMaxCommittedIdForPartitionsStmt = null;
   /** @type {null|((arg: object) => { deduped: boolean, committedEvent: object })} */
   let commitTxn = null;
 
@@ -173,6 +175,17 @@ export const createSqliteSyncStore = (
     getMaxCommittedIdStmt = db.prepare(`
       SELECT COALESCE(MAX(committed_id), 0) AS max_committed_id
       FROM committed_events
+    `);
+
+    getMaxCommittedIdForPartitionsStmt = db.prepare(`
+      SELECT COALESCE(MAX(ce.committed_id), 0) AS max_committed_id
+      FROM committed_events ce
+      WHERE EXISTS (
+        SELECT 1
+        FROM json_each(ce.partitions) ce_p
+        JOIN json_each(@partitions_json) req_p
+          ON CAST(ce_p.value AS TEXT) = CAST(req_p.value AS TEXT)
+      )
     `);
 
     commitTxn = createTransaction(
@@ -319,6 +332,16 @@ export const createSqliteSyncStore = (
       ensureInitialized();
       const row = getMaxCommittedIdStmt.get();
       return parseIntSafe(row.max_committed_id, 0);
+    },
+
+    getMaxCommittedIdForPartitions: async ({ partitions }) => {
+      ensureInitialized();
+      const normalizedPartitions = normalizePartitionSet(partitions);
+      if (normalizedPartitions.length === 0) return 0;
+      const row = getMaxCommittedIdForPartitionsStmt.get({
+        partitions_json: JSON.stringify(normalizedPartitions),
+      });
+      return parseIntSafe(row?.max_committed_id, 0);
     },
   };
 };

@@ -79,7 +79,7 @@ describe("src createSyncClient", () => {
 
     transport.emit({
       type: "connected",
-      payload: { client_id: "C1", server_last_committed_id: 0 },
+      payload: { client_id: "C1", global_last_committed_id: 0 },
     });
     await tick();
 
@@ -110,7 +110,7 @@ describe("src createSyncClient", () => {
 
     transport.emit({
       type: "connected",
-      payload: { client_id: "C1", server_last_committed_id: 0 },
+      payload: { client_id: "C1", global_last_committed_id: 0 },
     });
     await tick();
 
@@ -167,7 +167,7 @@ describe("src createSyncClient", () => {
 
     transport.emit({
       type: "connected",
-      payload: { client_id: "C1", server_last_committed_id: 0 },
+      payload: { client_id: "C1", global_last_committed_id: 0 },
     });
     await tick();
 
@@ -216,7 +216,7 @@ describe("src createSyncClient", () => {
 
     transport.emit({
       type: "connected",
-      payload: { client_id: "C1", server_last_committed_id: 0 },
+      payload: { client_id: "C1", global_last_committed_id: 0 },
     });
     await tick();
 
@@ -250,12 +250,59 @@ describe("src createSyncClient", () => {
     expect(submits[1].payload.events[0].id).toBe("evt-retry-1");
   });
 
+  it("keeps draft queued when submit send fails due disconnect", async () => {
+    const events = [];
+    const client = await createStartedClient({
+      transport,
+      store,
+      clientOverrides: {
+        onEvent: (event) => events.push(event),
+      },
+    });
+
+    transport.emit({
+      type: "connected",
+      payload: { client_id: "C1", global_last_committed_id: 0 },
+    });
+    await tick();
+
+    transport.emit({
+      type: "sync_response",
+      payload: {
+        partitions: ["P1"],
+        events: [],
+        next_since_committed_id: 0,
+        has_more: false,
+      },
+    });
+    await tick();
+
+    transport.send.mockImplementation(async (message) => {
+      transport.sent.push(message);
+      if (message.type === "submit_events") {
+        throw new Error("websocket is not connected");
+      }
+    });
+
+    await expect(
+      client.submitEvent({
+        partitions: ["P1"],
+        event: { type: "legacy.action", payload: { n: 1 } },
+      }),
+    ).resolves.toBe("evt-local-1");
+
+    expect(store.insertDraft).toHaveBeenCalledTimes(1);
+    const errorEvent = events.find((entry) => entry.type === "error");
+    expect(errorEvent).toBeTruthy();
+    expect(errorEvent.payload.code).toBe("transport_disconnected");
+  });
+
   it("continues sync paging until has_more is false", async () => {
     await createStartedClient({ transport, store });
 
     transport.emit({
       type: "connected",
-      payload: { client_id: "C1", server_last_committed_id: 5 },
+      payload: { client_id: "C1", global_last_committed_id: 5 },
     });
     await tick();
 
@@ -297,7 +344,7 @@ describe("src createSyncClient", () => {
 
     transport.emit({
       type: "connected",
-      payload: { client_id: "C1", server_last_committed_id: 10 },
+      payload: { client_id: "C1", global_last_committed_id: 10 },
     });
     await tick();
 
@@ -360,7 +407,7 @@ describe("src createSyncClient", () => {
 
     transport.emit({
       type: "connected",
-      payload: { client_id: "C1", server_last_committed_id: 0 },
+      payload: { client_id: "C1", global_last_committed_id: 0 },
     });
     await tick();
 
@@ -394,7 +441,7 @@ describe("src createSyncClient", () => {
 
     transport.emit({
       type: "connected",
-      payload: { client_id: "C1", server_last_committed_id: 10 },
+      payload: { client_id: "C1", global_last_committed_id: 10 },
     });
     await tick();
 
@@ -413,7 +460,7 @@ describe("src createSyncClient", () => {
 
     transport.emit({
       type: "connected",
-      payload: { client_id: "C1", server_last_committed_id: 90 },
+      payload: { client_id: "C1", global_last_committed_id: 90 },
     });
     await tick();
 
@@ -429,7 +476,7 @@ describe("src createSyncClient", () => {
 
     transport.emit({
       type: "connected",
-      payload: { client_id: "C1", server_last_committed_id: 1 },
+      payload: { client_id: "C1", global_last_committed_id: 1 },
     });
     await tick();
 
@@ -519,7 +566,7 @@ describe("src createSyncClient", () => {
       if (message.type === "connect") {
         transport.emit({
           type: "connected",
-          payload: { client_id: "C1", server_last_committed_id: 0 },
+          payload: { client_id: "C1", global_last_committed_id: 0 },
         });
       }
       if (message.type === "sync") {
@@ -616,7 +663,7 @@ describe("src createSyncClient", () => {
     transport.emit({
       type: "connected",
       msg_id: "cli-msg-1",
-      payload: { client_id: "C1", server_last_committed_id: 0 },
+      payload: { client_id: "C1", global_last_committed_id: 0 },
     });
     await tick();
 

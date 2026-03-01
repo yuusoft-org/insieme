@@ -169,7 +169,7 @@ export const createOfflineTransport = (options = {}) => {
             msg_id: msgId,
             payload: {
               client_id: message.payload?.client_id,
-              server_last_committed_id: serverLastCommittedId,
+              global_last_committed_id: serverLastCommittedId,
             },
           });
           return;
@@ -192,6 +192,7 @@ export const createOfflineTransport = (options = {}) => {
               events: [],
               next_since_committed_id: nextSinceCommittedId,
               has_more: false,
+              sync_to_committed_id: nextSinceCommittedId,
             },
           });
           return;

@@ -104,6 +104,25 @@ export const createLibsqlSyncStore = (
     return parseIntSafe(row?.max_committed_id, 0);
   };
 
+  const getMaxCommittedIdForPartitionsInternal = async (partitions) => {
+    const normalizedPartitions = normalizePartitionSet(partitions);
+    if (normalizedPartitions.length === 0) return 0;
+    const row = await db.queryOne(
+      `
+        SELECT COALESCE(MAX(ce.committed_id), 0) AS max_committed_id
+        FROM committed_events ce
+        WHERE EXISTS (
+          SELECT 1
+          FROM json_each(ce.partitions) ce_p
+          JOIN json_each(?) req_p
+            ON CAST(ce_p.value AS TEXT) = CAST(req_p.value AS TEXT)
+        )
+      `,
+      [JSON.stringify(normalizedPartitions)],
+    );
+    return parseIntSafe(row?.max_committed_id, 0);
+  };
+
   const ensureInitialized = async () => {
     if (initialized) return;
     if (initPromise) return initPromise;
@@ -262,6 +281,11 @@ export const createLibsqlSyncStore = (
     getMaxCommittedId: async () => {
       await ensureInitialized();
       return getMaxCommittedIdInternal();
+    },
+
+    getMaxCommittedIdForPartitions: async ({ partitions }) => {
+      await ensureInitialized();
+      return getMaxCommittedIdForPartitionsInternal(partitions);
     },
   };
 };

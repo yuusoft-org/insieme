@@ -69,7 +69,7 @@ describe("src createSyncServer", () => {
     await connectSession({ session: s1 });
     expect(c1.sent[0]).toMatchObject({
       type: "connected",
-      payload: { client_id: "C1", server_last_committed_id: 0 },
+      payload: { client_id: "C1", global_last_committed_id: 0 },
     });
 
     await syncSession({ session: s1 });
@@ -80,6 +80,7 @@ describe("src createSyncServer", () => {
         events: [],
         next_since_committed_id: 0,
         has_more: false,
+        sync_to_committed_id: 0,
       },
     });
   });
@@ -176,7 +177,7 @@ describe("src createSyncServer", () => {
     });
   });
 
-  it("rejects unsupported non-domain event types before app validation", async () => {
+  it("accepts generic event objects and delegates domain semantics to app validation", async () => {
     const { server } = createServer();
     const c1 = createConnectionTransport("c1");
     const s1 = server.attachConnection(c1);
@@ -203,12 +204,12 @@ describe("src createSyncServer", () => {
       },
     });
 
-    const result = c1.sent.find((m) => m.type === "submit_events_result");
+    const result = c1.sent.find((message) => message.type === "submit_events_result");
     expect(result).toBeTruthy();
     expect(result.payload.results[0]).toMatchObject({
       id: "evt-invalid-1",
-      status: "rejected",
-      reason: "validation_failed",
+      status: "committed",
+      committed_id: 1,
     });
   });
 
@@ -245,6 +246,67 @@ describe("src createSyncServer", () => {
 
     expect(firstCommittedId).toBe(1);
     expect(secondCommittedId).toBe(1);
+  });
+
+  it("uses partition-scoped sync_to_committed_id", async () => {
+    const { server } = createServer();
+    const c1 = createConnectionTransport("c1");
+    const c2 = createConnectionTransport("c2");
+    const s1 = server.attachConnection(c1);
+    const s2 = server.attachConnection(c2);
+
+    await connectSession({ session: s1, clientId: "C1", token: "jwt" });
+    await connectSession({ session: s2, clientId: "C1", token: "jwt" });
+    await syncSession({ session: s1, partitions: ["P1"] });
+
+    await s1.receive({
+      type: "submit_events",
+      protocol_version: "1.0",
+      payload: {
+        events: [
+          {
+            id: "evt-p1-1",
+            partitions: ["P1"],
+            event: { type: "legacy.action", payload: { n: 1 } },
+          },
+        ],
+      },
+    });
+    await s1.receive({
+      type: "submit_events",
+      protocol_version: "1.0",
+      payload: {
+        events: [
+          {
+            id: "evt-p2-1",
+            partitions: ["P2"],
+            event: { type: "legacy.action", payload: { n: 2 } },
+          },
+        ],
+      },
+    });
+    await s1.receive({
+      type: "submit_events",
+      protocol_version: "1.0",
+      payload: {
+        events: [
+          {
+            id: "evt-p1-2",
+            partitions: ["P1"],
+            event: { type: "legacy.action", payload: { n: 3 } },
+          },
+        ],
+      },
+    });
+
+    await syncSession({ session: s2, partitions: ["P2"], since: 0 });
+
+    const syncResponse = c2.sent.find((message) => message.type === "sync_response");
+    expect(syncResponse).toBeTruthy();
+    expect(syncResponse.payload.events.map((event) => event.id)).toEqual([
+      "evt-p2-1",
+    ]);
+    expect(syncResponse.payload.sync_to_committed_id).toBe(2);
   });
 
   it("echoes request msg_id on direct responses and errors", async () => {
@@ -396,6 +458,7 @@ describe("src createSyncServer", () => {
             nextSinceCommittedId: sinceCommittedId,
           };
         },
+        getMaxCommittedIdForPartitions: async () => 0,
         getMaxCommittedId: async () => 0,
       },
       clock: { now: () => 1000 },

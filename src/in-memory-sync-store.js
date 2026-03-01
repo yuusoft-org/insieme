@@ -102,6 +102,23 @@ export const createInMemorySyncStore = (startCommittedId = 0) => {
       return committed[committed.length - 1].committed_id;
     },
 
+    /**
+     * @param {{ partitions: string[] }} input
+     */
+    getMaxCommittedIdForPartitions: async ({ partitions }) => {
+      const normalizedPartitions = normalizePartitionSet(partitions);
+      let maxCommittedId = 0;
+      for (const event of committed) {
+        if (!intersectsPartitions(normalizedPartitions, event.partitions)) {
+          continue;
+        }
+        if (event.committed_id > maxCommittedId) {
+          maxCommittedId = event.committed_id;
+        }
+      }
+      return maxCommittedId;
+    },
+
     _debug: {
       getCommitted: () => [...committed],
       getById: () => new Map(byId),
