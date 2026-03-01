@@ -4,7 +4,7 @@ import { createSqliteDb } from "./sqlite-db.js";
 const [dbPath, eventId] = process.argv.slice(2);
 if (!dbPath || !eventId) {
   process.stderr.write(
-    "usage: node crash-commit-sync-store.mjs <dbPath> <eventId>\n",
+    "usage: node crash-commit-sync-store.js <dbPath> <eventId>\n",
   );
   process.exit(2);
 }
