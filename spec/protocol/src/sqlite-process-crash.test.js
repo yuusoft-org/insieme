@@ -28,7 +28,7 @@ describeSqlite("src sqlite process crash safety", () => {
   it("keeps committed row durable across process crash and dedupes retry", async () => {
     const dbPath = createDbPath();
     const scriptPath = fileURLToPath(
-      new URL("./helpers/crash-commit-sync-store.mjs", import.meta.url),
+      new URL("./helpers/crash-commit-sync-store.js", import.meta.url),
     );
 
     const proc = spawnSync(

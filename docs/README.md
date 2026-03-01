@@ -31,6 +31,10 @@ sequenceDiagram
     S->>C2: event_broadcast
 ```
 
+## Product Scope
+
+- `product-scope.md` - scope boundary: opinionated library (not framework), with pluggable edges.
+
 ## Protocol Spec
 
 - `protocol/messages.md` - envelope and message schemas.

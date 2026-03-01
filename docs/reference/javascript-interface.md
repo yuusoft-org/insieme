@@ -103,6 +103,16 @@ export function createSyncClient(deps) {}
  * @property {(item: { partitions: string[], event: { type: string, payload: object } }) => Promise<string>} submitEvent
  * @property {(options?: { sinceCommittedId?: number }) => Promise<void>} syncNow
  * @property {() => Promise<void>} flushDrafts
+ * @property {() => {
+ *   started: boolean,
+ *   stopped: boolean,
+ *   connected: boolean,
+ *   syncInFlight: boolean,
+ *   reconnectInFlight: boolean,
+ *   reconnectAttempts: number,
+ *   activePartitions: string[],
+ *   lastError: null | { code?: string, message?: string, details?: object }
+ * }} getStatus
  */
 ```
 

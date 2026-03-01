@@ -718,4 +718,71 @@ describe("src createSyncClient", () => {
     );
     expect(committedLog.msg_id).toBe("cli-msg-3");
   });
+
+  it("exposes runtime status via getStatus", async () => {
+    const client = createSyncClient({
+      transport,
+      store,
+      token: "jwt",
+      clientId: "C1",
+      partitions: ["P1"],
+      now: () => 1000,
+      uuid: () => "evt-local-1",
+    });
+
+    expect(client.getStatus()).toMatchObject({
+      started: false,
+      stopped: false,
+      connected: false,
+      syncInFlight: false,
+      reconnectInFlight: false,
+      reconnectAttempts: 0,
+      activePartitions: ["P1"],
+      lastError: null,
+    });
+
+    await client.start();
+    expect(client.getStatus()).toMatchObject({
+      started: true,
+      stopped: false,
+      connected: false,
+      activePartitions: ["P1"],
+    });
+
+    transport.emit({
+      type: "connected",
+      payload: { client_id: "C1", global_last_committed_id: 0 },
+    });
+    await tick();
+
+    expect(client.getStatus()).toMatchObject({
+      connected: true,
+      lastError: null,
+    });
+
+    transport.emit({
+      type: "error",
+      payload: {
+        code: "bad_request",
+        message: "request malformed",
+        details: {},
+      },
+    });
+    await tick();
+
+    expect(client.getStatus()).toMatchObject({
+      connected: true,
+      lastError: {
+        code: "bad_request",
+        message: "request malformed",
+      },
+    });
+
+    await client.stop();
+    expect(client.getStatus()).toMatchObject({
+      started: false,
+      stopped: true,
+      connected: false,
+    });
+  });
 });
