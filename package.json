@@ -25,6 +25,7 @@
   },
   "devDependencies": {
     "@vitest/coverage-v8": "^4.0.18",
+    "fake-indexeddb": "^6.2.5",
     "husky": "^9.1.7",
     "lint-staged": "^16.2.6",
     "oxlint": "^1.26.0",
@@ -39,10 +40,10 @@
     "test:reliability": "vitest --run spec/protocol/src/reliability-integration.test.js spec/protocol/src/trace-logging.test.js",
     "test:reliability:stress": "for i in 1 2 3; do vitest --run spec/protocol/src/reliability-integration.test.js spec/protocol/src/sqlite-locking-chaos.test.js spec/protocol/src/sqlite-process-crash.test.js; done",
     "test:coverage": "vitest --run --coverage",
-    "check:scenario-coverage": "node tasks/validate-scenario-coverage.mjs",
-    "check:test-stack": "node tasks/validate-test-stack.mjs",
-    "ops:sqlite:integrity": "node tasks/sqlite-integrity-check.mjs",
-    "test:ci": "node tasks/validate-test-stack.mjs && node tasks/validate-scenario-coverage.mjs && vitest --run",
+    "check:scenario-coverage": "node tasks/validate-scenario-coverage.js",
+    "check:test-stack": "node tasks/validate-test-stack.js",
+    "ops:sqlite:integrity": "node tasks/sqlite-integrity-check.js",
+    "test:ci": "node tasks/validate-test-stack.js && node tasks/validate-scenario-coverage.js && vitest --run",
     "types": "tsc --noEmit"
   },
   "lint-staged": {

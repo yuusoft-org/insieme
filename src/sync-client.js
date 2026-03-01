@@ -114,6 +114,7 @@ export const createSyncClient = ({
   let syncInFlight = false;
   let stopped = false;
   let activePartitions = [...partitions];
+  let lastError = null;
   let reconnectInFlight = false;
   let reconnectAttempts = 0;
   /** @type {null|(() => void)} */
@@ -270,6 +271,10 @@ export const createSyncClient = ({
     }
 
     if (emitError) {
+      lastError = {
+        code,
+        message,
+      };
       emit("error", {
         code,
         message,
@@ -372,6 +377,7 @@ export const createSyncClient = ({
   const onConnected = async (payload, messageContext = {}) => {
     connected = true;
     reconnectAttempts = 0;
+    lastError = null;
     settleConnectWaiters(true);
     log({
       event: "connected",
@@ -465,6 +471,11 @@ export const createSyncClient = ({
   };
 
   const onError = async (payload, messageContext = {}) => {
+    lastError = payload || {
+      code: "unknown_error",
+      message: "Unknown server error",
+      details: {},
+    };
     log({
       event: "error_received",
       code: payload.code,
@@ -650,5 +661,16 @@ export const createSyncClient = ({
     flushDrafts: async () => {
       await flushDraftQueue();
     },
+
+    getStatus: () => ({
+      started,
+      stopped,
+      connected,
+      syncInFlight,
+      reconnectInFlight,
+      reconnectAttempts,
+      activePartitions: [...activePartitions],
+      lastError: lastError ? { ...lastError } : null,
+    }),
   };
 };

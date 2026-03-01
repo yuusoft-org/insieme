@@ -47,3 +47,11 @@ Decision date: February 13, 2026
 
 - Legacy repository API `partition` may be accepted only as compatibility shim.
 - New/updated protocol-facing and sync-facing APIs are `partitions`-first.
+
+## AD-008: Product Positioning Boundary
+
+- Insieme is an **opinionated library**, not an app framework.
+- Insieme owns protocol/runtime heavy-lifting and common infra boilerplate.
+- Insieme must keep domain/application architecture pluggable.
+- Insieme provides first-class common client providers, specifically SQLite via `@libsql/client` and IndexedDB.
+- See `docs/product-scope.md` for scope and acceptance criteria.
