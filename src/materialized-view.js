@@ -21,6 +21,53 @@ const normalizeVersion = (version) => {
   return String(version);
 };
 
+const DEFAULT_CHECKPOINT_MODE = "immediate";
+const DEFAULT_DEBOUNCE_MS = 250;
+const DEFAULT_INTERVAL_MS = 1000;
+
+const normalizePositiveInt = (value) => {
+  if (!Number.isInteger(value) || value <= 0) return undefined;
+  return value;
+};
+
+const normalizeCheckpoint = (checkpoint, index) => {
+  if (checkpoint === undefined) {
+    return {
+      mode: DEFAULT_CHECKPOINT_MODE,
+      debounceMs: DEFAULT_DEBOUNCE_MS,
+      intervalMs: DEFAULT_INTERVAL_MS,
+      maxDirtyEvents: undefined,
+    };
+  }
+
+  if (!checkpoint || typeof checkpoint !== "object" || Array.isArray(checkpoint)) {
+    throw new Error(
+      `materializedViews[${index}].checkpoint must be an object when provided`,
+    );
+  }
+
+  const mode = checkpoint.mode ?? DEFAULT_CHECKPOINT_MODE;
+  if (
+    mode !== "immediate" &&
+    mode !== "manual" &&
+    mode !== "debounce" &&
+    mode !== "interval"
+  ) {
+    throw new Error(
+      `materializedViews[${index}].checkpoint.mode must be immediate, manual, debounce, or interval`,
+    );
+  }
+
+  return {
+    mode,
+    debounceMs:
+      normalizePositiveInt(checkpoint.debounceMs) ?? DEFAULT_DEBOUNCE_MS,
+    intervalMs:
+      normalizePositiveInt(checkpoint.intervalMs) ?? DEFAULT_INTERVAL_MS,
+    maxDirtyEvents: normalizePositiveInt(checkpoint.maxDirtyEvents),
+  };
+};
+
 /**
  * @param {unknown} definitions
  * @returns {{ name: string, version: string, reduce: ({ state: unknown, event: object, partition: string }) => unknown, createInitialState: (partition: string) => unknown }[]}
@@ -61,6 +108,7 @@ export const normalizeMaterializedViewDefinitions = (definitions) => {
       version: normalizeVersion(entry.version),
       reduce: entry.reduce,
       createInitialState: toStateFactory(entry),
+      checkpoint: normalizeCheckpoint(entry.checkpoint, index),
     };
   });
 };

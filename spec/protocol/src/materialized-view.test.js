@@ -19,6 +19,12 @@ describe("src materialized-view", () => {
     ]);
 
     expect(definition.version).toBe("1");
+    expect(definition.checkpoint).toEqual({
+      mode: "immediate",
+      debounceMs: 250,
+      intervalMs: 1000,
+      maxDirtyEvents: undefined,
+    });
     const next = definition.reduce({
       state: { count: 0 },
       event: {
@@ -95,5 +101,19 @@ describe("src materialized-view", () => {
         { name: "x", reduce: () => ({}) },
       ]),
     ).toThrow("duplicate name");
+    expect(() =>
+      normalizeMaterializedViewDefinitions([
+        { name: "x", reduce: () => ({}), checkpoint: "bad" },
+      ]),
+    ).toThrow("checkpoint must be an object");
+    expect(() =>
+      normalizeMaterializedViewDefinitions([
+        {
+          name: "x",
+          reduce: () => ({}),
+          checkpoint: { mode: "eventually" },
+        },
+      ]),
+    ).toThrow("checkpoint.mode must be immediate, manual, debounce, or interval");
   });
 });

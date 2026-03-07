@@ -1,12 +1,16 @@
 import { canonicalizeSubmitItem } from "./canonicalize.js";
+import { normalizeMaterializedViewDefinitions } from "./materialized-view.js";
+import { createMaterializedViewRuntime } from "./materialized-view-runtime.js";
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 const DEFAULT_DB_NAME = "insieme-client";
 const META_STORE = "meta";
 const DRAFT_STORE = "drafts";
 const COMMITTED_STORE = "committed";
+const MATERIALIZED_VIEW_STORE = "materialized_view_state";
 const CURSOR_KEY = "cursor_committed_id";
 const NEXT_DRAFT_CLOCK_KEY = "next_draft_clock";
+const DEFAULT_MATERIALIZED_BACKFILL_CHUNK_SIZE = 256;
 
 const parseIntSafe = (value, fallback = 0) => {
   const parsed = Number.parseInt(value, 10);
@@ -53,6 +57,47 @@ const listAll = async (store) => {
   return items;
 };
 
+const listCommittedAfter = async (
+  committedStore,
+  sinceCommittedId,
+  limit,
+  IDBKeyRangeImpl,
+) => {
+  const index = committedStore.index("by_committed_id");
+  const keyRange = IDBKeyRangeImpl?.lowerBound(sinceCommittedId, true);
+  const items = [];
+
+  await new Promise((resolve, reject) => {
+    const request = index.openCursor(keyRange);
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (!cursor || items.length >= limit) {
+        resolve();
+        return;
+      }
+      items.push(cursor.value);
+      cursor.continue();
+    };
+    request.onerror = () =>
+      reject(request.error || new Error("indexeddb cursor failed"));
+  });
+
+  return items;
+};
+
+const loadLatestCommittedId = async (committedStore) => {
+  const index = committedStore.index("by_committed_id");
+  return new Promise((resolve, reject) => {
+    const request = index.openCursor(null, "prev");
+    request.onsuccess = () => {
+      const cursor = request.result;
+      resolve(cursor ? parseIntSafe(cursor.value.committed_id, 0) : 0);
+    };
+    request.onerror = () =>
+      reject(request.error || new Error("indexeddb cursor failed"));
+  });
+};
+
 const openDatabase = ({ indexedDB, dbName }) =>
   new Promise((resolve, reject) => {
     const request = indexedDB.open(dbName, SCHEMA_VERSION);
@@ -84,13 +129,22 @@ const openDatabase = ({ indexedDB, dbName }) =>
           unique: true,
         });
       }
+
+      if (!db.objectStoreNames.contains(MATERIALIZED_VIEW_STORE)) {
+        db.createObjectStore(MATERIALIZED_VIEW_STORE, {
+          keyPath: ["viewName", "partition"],
+        });
+      }
     };
     request.onsuccess = () => resolve(request.result);
   });
 
 export const createIndexedDbClientStore = ({
   indexedDB = globalThis.indexedDB,
+  IDBKeyRange = globalThis.IDBKeyRange,
   dbName = DEFAULT_DB_NAME,
+  materializedViews,
+  materializedBackfillChunkSize = DEFAULT_MATERIALIZED_BACKFILL_CHUNK_SIZE,
 } = {}) => {
   if (!indexedDB || typeof indexedDB.open !== "function") {
     throw new Error(
@@ -102,6 +156,10 @@ export const createIndexedDbClientStore = ({
   let db = null;
   /** @type {null|Promise<void>} */
   let initPromise = null;
+  let materializedViewRuntime;
+
+  const materializedViewDefinitions =
+    normalizeMaterializedViewDefinitions(materializedViews);
 
   const ensureInitialized = async () => {
     if (db) return;
@@ -121,6 +179,73 @@ export const createIndexedDbClientStore = ({
         });
       }
       await transactionDone(tx);
+
+      materializedViewRuntime = createMaterializedViewRuntime({
+        definitions: materializedViewDefinitions,
+        chunkSize: materializedBackfillChunkSize,
+        getLatestCommittedId: async () =>
+          withTransaction([COMMITTED_STORE], "readonly", async (stores) =>
+            loadLatestCommittedId(stores[COMMITTED_STORE]),
+          ),
+        listCommittedAfter: async ({ sinceCommittedId, limit }) =>
+          withTransaction([COMMITTED_STORE], "readonly", async (stores) => {
+            const rows = await listCommittedAfter(
+              stores[COMMITTED_STORE],
+              sinceCommittedId,
+              limit,
+              IDBKeyRange,
+            );
+            return rows.map((row) => ({
+              ...row,
+              partitions: [...row.partitions],
+            }));
+          }),
+        loadCheckpoint: async ({ viewName, partition }) =>
+          withTransaction([MATERIALIZED_VIEW_STORE], "readonly", async (stores) => {
+            const row = await requestToPromise(
+              stores[MATERIALIZED_VIEW_STORE].get([viewName, partition]),
+            );
+            if (!row) return undefined;
+            return {
+              viewVersion: row.viewVersion,
+              lastCommittedId: parseIntSafe(row.lastCommittedId, 0),
+              value: row.value,
+              updatedAt: parseIntSafe(row.updatedAt, 0),
+            };
+          }),
+        saveCheckpoint: async ({
+          viewName,
+          viewVersion,
+          partition,
+          value,
+          lastCommittedId,
+          updatedAt,
+        }) => {
+          await withTransaction(
+            [MATERIALIZED_VIEW_STORE],
+            "readwrite",
+            async (stores) => {
+              stores[MATERIALIZED_VIEW_STORE].put({
+                viewName,
+                partition,
+                viewVersion,
+                lastCommittedId,
+                value: structuredClone(value),
+                updatedAt,
+              });
+            },
+          );
+        },
+        deleteCheckpoint: async ({ viewName, partition }) => {
+          await withTransaction(
+            [MATERIALIZED_VIEW_STORE],
+            "readwrite",
+            async (stores) => {
+              stores[MATERIALIZED_VIEW_STORE].delete([viewName, partition]);
+            },
+          );
+        },
+      });
     })();
 
     try {
@@ -196,6 +321,7 @@ export const createIndexedDbClientStore = ({
 
     committedStore.add({
       ...event,
+      partitions: [...event.partitions],
       canonical,
     });
     return true;
@@ -253,7 +379,7 @@ export const createIndexedDbClientStore = ({
       }),
 
     applySubmitResult: async ({ result, fallbackClientId }) => {
-      await withTransaction(
+      const committedEvent = await withTransaction(
         [DRAFT_STORE, COMMITTED_STORE],
         "readwrite",
         async (stores) => {
@@ -261,25 +387,39 @@ export const createIndexedDbClientStore = ({
           const committedStore = stores[COMMITTED_STORE];
           const committedIdIndex = committedStore.index("by_committed_id");
           const draft = await requestToPromise(draftStore.get(result.id));
+          let insertedEvent;
 
           if (result.status === "committed" && draft) {
-            await assertCommittedInvariant(committedStore, committedIdIndex, {
+            const committed = {
               committed_id: result.committed_id,
               id: draft.id,
               client_id: draft.clientId || fallbackClientId,
               partitions: [...draft.partitions],
               event: draft.event,
               status_updated_at: result.status_updated_at,
-            });
+            };
+            const inserted = await assertCommittedInvariant(
+              committedStore,
+              committedIdIndex,
+              committed,
+            );
+            if (inserted) {
+              insertedEvent = committed;
+            }
           }
 
           draftStore.delete(result.id);
+          return insertedEvent;
         },
       );
+
+      if (committedEvent) {
+        await materializedViewRuntime.onCommittedEvent(committedEvent);
+      }
     },
 
     applyCommittedBatch: async ({ events, nextCursor }) => {
-      await withTransaction(
+      const insertedEvents = await withTransaction(
         [META_STORE, DRAFT_STORE, COMMITTED_STORE],
         "readwrite",
         async (stores) => {
@@ -287,9 +427,17 @@ export const createIndexedDbClientStore = ({
           const draftStore = stores[DRAFT_STORE];
           const committedStore = stores[COMMITTED_STORE];
           const committedIdIndex = committedStore.index("by_committed_id");
+          const inserted = [];
 
           for (const event of events) {
-            await assertCommittedInvariant(committedStore, committedIdIndex, event);
+            const wasInserted = await assertCommittedInvariant(
+              committedStore,
+              committedIdIndex,
+              event,
+            );
+            if (wasInserted) {
+              inserted.push(event);
+            }
             draftStore.delete(event.id);
           }
 
@@ -302,8 +450,51 @@ export const createIndexedDbClientStore = ({
               Math.max(currentCursor, parsedNextCursor),
             );
           }
+
+          return inserted;
         },
       );
+
+      for (const event of insertedEvents) {
+        await materializedViewRuntime.onCommittedEvent(event);
+      }
+    },
+
+    loadMaterializedView: async ({ viewName, partition }) => {
+      await ensureInitialized();
+      return materializedViewRuntime.loadMaterializedView({
+        viewName,
+        partition,
+      });
+    },
+
+    loadMaterializedViews: async ({ viewName, partitions }) => {
+      await ensureInitialized();
+      return materializedViewRuntime.loadMaterializedViews({
+        viewName,
+        partitions,
+      });
+    },
+
+    evictMaterializedView: async ({ viewName, partition }) => {
+      await ensureInitialized();
+      await materializedViewRuntime.evictMaterializedView({
+        viewName,
+        partition,
+      });
+    },
+
+    invalidateMaterializedView: async ({ viewName, partition }) => {
+      await ensureInitialized();
+      await materializedViewRuntime.invalidateMaterializedView({
+        viewName,
+        partition,
+      });
+    },
+
+    flushMaterializedViews: async () => {
+      await ensureInitialized();
+      await materializedViewRuntime.flushMaterializedViews();
     },
 
     _debug: {

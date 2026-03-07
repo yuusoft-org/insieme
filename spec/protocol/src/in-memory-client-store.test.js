@@ -248,6 +248,77 @@ describe("src createInMemoryClientStore", () => {
     ).toEqual({ count: 0 });
   });
 
+  it("supports batch loads, eviction, and invalidation for materialized views", async () => {
+    const store = createInMemoryClientStore({
+      materializedViews: [
+        {
+          name: "counter",
+          checkpoint: { mode: "manual" },
+          initialState: () => ({ count: 0 }),
+          reduce: ({ state, event }) => ({
+            count: state.count + (event.event.type === "increment" ? 1 : 0),
+          }),
+        },
+      ],
+    });
+
+    await store.applyCommittedBatch({
+      events: [
+        {
+          id: "evt-1",
+          client_id: "C1",
+          partitions: ["P1"],
+          committed_id: 1,
+          event: { type: "increment", payload: {} },
+          status_updated_at: 10,
+        },
+        {
+          id: "evt-2",
+          client_id: "C1",
+          partitions: ["P1", "P2"],
+          committed_id: 2,
+          event: { type: "increment", payload: {} },
+          status_updated_at: 11,
+        },
+      ],
+      nextCursor: 2,
+    });
+
+    expect(
+      await store.loadMaterializedViews({
+        viewName: "counter",
+        partitions: ["P1", "P2"],
+      }),
+    ).toEqual({
+      P1: { count: 2 },
+      P2: { count: 1 },
+    });
+
+    await store.evictMaterializedView({
+      viewName: "counter",
+      partition: "P1",
+    });
+    expect(
+      await store.loadMaterializedView({
+        viewName: "counter",
+        partition: "P1",
+      }),
+    ).toEqual({ count: 2 });
+
+    await store.invalidateMaterializedView({
+      viewName: "counter",
+      partition: "P1",
+    });
+    expect(
+      await store.loadMaterializedView({
+        viewName: "counter",
+        partition: "P1",
+      }),
+    ).toEqual({ count: 2 });
+
+    await store.flushMaterializedViews();
+  });
+
   it("requires explicit reduce in materialized view definitions", () => {
     expect(() =>
       createInMemoryClientStore({

@@ -1,14 +1,10 @@
 // SQLite adapter for the simplified client store interface.
 // Expects a better-sqlite3 style DB object (exec/prepare/transaction APIs).
 
-import {
-  applyMaterializedViewReducer,
-  cloneMaterializedViewValue,
-  createMaterializedViewInitialState,
-  normalizeMaterializedViewDefinitions,
-} from "./materialized-view.js";
+import { normalizeMaterializedViewDefinitions } from "./materialized-view.js";
+import { createMaterializedViewRuntime } from "./materialized-view-runtime.js";
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const DEFAULT_MATERIALIZED_BACKFILL_CHUNK_SIZE = 512;
 
 const createTransaction = (db, fn) => {
@@ -52,12 +48,6 @@ export const createSqliteClientStore = (
   let initialized = false;
   const materializedViewDefinitions =
     normalizeMaterializedViewDefinitions(materializedViews);
-  const materializedDefinitionByName = new Map(
-    materializedViewDefinitions.map((definition) => [
-      definition.name,
-      definition,
-    ]),
-  );
 
   /** @type {null|ReturnType<typeof db.prepare>} */
   let loadCursorStmt = null;
@@ -80,22 +70,19 @@ export const createSqliteClientStore = (
   /** @type {null|ReturnType<typeof db.prepare>} */
   let listCommittedAfterStmt = null;
   /** @type {null|ReturnType<typeof db.prepare>} */
+  let getLatestCommittedIdStmt = null;
+  /** @type {null|ReturnType<typeof db.prepare>} */
   let getMaterializedViewStateStmt = null;
   /** @type {null|ReturnType<typeof db.prepare>} */
   let upsertMaterializedViewStateStmt = null;
   /** @type {null|ReturnType<typeof db.prepare>} */
   let deleteMaterializedViewStateStmt = null;
-  /** @type {null|ReturnType<typeof db.prepare>} */
-  let getMaterializedViewOffsetStmt = null;
-  /** @type {null|ReturnType<typeof db.prepare>} */
-  let upsertMaterializedViewOffsetStmt = null;
 
-  /** @type {null|((arg: { result: object, fallbackClientId: string }) => void)} */
+  /** @type {null|((arg: { result: object, fallbackClientId: string }) => object|undefined)} */
   let applySubmitResultTxn = null;
-  /** @type {null|((arg: { events: object[], nextCursor?: number }) => void)} */
+  /** @type {null|((arg: { events: object[], nextCursor?: number }) => object[])} */
   let applyCommittedBatchTxn = null;
-  /** @type {null|(() => void)} */
-  let catchUpMaterializedViewsTxn = null;
+  let materializedViewRuntime;
 
   const runPragmas = () => {
     if (!applyPragmas) return;
@@ -157,6 +144,34 @@ export const createSqliteClientStore = (
           view_version TEXT NOT NULL,
           last_committed_id INTEGER NOT NULL
         );
+      `);
+    },
+    () => {
+      db.exec(`
+        ALTER TABLE materialized_view_state
+        ADD COLUMN view_version TEXT NOT NULL DEFAULT '1';
+
+        ALTER TABLE materialized_view_state
+        ADD COLUMN last_committed_id INTEGER NOT NULL DEFAULT 0;
+
+        UPDATE materialized_view_state
+        SET
+          view_version = COALESCE(
+            (
+              SELECT materialized_view_offsets.view_version
+              FROM materialized_view_offsets
+              WHERE materialized_view_offsets.view_name = materialized_view_state.view_name
+            ),
+            '1'
+          ),
+          last_committed_id = COALESCE(
+            (
+              SELECT materialized_view_offsets.last_committed_id
+              FROM materialized_view_offsets
+              WHERE materialized_view_offsets.view_name = materialized_view_state.view_name
+            ),
+            0
+          );
       `);
     },
   ];
@@ -230,100 +245,6 @@ export const createSqliteClientStore = (
     saveCursorStmt.run({ value: String(effectiveCursor) });
   };
 
-  const getMaterializedDefinition = (viewName) => {
-    const definition = materializedDefinitionByName.get(viewName);
-    if (!definition) {
-      throw new Error(`unknown materialized view '${viewName}'`);
-    }
-    return definition;
-  };
-
-  const loadMaterializedPartitionState = (definition, partition) => {
-    const row = getMaterializedViewStateStmt.get({
-      view_name: definition.name,
-      partition,
-    });
-    if (!row) {
-      return createMaterializedViewInitialState(definition, partition);
-    }
-    return JSON.parse(row.value);
-  };
-
-  const saveMaterializedPartitionState = (
-    definition,
-    partition,
-    value,
-    updatedAt,
-  ) => {
-    upsertMaterializedViewStateStmt.run({
-      view_name: definition.name,
-      partition,
-      value: encodeMaterializedValue(value),
-      updated_at: updatedAt,
-    });
-  };
-
-  const saveMaterializedOffsetMonotonic = (definition, nextCommittedId) => {
-    const row = getMaterializedViewOffsetStmt.get({
-      view_name: definition.name,
-    });
-    const currentOffset = row ? parseIntSafe(row.last_committed_id) : 0;
-    const effectiveOffset = Math.max(currentOffset, nextCommittedId);
-    upsertMaterializedViewOffsetStmt.run({
-      view_name: definition.name,
-      view_version: definition.version,
-      last_committed_id: effectiveOffset,
-    });
-  };
-
-  const applyCommittedToMaterializedViews = (committedEvent) => {
-    if (materializedViewDefinitions.length === 0) return;
-    for (const definition of materializedViewDefinitions) {
-      for (const partition of committedEvent.partitions) {
-        const current = loadMaterializedPartitionState(definition, partition);
-        const next = applyMaterializedViewReducer(
-          definition,
-          current,
-          committedEvent,
-          partition,
-        );
-        saveMaterializedPartitionState(
-          definition,
-          partition,
-          next,
-          committedEvent.status_updated_at,
-        );
-      }
-      saveMaterializedOffsetMonotonic(definition, committedEvent.committed_id);
-    }
-  };
-
-  const resolveMaterializedStartOffset = (definition) => {
-    const row = getMaterializedViewOffsetStmt.get({
-      view_name: definition.name,
-    });
-    if (!row) {
-      upsertMaterializedViewOffsetStmt.run({
-        view_name: definition.name,
-        view_version: definition.version,
-        last_committed_id: 0,
-      });
-      return 0;
-    }
-
-    if (row.view_version !== definition.version) {
-      deleteMaterializedViewStateStmt.run({ view_name: definition.name });
-      upsertMaterializedViewOffsetStmt.run({
-        view_name: definition.name,
-        view_version: definition.version,
-        last_committed_id: 0,
-      });
-      return 0;
-    }
-
-    return parseIntSafe(row.last_committed_id);
-  };
-
   const prepareStatements = () => {
     loadCursorStmt = db.prepare(
       `SELECT value FROM app_state WHERE key = 'cursor_committed_id'`,
@@ -386,9 +307,13 @@ export const createSqliteClientStore = (
       ORDER BY committed_id ASC
       LIMIT @limit
     `);
+    getLatestCommittedIdStmt = db.prepare(`
+      SELECT COALESCE(MAX(committed_id), 0) AS max_committed_id
+      FROM committed_events
+    `);
 
     getMaterializedViewStateStmt = db.prepare(`
-      SELECT value
+      SELECT view_version, last_committed_id, value, updated_at
       FROM materialized_view_state
       WHERE view_name = @view_name AND partition = @partition
     `);
@@ -396,47 +321,35 @@ export const createSqliteClientStore = (
       INSERT INTO materialized_view_state(
         view_name,
         partition,
+        view_version,
+        last_committed_id,
         value,
         updated_at
       ) VALUES (
         @view_name,
         @partition,
+        @view_version,
+        @last_committed_id,
         @value,
         @updated_at
       )
       ON CONFLICT(view_name, partition) DO UPDATE
       SET
+        view_version = excluded.view_version,
+        last_committed_id = excluded.last_committed_id,
         value = excluded.value,
         updated_at = excluded.updated_at
     `);
     deleteMaterializedViewStateStmt = db.prepare(`
       DELETE FROM materialized_view_state
-      WHERE view_name = @view_name
-    `);
-    getMaterializedViewOffsetStmt = db.prepare(`
-      SELECT view_name, view_version, last_committed_id
-      FROM materialized_view_offsets
-      WHERE view_name = @view_name
-    `);
-    upsertMaterializedViewOffsetStmt = db.prepare(`
-      INSERT INTO materialized_view_offsets(
-        view_name,
-        view_version,
-        last_committed_id
-      ) VALUES (
-        @view_name,
-        @view_version,
-        @last_committed_id
-      )
-      ON CONFLICT(view_name) DO UPDATE
-      SET
-        view_version = excluded.view_version,
-        last_committed_id = excluded.last_committed_id
+      WHERE view_name = @view_name AND partition = @partition
     `);
 
     applySubmitResultTxn = createTransaction(
       db,
       ({ result, fallbackClientId }) => {
+        let committedEvent;
+
         if (result.status === "committed") {
           const draft = getDraftByIdStmt.get({ id: result.id });
 
@@ -455,23 +368,25 @@ export const createSqliteClientStore = (
                 id: result.id,
               });
             } else {
-              applyCommittedToMaterializedViews({
+              committedEvent = {
                 committed_id: result.committed_id,
                 id: result.id,
                 client_id: draft.client_id || fallbackClientId,
                 partitions: JSON.parse(draft.partitions),
                 event: JSON.parse(draft.event),
                 status_updated_at: result.status_updated_at,
-              });
+              };
             }
           }
         }
 
         deleteDraftByIdStmt.run({ id: result.id });
+        return committedEvent;
       },
     );
 
     applyCommittedBatchTxn = createTransaction(db, ({ events, nextCursor }) => {
+      const insertedEvents = [];
       for (const event of events) {
         const insertResult = insertCommittedStmt.run({
           committed_id: event.committed_id,
@@ -485,7 +400,7 @@ export const createSqliteClientStore = (
         if (insertResult.changes === 0) {
           assertCommittedInvariant(event);
         } else {
-          applyCommittedToMaterializedViews(event);
+          insertedEvents.push(event);
         }
 
         deleteDraftByIdStmt.run({ id: event.id });
@@ -494,68 +409,70 @@ export const createSqliteClientStore = (
       if (nextCursor !== undefined) {
         saveCursorMonotonic(nextCursor);
       }
-    });
 
-    catchUpMaterializedViewsTxn = createTransaction(db, () => {
-      if (materializedViewDefinitions.length === 0) return;
-
-      const chunkSize =
-        Number.isInteger(materializedBackfillChunkSize) &&
-        materializedBackfillChunkSize > 0
-          ? materializedBackfillChunkSize
-          : DEFAULT_MATERIALIZED_BACKFILL_CHUNK_SIZE;
-
-      for (const definition of materializedViewDefinitions) {
-        let cursor = resolveMaterializedStartOffset(definition);
-
-        while (true) {
-          const rows = listCommittedAfterStmt.all({
-            since_committed_id: cursor,
-            limit: chunkSize,
-          });
-          if (rows.length === 0) break;
-
-          for (const row of rows) {
-            const committedEvent = parseCommittedRow(row);
-            for (const partition of committedEvent.partitions) {
-              const current = loadMaterializedPartitionState(
-                definition,
-                partition,
-              );
-              const next = applyMaterializedViewReducer(
-                definition,
-                current,
-                committedEvent,
-                partition,
-              );
-              saveMaterializedPartitionState(
-                definition,
-                partition,
-                next,
-                committedEvent.status_updated_at,
-              );
-            }
-            cursor = committedEvent.committed_id;
-          }
-
-          if (rows.length < chunkSize) break;
-        }
-
-        upsertMaterializedViewOffsetStmt.run({
-          view_name: definition.name,
-          view_version: definition.version,
-          last_committed_id: cursor,
-        });
-      }
+      return insertedEvents;
     });
   };
+
+  const createRuntime = () =>
+    createMaterializedViewRuntime({
+      definitions: materializedViewDefinitions,
+      chunkSize: materializedBackfillChunkSize,
+      getLatestCommittedId: async () => {
+        const row = getLatestCommittedIdStmt.get();
+        return row ? parseIntSafe(row.max_committed_id) : 0;
+      },
+      listCommittedAfter: async ({ sinceCommittedId, limit }) =>
+        listCommittedAfterStmt
+          .all({
+            since_committed_id: sinceCommittedId,
+            limit,
+          })
+          .map(parseCommittedRow),
+      loadCheckpoint: async ({ viewName, partition }) => {
+        const row = getMaterializedViewStateStmt.get({
+          view_name: viewName,
+          partition,
+        });
+        if (!row) return undefined;
+        return {
+          viewVersion: row.view_version,
+          lastCommittedId: parseIntSafe(row.last_committed_id),
+          value: JSON.parse(row.value),
+          updatedAt: parseIntSafe(row.updated_at),
+        };
+      },
+      saveCheckpoint: async ({
+        viewName,
+        viewVersion,
+        partition,
+        value,
+        lastCommittedId,
+        updatedAt,
+      }) => {
+        upsertMaterializedViewStateStmt.run({
+          view_name: viewName,
+          partition,
+          view_version: viewVersion,
+          last_committed_id: lastCommittedId,
+          value: encodeMaterializedValue(value),
+          updated_at: updatedAt,
+        });
+      },
+      deleteCheckpoint: async ({ viewName, partition }) => {
+        deleteMaterializedViewStateStmt.run({
+          view_name: viewName,
+          partition,
+        });
+      },
+    });
 
   const ensureInitialized = () => {
     if (initialized) return;
     runPragmas();
     runMigrations();
     prepareStatements();
-    catchUpMaterializedViewsTxn();
+    materializedViewRuntime = createRuntime();
     initialized = true;
   };
 
@@ -588,22 +505,55 @@ export const createSqliteClientStore = (
 
     applySubmitResult: async ({ result, fallbackClientId }) => {
       ensureInitialized();
-      applySubmitResultTxn({ result, fallbackClientId });
+      const committedEvent = applySubmitResultTxn({ result, fallbackClientId });
+      if (committedEvent) {
+        await materializedViewRuntime.onCommittedEvent(committedEvent);
+      }
     },
 
     applyCommittedBatch: async ({ events, nextCursor }) => {
       ensureInitialized();
-      applyCommittedBatchTxn({ events, nextCursor });
+      const insertedEvents = applyCommittedBatchTxn({ events, nextCursor });
+      for (const event of insertedEvents) {
+        await materializedViewRuntime.onCommittedEvent(event);
+      }
     },
 
     loadMaterializedView: async ({ viewName, partition }) => {
       ensureInitialized();
-      if (typeof partition !== "string" || partition.length === 0) {
-        throw new Error("loadMaterializedView requires a non-empty partition");
-      }
-      const definition = getMaterializedDefinition(viewName);
-      const state = loadMaterializedPartitionState(definition, partition);
-      return cloneMaterializedViewValue(state);
+      return materializedViewRuntime.loadMaterializedView({
+        viewName,
+        partition,
+      });
+    },
+
+    loadMaterializedViews: async ({ viewName, partitions }) => {
+      ensureInitialized();
+      return materializedViewRuntime.loadMaterializedViews({
+        viewName,
+        partitions,
+      });
+    },
+
+    evictMaterializedView: async ({ viewName, partition }) => {
+      ensureInitialized();
+      await materializedViewRuntime.evictMaterializedView({
+        viewName,
+        partition,
+      });
+    },
+
+    invalidateMaterializedView: async ({ viewName, partition }) => {
+      ensureInitialized();
+      await materializedViewRuntime.invalidateMaterializedView({
+        viewName,
+        partition,
+      });
+    },
+
+    flushMaterializedViews: async () => {
+      ensureInitialized();
+      await materializedViewRuntime.flushMaterializedViews();
     },
   };
 };

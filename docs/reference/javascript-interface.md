@@ -66,7 +66,11 @@ export function createOfflineTransport(options) {}
  *   loadDraftsOrdered: () => Promise<SubmitItem[]>,
  *   applySubmitResult: (input: { result: object, fallbackClientId: string }) => Promise<void>,
  *   applyCommittedBatch: (input: { events: object[], nextCursor?: number }) => Promise<void>,
- *   loadMaterializedView?: (input: { viewName: string, partition: string }) => Promise<unknown>
+ *   loadMaterializedView?: (input: { viewName: string, partition: string }) => Promise<unknown>,
+ *   loadMaterializedViews?: (input: { viewName: string, partitions: string[] }) => Promise<Record<string, unknown>>,
+ *   evictMaterializedView?: (input: { viewName: string, partition: string }) => Promise<void>,
+ *   invalidateMaterializedView?: (input: { viewName: string, partition: string }) => Promise<void>,
+ *   flushMaterializedViews?: () => Promise<void>
  * }} deps.store
  * @param {string} deps.token
  * @param {string} deps.clientId
@@ -207,8 +211,25 @@ Runtime exports include two persistence families:
 
 Client store adapters may expose an optional materialized-view API:
 
-- factory option: `materializedViews: [{ name, version?, initialState?, reduce }]`
+- factory option:
+  `materializedViews: [{ name, version?, initialState?, reduce, checkpoint? }]`
 - runtime method: `loadMaterializedView({ viewName, partition })`
+- runtime method:
+  `loadMaterializedViews({ viewName, partitions }) => Record<string, unknown>`
+- runtime method: `evictMaterializedView({ viewName, partition })`
+- runtime method: `invalidateMaterializedView({ viewName, partition })`
+- runtime method: `flushMaterializedViews()`
+
+Checkpoint config:
+
+```js
+checkpoint: {
+  mode: "immediate" | "manual" | "debounce" | "interval",
+  debounceMs?: number,
+  intervalMs?: number,
+  maxDirtyEvents?: number,
+}
+```
 
 Reducer contract:
 
@@ -223,6 +244,14 @@ reduce({
 The reducer runs only for newly inserted committed events (deduped replays are ignored).
 
 `reduce` is required for every materialized view definition.
+
+Read semantics:
+
+- `loadMaterializedView(...)` returns exact state for that partition at the local committed snapshot used by the read.
+- `loadMaterializedViews(...)` does the same for multiple partitions in one call.
+- `evictMaterializedView(...)` drops hot in-memory state only.
+- `invalidateMaterializedView(...)` drops hot state and the persisted checkpoint for that partition.
+- `flushMaterializedViews()` persists dirty checkpoints immediately.
 
 For schema-based `event` profile payloads (`event.type === "event"`), use
 `createReducer({ schemaHandlers: { "<schema>": fn } })`.

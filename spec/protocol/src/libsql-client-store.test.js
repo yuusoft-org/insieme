@@ -30,7 +30,7 @@ describeLibsql("src createLibsqlClientStore", () => {
     await store.init();
 
     const row = db._raw.prepare("PRAGMA user_version").get();
-    expect(row.user_version).toBe(2);
+    expect(row.user_version).toBe(3);
 
     db.close();
   });
@@ -207,6 +207,86 @@ describeLibsql("src createLibsqlClientStore", () => {
           partition: "P3",
         }),
       ).toEqual({ count: 0 });
+
+      db.close();
+    }
+  });
+
+  it("rebuilds exact materialized views after restart without a flushed checkpoint", async () => {
+    const dbPath = createDbPath();
+
+    {
+      const db = createLibsqlClient(dbPath);
+      const store = createLibsqlClientStore(db, {
+        materializedViews: [
+          {
+            name: "counter",
+            checkpoint: { mode: "manual" },
+            initialState: () => ({ count: 0 }),
+            reduce: ({ state, event }) => ({
+              count: state.count + (event.event.type === "increment" ? 1 : 0),
+            }),
+          },
+        ],
+      });
+      await store.init();
+
+      await store.applyCommittedBatch({
+        events: [
+          {
+            id: "evt-1",
+            client_id: "C1",
+            partitions: ["P1"],
+            committed_id: 1,
+            event: { type: "increment", payload: {} },
+            status_updated_at: 10,
+          },
+          {
+            id: "evt-2",
+            client_id: "C1",
+            partitions: ["P1", "P2"],
+            committed_id: 2,
+            event: { type: "increment", payload: {} },
+            status_updated_at: 11,
+          },
+        ],
+        nextCursor: 2,
+      });
+
+      expect(
+        db._raw
+          .prepare("SELECT COUNT(*) AS count FROM materialized_view_state")
+          .get().count,
+      ).toBe(0);
+
+      db.close();
+    }
+
+    {
+      const db = createLibsqlClient(dbPath);
+      const store = createLibsqlClientStore(db, {
+        materializedViews: [
+          {
+            name: "counter",
+            checkpoint: { mode: "manual" },
+            initialState: () => ({ count: 0 }),
+            reduce: ({ state, event }) => ({
+              count: state.count + (event.event.type === "increment" ? 1 : 0),
+            }),
+          },
+        ],
+      });
+      await store.init();
+
+      expect(
+        await store.loadMaterializedViews({
+          viewName: "counter",
+          partitions: ["P1", "P2"],
+        }),
+      ).toEqual({
+        P1: { count: 2 },
+        P2: { count: 1 },
+      });
 
       db.close();
     }
