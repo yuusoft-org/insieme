@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { createLibsqlClientStore } from "../../../src/index.js";
+import {
+  createLibsqlClientStore,
+  createLibsqlStore,
+} from "../../../src/index.js";
 import { createLibsqlClient, hasNodeLibsqlShim } from "./helpers/libsql-db.js";
 
 const tempDirs = [];
@@ -28,6 +31,21 @@ describeLibsql("src createLibsqlClientStore", () => {
     const store = createLibsqlClientStore(db);
 
     await store.init();
+
+    const row = db._raw.prepare("PRAGMA user_version").get();
+    expect(row.user_version).toBe(3);
+
+    db.close();
+  });
+
+  it("supports concurrent init calls and optional pragmas", async () => {
+    const db = createLibsqlClient(":memory:");
+    const store = createLibsqlClientStore(db, {
+      applyPragmas: true,
+      busyTimeoutMs: 0,
+    });
+
+    await Promise.all([store.init(), store.init()]);
 
     const row = db._raw.prepare("PRAGMA user_version").get();
     expect(row.user_version).toBe(3);
@@ -119,6 +137,43 @@ describeLibsql("src createLibsqlClientStore", () => {
             partitions: ["P1"],
             committed_id: 9,
             event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
+            status_updated_at: 11,
+          },
+        ],
+      }),
+    ).rejects.toThrow("committed event invariant violation");
+
+    db.close();
+  });
+
+  it("rejects conflicting duplicate committed ids for different event ids", async () => {
+    const db = createLibsqlClient(":memory:");
+    const store = createLibsqlClientStore(db);
+    await store.init();
+
+    await store.applyCommittedBatch({
+      events: [
+        {
+          id: "evt-1",
+          client_id: "C1",
+          partitions: ["P1"],
+          committed_id: 1,
+          event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
+          status_updated_at: 10,
+        },
+      ],
+      nextCursor: 1,
+    });
+
+    await expect(
+      store.applyCommittedBatch({
+        events: [
+          {
+            id: "evt-2",
+            client_id: "C1",
+            partitions: ["P1"],
+            committed_id: 1,
+            event: { type: "event", payload: { schema: "x", data: { n: 2 } } },
             status_updated_at: 11,
           },
         ],
@@ -290,5 +345,159 @@ describeLibsql("src createLibsqlClientStore", () => {
 
       db.close();
     }
+  });
+
+  it("supports the alias export plus flush, invalidate, and eviction", async () => {
+    const db = createLibsqlClient(":memory:");
+    const store = createLibsqlStore(db, {
+      materializedViews: [
+        {
+          name: "counter",
+          checkpoint: { mode: "manual" },
+          initialState: () => ({ count: 0 }),
+          reduce: ({ state, event }) => ({
+            count: state.count + (event.event.type === "increment" ? 1 : 0),
+          }),
+        },
+      ],
+    });
+    await store.init();
+
+    await store.applyCommittedBatch({
+      events: [
+        {
+          id: "evt-1",
+          client_id: "C1",
+          partitions: ["P1"],
+          committed_id: 1,
+          event: { type: "increment", payload: {} },
+          status_updated_at: 10,
+        },
+      ],
+      nextCursor: 1,
+    });
+
+    await store.flushMaterializedViews();
+    await store.evictMaterializedView({
+      viewName: "counter",
+      partition: "P1",
+    });
+    expect(
+      await store.loadMaterializedView({
+        viewName: "counter",
+        partition: "P1",
+      }),
+    ).toEqual({ count: 1 });
+
+    await store.invalidateMaterializedView({
+      viewName: "counter",
+      partition: "P1",
+    });
+    expect(
+      await store.loadMaterializedView({
+        viewName: "counter",
+        partition: "P1",
+      }),
+    ).toEqual({ count: 1 });
+
+    db.close();
+  });
+
+  it("handles rejected and missing-draft submit results without creating commits", async () => {
+    const db = createLibsqlClient(":memory:");
+    const store = createLibsqlClientStore(db);
+    await store.init();
+
+    await store.insertDraft({
+      id: "evt-rejected",
+      clientId: "C1",
+      partitions: ["P1"],
+      event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
+      createdAt: 100,
+    });
+
+    await store.applySubmitResult({
+      result: {
+        id: "evt-rejected",
+        status: "rejected",
+        status_updated_at: 101,
+      },
+      fallbackClientId: "C1",
+    });
+
+    await store.applySubmitResult({
+      result: {
+        id: "evt-missing",
+        status: "committed",
+        committed_id: 2,
+        status_updated_at: 102,
+      },
+      fallbackClientId: "C1",
+    });
+
+    expect(
+      db._raw.prepare("SELECT COUNT(*) AS count FROM committed_events").get().count,
+    ).toBe(0);
+
+    db.close();
+  });
+
+  it("treats duplicate submit results idempotently and supports batches without cursor hints", async () => {
+    const db = createLibsqlClient(":memory:");
+    const store = createLibsqlClientStore(db);
+    await store.init();
+
+    await store.insertDraft({
+      id: "evt-1",
+      clientId: "C1",
+      partitions: ["P1"],
+      event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
+      createdAt: 100,
+    });
+    await store.applySubmitResult({
+      result: {
+        id: "evt-1",
+        status: "committed",
+        committed_id: 1,
+        status_updated_at: 101,
+      },
+      fallbackClientId: "C1",
+    });
+
+    await store.insertDraft({
+      id: "evt-1",
+      clientId: "C1",
+      partitions: ["P1"],
+      event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
+      createdAt: 102,
+    });
+    await store.applySubmitResult({
+      result: {
+        id: "evt-1",
+        status: "committed",
+        committed_id: 1,
+        status_updated_at: 103,
+      },
+      fallbackClientId: "C1",
+    });
+
+    await store.applyCommittedBatch({
+      events: [
+        {
+          id: "evt-2",
+          client_id: "C1",
+          partitions: ["P1"],
+          committed_id: 2,
+          event: { type: "event", payload: { schema: "x", data: { n: 2 } } },
+          status_updated_at: 104,
+        },
+      ],
+    });
+
+    expect(
+      db._raw.prepare("SELECT COUNT(*) AS count FROM committed_events").get().count,
+    ).toBe(2);
+
+    db.close();
   });
 });

@@ -29,6 +29,54 @@ afterEach(() => {
 });
 
 describe("src materialized-view-runtime", () => {
+  it("drops stale checkpoints when the reducer version changes", async () => {
+    const deletedCheckpoints = [];
+    const runtime = createMaterializedViewRuntime({
+      definitions: normalizeMaterializedViewDefinitions([
+        {
+          name: "counter",
+          version: "2",
+          checkpoint: { mode: "manual" },
+          initialState: () => ({ count: 0 }),
+          reduce: ({ state, event }) => ({
+            count: state.count + (event.event.type === "increment" ? 1 : 0),
+          }),
+        },
+      ]),
+      getLatestCommittedId: async () => 1,
+      listCommittedAfter: async () => [
+        {
+          committed_id: 1,
+          partitions: ["P1"],
+          event: { type: "increment", payload: {} },
+          status_updated_at: 10,
+        },
+      ],
+      loadCheckpoint: async () => ({
+        viewVersion: "1",
+        lastCommittedId: 7,
+        value: { count: 99 },
+        updatedAt: 9,
+      }),
+      deleteCheckpoint: async ({ viewName, partition }) => {
+        deletedCheckpoints.push({ viewName, partition });
+      },
+    });
+
+    expect(
+      await runtime.loadMaterializedView({
+        viewName: "counter",
+        partition: "P1",
+      }),
+    ).toEqual({ count: 1 });
+    expect(deletedCheckpoints).toEqual([
+      {
+        viewName: "counter",
+        partition: "P1",
+      },
+    ]);
+  });
+
   it("collapses debounce checkpoint churn to the latest state", async () => {
     vi.useFakeTimers();
     const checkpointWrites = [];
@@ -125,6 +173,98 @@ describe("src materialized-view-runtime", () => {
       P1: { count: 2 },
       P2: { count: 2 },
     });
+  });
+
+  it("flushes immediately when maxDirtyEvents is reached", async () => {
+    const checkpointWrites = [];
+    const runtime = createMaterializedViewRuntime({
+      definitions: createCounterDefinitions({
+        mode: "debounce",
+        debounceMs: 100,
+        maxDirtyEvents: 2,
+      }),
+      getLatestCommittedId: async () => 2,
+      listCommittedAfter: async () => [],
+      saveCheckpoint: async ({ partition, value, lastCommittedId }) => {
+        checkpointWrites.push({
+          partition,
+          value,
+          lastCommittedId,
+        });
+      },
+    });
+
+    await runtime.loadMaterializedView({
+      viewName: "counter",
+      partition: "P1",
+    });
+
+    await runtime.onCommittedEvent({
+      committed_id: 1,
+      partitions: ["P1"],
+      event: { type: "increment", payload: {} },
+      status_updated_at: 10,
+    });
+    expect(checkpointWrites).toHaveLength(0);
+
+    await runtime.onCommittedEvent({
+      committed_id: 2,
+      partitions: ["P1"],
+      event: { type: "increment", payload: {} },
+      status_updated_at: 11,
+    });
+
+    expect(checkpointWrites).toEqual([
+      {
+        partition: "P1",
+        value: { count: 2 },
+        lastCommittedId: 2,
+      },
+    ]);
+  });
+
+  it("flushes interval checkpoints on the configured timer", async () => {
+    vi.useFakeTimers();
+    const checkpointWrites = [];
+    const runtime = createMaterializedViewRuntime({
+      definitions: createCounterDefinitions({
+        mode: "interval",
+        intervalMs: 20,
+      }),
+      getLatestCommittedId: async () => 1,
+      listCommittedAfter: async () => [],
+      saveCheckpoint: async ({ partition, value, lastCommittedId }) => {
+        checkpointWrites.push({
+          partition,
+          value,
+          lastCommittedId,
+        });
+      },
+    });
+
+    await runtime.loadMaterializedView({
+      viewName: "counter",
+      partition: "P1",
+    });
+
+    await runtime.onCommittedEvent({
+      committed_id: 1,
+      partitions: ["P1"],
+      event: { type: "increment", payload: {} },
+      status_updated_at: 10,
+    });
+
+    await vi.advanceTimersByTimeAsync(19);
+    expect(checkpointWrites).toHaveLength(0);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(checkpointWrites).toEqual([
+      {
+        partition: "P1",
+        value: { count: 1 },
+        lastCommittedId: 1,
+      },
+    ]);
   });
 
   it("keeps read results exact when newer commits arrive during hydration", async () => {
@@ -230,6 +370,48 @@ describe("src materialized-view-runtime", () => {
     expect(checkpoints.has("counter:P1")).toBe(false);
   });
 
+  it("surfaces background checkpoint errors on the next foreground read", async () => {
+    vi.useFakeTimers();
+    const runtime = createMaterializedViewRuntime({
+      definitions: createCounterDefinitions({
+        mode: "debounce",
+        debounceMs: 1,
+      }),
+      getLatestCommittedId: async () => 1,
+      listCommittedAfter: async () => [],
+      saveCheckpoint: async () => {
+        throw new Error("checkpoint write failed");
+      },
+    });
+
+    await runtime.loadMaterializedView({
+      viewName: "counter",
+      partition: "P1",
+    });
+    await runtime.onCommittedEvent({
+      committed_id: 1,
+      partitions: ["P1"],
+      event: { type: "increment", payload: {} },
+      status_updated_at: 10,
+    });
+
+    await vi.advanceTimersByTimeAsync(1);
+
+    await expect(
+      runtime.loadMaterializedView({
+        viewName: "counter",
+        partition: "P1",
+      }),
+    ).rejects.toThrow("checkpoint write failed");
+
+    expect(
+      await runtime.loadMaterializedView({
+        viewName: "counter",
+        partition: "P1",
+      }),
+    ).toEqual({ count: 1 });
+  });
+
   it("rehydrates exact state after evicting a dirty hot partition", async () => {
     const committedEvents = [
       {
@@ -319,5 +501,35 @@ describe("src materialized-view-runtime", () => {
       P1: { count: 2 },
       P2: { count: 2 },
     });
+  });
+
+  it("rejects invalid batch loads and ignores partitionless committed events", async () => {
+    const runtime = createMaterializedViewRuntime({
+      definitions: createCounterDefinitions(),
+      getLatestCommittedId: async () => 0,
+      listCommittedAfter: async () => [],
+    });
+
+    await expect(
+      runtime.loadMaterializedViews({
+        viewName: "counter",
+        partitions: "P1",
+      }),
+    ).rejects.toThrow("loadMaterializedViews requires partitions array");
+
+    await runtime.onCommittedEvent();
+    await runtime.onCommittedEvent({
+      committed_id: 1,
+      partitions: [],
+      event: { type: "increment", payload: {} },
+      status_updated_at: 10,
+    });
+
+    expect(
+      await runtime.loadMaterializedView({
+        viewName: "counter",
+        partition: "P1",
+      }),
+    ).toEqual({ count: 0 });
   });
 });

@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { createSqliteClientStore } from "../../../src/index.js";
+import {
+  createSqliteClientStore,
+  createSqliteStore,
+} from "../../../src/index.js";
 import { createSqliteDb, hasNodeSqlite } from "./helpers/sqlite-db.js";
 
 const tempDirs = [];
@@ -119,6 +122,43 @@ describeSqlite("src createSqliteClientStore", () => {
             partitions: ["P1"],
             committed_id: 9,
             event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
+            status_updated_at: 11,
+          },
+        ],
+      }),
+    ).rejects.toThrow("committed event invariant violation");
+
+    db.close();
+  });
+
+  it("rejects conflicting duplicate committed ids for different event ids", async () => {
+    const db = createSqliteDb(":memory:");
+    const store = createSqliteClientStore(db);
+    await store.init();
+
+    await store.applyCommittedBatch({
+      events: [
+        {
+          id: "evt-1",
+          client_id: "C1",
+          partitions: ["P1"],
+          committed_id: 1,
+          event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
+          status_updated_at: 10,
+        },
+      ],
+      nextCursor: 1,
+    });
+
+    await expect(
+      store.applyCommittedBatch({
+        events: [
+          {
+            id: "evt-2",
+            client_id: "C1",
+            partitions: ["P1"],
+            committed_id: 1,
+            event: { type: "event", payload: { schema: "x", data: { n: 2 } } },
             status_updated_at: 11,
           },
         ],
@@ -281,6 +321,51 @@ describeSqlite("src createSqliteClientStore", () => {
         .prepare("SELECT COUNT(*) AS count FROM materialized_view_state")
         .get().count,
     ).toBe(0);
+
+    expect(
+      await store.loadMaterializedView({
+        viewName: "counter",
+        partition: "P1",
+      }),
+    ).toEqual({ count: 1 });
+
+    db.close();
+  });
+
+  it("supports the alias export and explicit materialized-view eviction", async () => {
+    const db = createSqliteDb(":memory:");
+    const store = createSqliteStore(db, {
+      materializedViews: [
+        {
+          name: "counter",
+          checkpoint: { mode: "manual" },
+          initialState: () => ({ count: 0 }),
+          reduce: ({ state, event }) => ({
+            count: state.count + (event.event.type === "increment" ? 1 : 0),
+          }),
+        },
+      ],
+    });
+    await store.init();
+
+    await store.applyCommittedBatch({
+      events: [
+        {
+          id: "evt-1",
+          client_id: "C1",
+          partitions: ["P1"],
+          committed_id: 1,
+          event: { type: "increment", payload: {} },
+          status_updated_at: 10,
+        },
+      ],
+      nextCursor: 1,
+    });
+
+    await store.evictMaterializedView({
+      viewName: "counter",
+      partition: "P1",
+    });
 
     expect(
       await store.loadMaterializedView({

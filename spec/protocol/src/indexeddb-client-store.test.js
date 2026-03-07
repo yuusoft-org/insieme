@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { IDBKeyRange, indexedDB } from "fake-indexeddb";
-import { createIndexedDbClientStore } from "../../../src/index.js";
+import { IDBKeyRange, IDBObjectStore, indexedDB } from "fake-indexeddb";
+import {
+  createIndexedDbClientStore,
+  createIndexedDBClientStore,
+} from "../../../src/index.js";
 
 const createDbName = () =>
   `insieme-test-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -19,6 +22,12 @@ afterEach(async () => {
 });
 
 describe("src createIndexedDbClientStore", () => {
+  it("rejects missing indexeddb implementations", () => {
+    expect(() => createIndexedDbClientStore({ indexedDB: {} })).toThrow(
+      "createIndexedDbClientStore requires a valid indexedDB implementation",
+    );
+  });
+
   it("persists cursor and committed events across restart", async () => {
     const dbName = createDbName();
     createdDbNames.push(dbName);
@@ -136,6 +145,45 @@ describe("src createIndexedDbClientStore", () => {
             partitions: ["P1"],
             committed_id: 2,
             event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
+            status_updated_at: 11,
+          },
+        ],
+      }),
+    ).rejects.toThrow("committed event invariant violation");
+  });
+
+  it("rejects conflicting duplicate committed ids for different event ids", async () => {
+    const dbName = createDbName();
+    createdDbNames.push(dbName);
+    const store = createIndexedDbClientStore({
+      indexedDB,
+      dbName,
+    });
+    await store.init();
+
+    await store.applyCommittedBatch({
+      events: [
+        {
+          id: "evt-1",
+          client_id: "C1",
+          partitions: ["P1"],
+          committed_id: 1,
+          event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
+          status_updated_at: 10,
+        },
+      ],
+      nextCursor: 1,
+    });
+
+    await expect(
+      store.applyCommittedBatch({
+        events: [
+          {
+            id: "evt-2",
+            client_id: "C1",
+            partitions: ["P1"],
+            committed_id: 1,
+            event: { type: "event", payload: { schema: "x", data: { n: 2 } } },
             status_updated_at: 11,
           },
         ],
@@ -348,5 +396,159 @@ describe("src createIndexedDbClientStore", () => {
       P1: { count: 100 },
       P2: { count: 100 },
     });
+  });
+
+  it("falls back to cursor iteration when getAll is unavailable", async () => {
+    const dbName = createDbName();
+    createdDbNames.push(dbName);
+    const originalGetAll = IDBObjectStore.prototype.getAll;
+    Object.defineProperty(IDBObjectStore.prototype, "getAll", {
+      value: undefined,
+      configurable: true,
+      writable: true,
+    });
+
+    try {
+      const store = createIndexedDbClientStore({
+        indexedDB,
+        dbName,
+      });
+      await store.init();
+
+      await store.insertDraft({
+        id: "b",
+        clientId: "C1",
+        partitions: ["P1"],
+        event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
+        createdAt: 100,
+      });
+      await store.insertDraft({
+        id: "a",
+        clientId: "C1",
+        partitions: ["P1"],
+        event: { type: "event", payload: { schema: "x", data: { n: 2 } } },
+        createdAt: 101,
+      });
+
+      expect((await store.loadDraftsOrdered()).map((draft) => draft.id)).toEqual([
+        "b",
+        "a",
+      ]);
+
+      await store.applyCommittedBatch({
+        events: [
+          {
+            id: "evt-1",
+            client_id: "C1",
+            partitions: ["P1"],
+            committed_id: 1,
+            event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
+            status_updated_at: 10,
+          },
+        ],
+        nextCursor: 1,
+      });
+
+      expect((await store._debug.getCommitted()).map((event) => event.id)).toEqual([
+        "evt-1",
+      ]);
+    } finally {
+      Object.defineProperty(IDBObjectStore.prototype, "getAll", {
+        value: originalGetAll,
+        configurable: true,
+        writable: true,
+      });
+    }
+  });
+
+  it("supports the alias export and catch-up without explicit IDBKeyRange injection", async () => {
+    const dbName = createDbName();
+    createdDbNames.push(dbName);
+
+    {
+      const store = createIndexedDBClientStore({
+        indexedDB,
+        dbName,
+        materializedViews: [
+          {
+            name: "counter",
+            checkpoint: { mode: "manual" },
+            initialState: () => ({ count: 0 }),
+            reduce: ({ state, event }) => ({
+              count: state.count + (event.event.type === "increment" ? 1 : 0),
+            }),
+          },
+        ],
+      });
+      await store.init();
+
+      await store.applyCommittedBatch({
+        events: [
+          {
+            id: "evt-1",
+            client_id: "C1",
+            partitions: ["P1"],
+            committed_id: 1,
+            event: { type: "increment", payload: {} },
+            status_updated_at: 10,
+          },
+          {
+            id: "evt-2",
+            client_id: "C1",
+            partitions: ["P1", "P2"],
+            committed_id: 2,
+            event: { type: "increment", payload: {} },
+            status_updated_at: 11,
+          },
+        ],
+        nextCursor: 2,
+      });
+
+      expect(
+        await store.loadMaterializedView({
+          viewName: "counter",
+          partition: "P1",
+        }),
+      ).toEqual({ count: 2 });
+      await store.flushMaterializedViews();
+      expect(await store._debug.getCursor()).toBe(2);
+      expect((await store._debug.getCommitted()).map((event) => event.id)).toEqual([
+        "evt-1",
+        "evt-2",
+      ]);
+
+      await store.evictMaterializedView({
+        viewName: "counter",
+        partition: "P1",
+      });
+    }
+
+    {
+      const store = createIndexedDBClientStore({
+        indexedDB,
+        dbName,
+        materializedViews: [
+          {
+            name: "counter",
+            checkpoint: { mode: "manual" },
+            initialState: () => ({ count: 0 }),
+            reduce: ({ state, event }) => ({
+              count: state.count + (event.event.type === "increment" ? 1 : 0),
+            }),
+          },
+        ],
+      });
+      await store.init();
+
+      expect(
+        await store.loadMaterializedViews({
+          viewName: "counter",
+          partitions: ["P1", "P2"],
+        }),
+      ).toEqual({
+        P1: { count: 2 },
+        P2: { count: 1 },
+      });
+    }
   });
 });
