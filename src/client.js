@@ -28,3 +28,5 @@ export {
   canonicalizeSubmitItem,
   intersectsPartitions,
 } from "./canonicalize.js";
+export { createReducer } from "./reducer.js";
+export { createMaterializedViewRuntime } from "./materialized-view-runtime.js";

@@ -5,7 +5,9 @@ This document defines how to use the optional client-store materialized-view ext
 ## What It Is
 
 - A materialized view is partition-scoped derived state maintained by the store.
-- Views are updated on newly inserted committed events.
+- Reads are exact for the local committed snapshot used by that read.
+- Hot in-memory view state is updated on newly inserted committed events.
+- Persistent checkpoints may be flushed immediately or on a policy.
 - Deduped replays do not re-apply reducers.
 
 ## API
@@ -19,6 +21,10 @@ const store = createLibsqlClientStore(client, {
     {
       name: "event-count",
       version: "1",
+      checkpoint: {
+        mode: "debounce",
+        debounceMs: 500,
+      },
       initialState: () => ({ count: 0 }),
       reduce: ({ state, event, partition }) => ({
         count: state.count + (event.event.type === "increment" ? 1 : 0),
@@ -37,6 +43,31 @@ const view = await store.loadMaterializedView({
 });
 ```
 
+Read several partitions in one call:
+
+```js
+const views = await store.loadMaterializedViews({
+  viewName: "event-count",
+  partitions: ["workspace-1", "workspace-2"],
+});
+```
+
+Lifecycle helpers:
+
+```js
+await store.evictMaterializedView({
+  viewName: "event-count",
+  partition: "workspace-1",
+});
+
+await store.invalidateMaterializedView({
+  viewName: "event-count",
+  partition: "workspace-1",
+});
+
+await store.flushMaterializedViews();
+```
+
 ## Expected Number Of Views
 
 Use a small number of views.
@@ -51,6 +82,23 @@ Work is roughly:
 `O(number_of_views * event_partition_count * reducer_cost)`
 
 Keep reducers deterministic and fast.
+
+## Checkpoint Policy
+
+`checkpoint` controls persistence, not read freshness.
+
+Supported modes:
+
+- `immediate`: persist dirty checkpoints immediately.
+- `manual`: keep hot state exact; persist only on `flushMaterializedViews()`.
+- `debounce`: flush after no new writes for `debounceMs`.
+- `interval`: flush after `intervalMs` while dirty.
+
+Optional guard:
+
+- `maxDirtyEvents`: force an earlier flush once enough events have accumulated.
+
+This lets apps trade write amplification against restart replay cost without serving stale reads in the active session.
 
 ## Domain/Model Reducers
 
@@ -121,4 +169,4 @@ This avoids duplicating event logic between:
 
 - `version` defaults to `"1"` when omitted.
 - Change `version` when reducer semantics or state shape changes.
-- SQLite and LibSQL stores rebuild that view from committed events on next init.
+- Persistent stores invalidate stale checkpoints lazily on next load and rebuild from committed events as needed.

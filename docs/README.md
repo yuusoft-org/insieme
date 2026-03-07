@@ -72,6 +72,7 @@ sequenceDiagram
 - `drafts/collaborative-text.md`
 - `drafts/split-drafts-and-committed-storage.md`
 - `drafts/minimal-protocol-core.md`
+- `drafts/persisted-projection-checkpoints.md` - proposal for checkpointed, partition-aware materialized views with exact reads
 
 ## Glossary
 

@@ -1,10 +1,6 @@
 import { canonicalizeSubmitItem } from "./canonicalize.js";
-import {
-  applyMaterializedViewReducer,
-  cloneMaterializedViewValue,
-  createMaterializedViewInitialState,
-  normalizeMaterializedViewDefinitions,
-} from "./materialized-view.js";
+import { normalizeMaterializedViewDefinitions } from "./materialized-view.js";
+import { createMaterializedViewRuntime } from "./materialized-view-runtime.js";
 
 const sortDrafts = (left, right) => {
   if (left.draftClock !== right.draftClock) {
@@ -28,19 +24,17 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
 
   const materializedViewDefinitions =
     normalizeMaterializedViewDefinitions(materializedViews);
-  /** @type {Map<string, Map<string, unknown>>} */
-  const materializedStatesByView = new Map(
-    materializedViewDefinitions.map((definition) => [
-      definition.name,
-      new Map(),
-    ]),
-  );
-  const materializedDefinitionByName = new Map(
-    materializedViewDefinitions.map((definition) => [
-      definition.name,
-      definition,
-    ]),
-  );
+  const materializedViewRuntime = createMaterializedViewRuntime({
+    definitions: materializedViewDefinitions,
+    getLatestCommittedId: async () =>
+      committed.length === 0
+        ? 0
+        : committed[committed.length - 1].committed_id,
+    listCommittedAfter: async ({ sinceCommittedId, limit }) =>
+      committed
+        .filter((event) => event.committed_id > sinceCommittedId)
+        .slice(0, limit),
+  });
 
   let nextDraftClock = 1;
   let cursor = 0;
@@ -48,32 +42,6 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
   const removeDraftById = (id) => {
     const index = drafts.findIndex((entry) => entry.id === id);
     if (index >= 0) drafts.splice(index, 1);
-  };
-
-  const getMaterializedDefinition = (viewName) => {
-    const definition = materializedDefinitionByName.get(viewName);
-    if (!definition) {
-      throw new Error(`unknown materialized view '${viewName}'`);
-    }
-    return definition;
-  };
-
-  const applyCommittedToMaterializedViews = (event) => {
-    for (const definition of materializedViewDefinitions) {
-      const byPartition = materializedStatesByView.get(definition.name);
-      for (const partition of event.partitions) {
-        const current = byPartition.has(partition)
-          ? byPartition.get(partition)
-          : createMaterializedViewInitialState(definition, partition);
-        const next = applyMaterializedViewReducer(
-          definition,
-          current,
-          event,
-          partition,
-        );
-        byPartition.set(partition, next);
-      }
-    }
   };
 
   const upsertCommitted = (event) => {
@@ -98,7 +66,6 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
     committedById.set(event.id, { canonical, committedEvent: event });
     committed.push(event);
     committed.sort((left, right) => left.committed_id - right.committed_id);
-    applyCommittedToMaterializedViews(event);
     return true;
   };
 
@@ -130,14 +97,17 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
       if (result.status === "committed") {
         const draft = drafts.find((entry) => entry.id === result.id);
         if (draft) {
-          upsertCommitted({
+          const committedEvent = {
             committed_id: result.committed_id,
             id: draft.id,
             client_id: draft.clientId || fallbackClientId,
             partitions: [...draft.partitions],
             event: draft.event,
             status_updated_at: result.status_updated_at,
-          });
+          };
+          if (upsertCommitted(committedEvent)) {
+            await materializedViewRuntime.onCommittedEvent(committedEvent);
+          }
         }
       }
 
@@ -146,7 +116,10 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
 
     applyCommittedBatch: async ({ events, nextCursor }) => {
       for (const event of events) {
-        upsertCommitted(event);
+        const inserted = upsertCommitted(event);
+        if (inserted) {
+          await materializedViewRuntime.onCommittedEvent(event);
+        }
         removeDraftById(event.id);
       }
 
@@ -154,15 +127,32 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
     },
 
     loadMaterializedView: async ({ viewName, partition }) => {
-      if (typeof partition !== "string" || partition.length === 0) {
-        throw new Error("loadMaterializedView requires a non-empty partition");
-      }
-      const definition = getMaterializedDefinition(viewName);
-      const byPartition = materializedStatesByView.get(definition.name);
-      const state = byPartition.has(partition)
-        ? byPartition.get(partition)
-        : createMaterializedViewInitialState(definition, partition);
-      return cloneMaterializedViewValue(state);
+      return materializedViewRuntime.loadMaterializedView({
+        viewName,
+        partition,
+      });
+    },
+
+    loadMaterializedViews: async ({ viewName, partitions }) =>
+      materializedViewRuntime.loadMaterializedViews({
+        viewName,
+        partitions,
+      }),
+
+    evictMaterializedView: async ({ viewName, partition }) =>
+      materializedViewRuntime.evictMaterializedView({
+        viewName,
+        partition,
+      }),
+
+    invalidateMaterializedView: async ({ viewName, partition }) =>
+      materializedViewRuntime.invalidateMaterializedView({
+        viewName,
+        partition,
+      }),
+
+    flushMaterializedViews: async () => {
+      await materializedViewRuntime.flushMaterializedViews();
     },
 
     _debug: {
