@@ -61,11 +61,11 @@ describe("src attachWsConnection", () => {
 
     await attachedTransport.send({
       type: "connected",
-      payload: { client_id: "C1" },
+      payload: { clientId: "C1" },
     });
     expect(JSON.parse(ws.sent[0])).toMatchObject({
       type: "connected",
-      payload: { client_id: "C1" },
+      payload: { clientId: "C1" },
     });
 
     ws.emit("close");

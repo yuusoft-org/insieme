@@ -1,4 +1,9 @@
 import { intersectsPartitions, normalizePartitionSet } from "./canonicalize.js";
+import {
+  isNonEmptyString,
+  normalizeMeta,
+  toFiniteNumberOrNull,
+} from "./event-record.js";
 
 const PROTOCOL_VERSION = "1.0";
 const DEFAULT_SYNC_LIMIT = 500;
@@ -103,11 +108,11 @@ const validateSyncPartitions = (partitions) => {
 const sendMessage = async (transport, type, payload, options = {}) => {
   const envelope = {
     type,
-    protocol_version: PROTOCOL_VERSION,
+    protocolVersion: PROTOCOL_VERSION,
     payload,
   };
   if (typeof options.msgId === "string") {
-    envelope.msg_id = options.msgId;
+    envelope.msgId = options.msgId;
   }
   await transport.send(envelope);
 };
@@ -167,7 +172,7 @@ const toErrorPayload = (reason, fallbackCode, fallbackMessage) => {
  *   authz: { authorizePartitions: (identity: object, partitions: string[]) => Promise<boolean> },
  *   validation: { validate: (item: object, ctx: object) => Promise<void> },
  *   store: {
- *     commitOrGetExisting: (input: { id: string, clientId: string, partitions: string[], event: object, now: number }) => Promise<{ deduped: boolean, committedEvent: { id: string, client_id: string, partitions: string[], committed_id: number, event: object, status_updated_at: number } }>,
+ *     commitOrGetExisting: (input: { id: string, partitions: string[], projectId?: string, userId?: string, type: string, payload: object, meta: object, now: number }) => Promise<{ deduped: boolean, committedEvent: { id: string, partitions: string[], projectId?: string, userId?: string, type: string, payload: object, meta: object, committedId: number, created: number } }>,
  *     listCommittedSince: (input: { partitions: string[], sinceCommittedId: number, limit: number, syncToCommittedId?: number }) => Promise<{ events: object[], hasMore: boolean, nextSinceCommittedId: number }>,
  *     getMaxCommittedIdForPartitions: (input: { partitions: string[] }) => Promise<number>,
  *     getMaxCommittedId: () => Promise<number>,
@@ -240,7 +245,7 @@ export const createSyncServer = ({
     await session.transport.close(undefined, reason);
     log({
       event: "session_closed",
-      connection_id: connectionId,
+      connectionId,
       reason,
     });
   };
@@ -268,9 +273,9 @@ export const createSyncServer = ({
     );
     log({
       event: "session_auth_failed",
-      connection_id: session.transport.connectionId,
-      client_id: session.identity.clientId,
-      msg_id: msgId,
+      connectionId: session.transport.connectionId,
+      clientId: session.identity.clientId,
+      msgId: msgId,
     });
     await closeSession(session.transport.connectionId, "auth_failed");
     return false;
@@ -302,17 +307,17 @@ export const createSyncServer = ({
         "rate_limited",
         "Inbound message rate limit exceeded",
         {
-          max_messages_per_window: inboundLimits.maxInboundMessagesPerWindow,
-          window_ms: inboundLimits.rateWindowMs,
+          maxMessagesPerWindow: inboundLimits.maxInboundMessagesPerWindow,
+          windowMs: inboundLimits.rateWindowMs,
         },
         { msgId },
       );
       log({
         event: "rate_limited",
-        connection_id: session.transport.connectionId,
-        msg_id: msgId,
-        max_messages_per_window: inboundLimits.maxInboundMessagesPerWindow,
-        window_ms: inboundLimits.rateWindowMs,
+        connectionId: session.transport.connectionId,
+        msgId: msgId,
+        maxMessagesPerWindow: inboundLimits.maxInboundMessagesPerWindow,
+        windowMs: inboundLimits.rateWindowMs,
       });
       if (inboundLimits.closeOnRateLimit) {
         await closeSession(session.transport.connectionId, "rate_limited");
@@ -327,17 +332,17 @@ export const createSyncServer = ({
         "bad_request",
         "Message exceeds maximum envelope size",
         {
-          max_envelope_bytes: inboundLimits.maxEnvelopeBytes,
-          actual_envelope_bytes: envelopeBytes,
+          maxEnvelopeBytes: inboundLimits.maxEnvelopeBytes,
+          actualEnvelopeBytes: envelopeBytes,
         },
         { msgId },
       );
       log({
         event: "message_too_large",
-        connection_id: session.transport.connectionId,
-        msg_id: msgId,
-        max_envelope_bytes: inboundLimits.maxEnvelopeBytes,
-        actual_envelope_bytes: envelopeBytes,
+        connectionId: session.transport.connectionId,
+        msgId: msgId,
+        maxEnvelopeBytes: inboundLimits.maxEnvelopeBytes,
+        actualEnvelopeBytes: envelopeBytes,
       });
       if (inboundLimits.closeOnOversize) {
         await closeSession(session.transport.connectionId, "message_too_large");
@@ -361,13 +366,13 @@ export const createSyncServer = ({
     }
 
     const token = payload.token;
-    const clientId = payload.client_id;
+    const clientId = payload.clientId;
 
     if (typeof token !== "string" || typeof clientId !== "string") {
       await sendError(
         session.transport,
         "bad_request",
-        "connect.payload.token and connect.payload.client_id are required",
+        "connect.payload.token and connect.payload.clientId are required",
         {},
         { msgId: context.msgId },
       );
@@ -405,9 +410,9 @@ export const createSyncServer = ({
     session.identity = identity;
     log({
       event: "connected",
-      connection_id: session.transport.connectionId,
-      client_id: clientId,
-      msg_id: context.msgId,
+      connectionId: session.transport.connectionId,
+      clientId: clientId,
+      msgId: context.msgId,
     });
 
     const maxCommittedId = await store.getMaxCommittedId();
@@ -415,8 +420,8 @@ export const createSyncServer = ({
       session.transport,
       "connected",
       {
-        client_id: clientId,
-        global_last_committed_id: maxCommittedId,
+        clientId: clientId,
+        globalLastCommittedId: maxCommittedId,
       },
       { msgId: context.msgId },
     );
@@ -441,10 +446,10 @@ export const createSyncServer = ({
       });
       log({
         event: "broadcast_sent",
-        connection_id: session.transport.connectionId,
+        connectionId: session.transport.connectionId,
         id: committedEvent.id,
-        committed_id: committedEvent.committed_id,
-        msg_id: broadcastMsgId,
+        committedId: committedEvent.committedId,
+        msgId: broadcastMsgId,
       });
     }
   };
@@ -498,7 +503,32 @@ export const createSyncServer = ({
 
     const id = item.id;
     const partitions = item.partitions;
-    const event = item.event;
+
+    const rejectSubmit = async (reason, message) => {
+      await sendMessage(
+        session.transport,
+        "submit_events_result",
+        {
+          results: [
+            {
+              id,
+              status: "rejected",
+              reason,
+              errors: [{ message }],
+              created: clock.now(),
+            },
+          ],
+        },
+        { msgId: context.msgId },
+      );
+      log({
+        event: "submit_rejected",
+        connectionId: session.transport.connectionId,
+        id,
+        reason,
+        msgId: context.msgId,
+      });
+    };
 
     if (typeof id !== "string" || id.length === 0) {
       await sendError(
@@ -510,12 +540,21 @@ export const createSyncServer = ({
       );
       return;
     }
-
-    if (!isObject(event)) {
+    if (!isNonEmptyString(item.type)) {
       await sendError(
         session.transport,
         "bad_request",
-        "events[0].event must be an object",
+        "events[0].type must be a non-empty string",
+        {},
+        { msgId: context.msgId },
+      );
+      return;
+    }
+    if (!isObject(item.payload)) {
+      await sendError(
+        session.transport,
+        "bad_request",
+        "events[0].payload must be an object",
         {},
         { msgId: context.msgId },
       );
@@ -524,76 +563,77 @@ export const createSyncServer = ({
 
     const partitionCheck = validateEventPartitions(partitions);
     if (!partitionCheck.ok) {
-      await sendMessage(
-        session.transport,
-        "submit_events_result",
-        {
-          results: [
-            {
-              id,
-              status: "rejected",
-              reason: partitionCheck.code,
-              errors: [{ message: partitionCheck.message }],
-              status_updated_at: clock.now(),
-            },
-          ],
-        },
-        { msgId: context.msgId },
-      );
-      log({
-        event: "submit_rejected",
-        connection_id: session.transport.connectionId,
-        id,
-        reason: partitionCheck.code,
-        msg_id: context.msgId,
-      });
+      await rejectSubmit(partitionCheck.code, partitionCheck.message);
       return;
     }
 
     const normalizedPartitions = partitionCheck.value;
+    const normalizedMeta = normalizeMeta(item.meta, {
+      defaultClientId: session.identity.clientId,
+    });
+
+    if (!isNonEmptyString(normalizedMeta.clientId)) {
+      await rejectSubmit("validation_failed", "meta.clientId is required");
+      return;
+    }
+    if (normalizedMeta.clientId !== session.identity.clientId) {
+      await rejectSubmit(
+        "forbidden",
+        "meta.clientId must match authenticated client",
+      );
+      return;
+    }
+    if (toFiniteNumberOrNull(normalizedMeta.clientTs) === null) {
+      await rejectSubmit(
+        "validation_failed",
+        "meta.clientTs must be a finite number",
+      );
+      return;
+    }
+    if (item.userId !== undefined && !isNonEmptyString(item.userId)) {
+      await rejectSubmit(
+        "validation_failed",
+        "userId must be a non-empty string when provided",
+      );
+      return;
+    }
+
+    const claimsUserId = isNonEmptyString(session.identity?.claims?.userId)
+      ? session.identity.claims.userId
+      : undefined;
+    if (
+      claimsUserId &&
+      isNonEmptyString(item.userId) &&
+      item.userId !== claimsUserId
+    ) {
+      await rejectSubmit("forbidden", "userId must match authenticated user");
+      return;
+    }
 
     const authorized = await authz.authorizePartitions(
       session.identity,
       normalizedPartitions,
     );
     if (!authorized) {
-      await sendMessage(
-        session.transport,
-        "submit_events_result",
-        {
-          results: [
-            {
-              id,
-              status: "rejected",
-              reason: "forbidden",
-              errors: [{ message: "partition access denied" }],
-              status_updated_at: clock.now(),
-            },
-          ],
-        },
-        { msgId: context.msgId },
-      );
-      log({
-        event: "submit_rejected",
-        connection_id: session.transport.connectionId,
-        id,
-        reason: "forbidden",
-        msg_id: context.msgId,
-      });
+      await rejectSubmit("forbidden", "partition access denied");
       return;
     }
 
+    const normalizedItem = {
+      id,
+      partitions: normalizedPartitions,
+      projectId: isNonEmptyString(item.projectId) ? item.projectId : undefined,
+      userId: isNonEmptyString(item.userId) ? item.userId : undefined,
+      type: item.type,
+      payload: item.payload,
+      meta: normalizedMeta,
+    };
+
     try {
-      await validation.validate(
-        {
-          id,
-          clientId: session.identity.clientId,
-          partitions: normalizedPartitions,
-          event,
-          createdAt: clock.now(),
-        },
-        { identity: session.identity, now: clock.now() },
-      );
+      await validation.validate(normalizedItem, {
+        identity: session.identity,
+        now: clock.now(),
+      });
     } catch (err) {
       const payloadError = toErrorPayload(
         err,
@@ -612,38 +652,13 @@ export const createSyncServer = ({
         return;
       }
 
-      await sendMessage(
-        session.transport,
-        "submit_events_result",
-        {
-          results: [
-            {
-              id,
-              status: "rejected",
-              reason: payloadError.code,
-              errors: [{ message: payloadError.message }],
-              status_updated_at: clock.now(),
-            },
-          ],
-        },
-        { msgId: context.msgId },
-      );
-      log({
-        event: "submit_rejected",
-        connection_id: session.transport.connectionId,
-        id,
-        reason: payloadError.code,
-        msg_id: context.msgId,
-      });
+      await rejectSubmit(payloadError.code, payloadError.message);
       return;
     }
 
     try {
       const { deduped, committedEvent } = await store.commitOrGetExisting({
-        id,
-        clientId: session.identity.clientId,
-        partitions: normalizedPartitions,
-        event,
+        ...normalizedItem,
         now: clock.now(),
       });
 
@@ -655,8 +670,8 @@ export const createSyncServer = ({
             {
               id: committedEvent.id,
               status: "committed",
-              committed_id: committedEvent.committed_id,
-              status_updated_at: committedEvent.status_updated_at,
+              committedId: committedEvent.committedId,
+              created: committedEvent.created,
             },
           ],
         },
@@ -664,12 +679,12 @@ export const createSyncServer = ({
       );
       log({
         event: "submit_committed",
-        connection_id: session.transport.connectionId,
+        connectionId: session.transport.connectionId,
         id: committedEvent.id,
-        committed_id: committedEvent.committed_id,
-        client_id: committedEvent.client_id,
+        committedId: committedEvent.committedId,
+        clientId: committedEvent.meta?.clientId,
         deduped,
-        msg_id: context.msgId,
+        msgId: context.msgId,
       });
 
       await broadcastCommitted({
@@ -685,30 +700,7 @@ export const createSyncServer = ({
           "validation_failed",
           "submit validation failed",
         );
-
-        await sendMessage(
-          session.transport,
-          "submit_events_result",
-          {
-            results: [
-              {
-                id,
-                status: "rejected",
-                reason: payloadError.code,
-                errors: [{ message: payloadError.message }],
-                status_updated_at: clock.now(),
-              },
-            ],
-          },
-          { msgId: context.msgId },
-        );
-        log({
-          event: "submit_rejected",
-          connection_id: session.transport.connectionId,
-          id,
-          reason: payloadError.code,
-          msg_id: context.msgId,
-        });
+        await rejectSubmit(payloadError.code, payloadError.message);
         return;
       }
 
@@ -768,7 +760,7 @@ export const createSyncServer = ({
       return;
     }
 
-    const rawSince = payload.since_committed_id;
+    const rawSince = payload.sinceCommittedId;
     if (
       typeof rawSince !== "number" ||
       Number.isNaN(rawSince) ||
@@ -777,7 +769,7 @@ export const createSyncServer = ({
       await sendError(
         session.transport,
         "bad_request",
-        "sync.payload.since_committed_id must be a non-negative number",
+        "sync.payload.sinceCommittedId must be a non-negative number",
         {},
         { msgId: context.msgId },
       );
@@ -799,12 +791,12 @@ export const createSyncServer = ({
     }
     log({
       event: "sync_started",
-      connection_id: session.transport.connectionId,
+      connectionId: session.transport.connectionId,
       partitions: normalizedPartitions,
-      since_committed_id: rawSince,
+      sinceCommittedId: rawSince,
       limit,
-      sync_to_committed_id: session.syncToCommittedId,
-      msg_id: context.msgId,
+      syncToCommittedId: session.syncToCommittedId,
+      msgId: context.msgId,
     });
 
     const page = await store.listCommittedSince({
@@ -820,20 +812,20 @@ export const createSyncServer = ({
       {
         partitions: normalizedPartitions,
         events: page.events,
-        next_since_committed_id: page.nextSinceCommittedId,
-        has_more: page.hasMore,
-        sync_to_committed_id: session.syncToCommittedId,
+        nextSinceCommittedId: page.nextSinceCommittedId,
+        hasMore: page.hasMore,
+        syncToCommittedId: session.syncToCommittedId,
       },
       { msgId: context.msgId },
     );
     log({
       event: "sync_page_sent",
-      connection_id: session.transport.connectionId,
+      connectionId: session.transport.connectionId,
       partitions: normalizedPartitions,
-      event_count: page.events.length,
-      next_since_committed_id: page.nextSinceCommittedId,
-      has_more: page.hasMore,
-      msg_id: context.msgId,
+      eventCount: page.events.length,
+      nextSinceCommittedId: page.nextSinceCommittedId,
+      hasMore: page.hasMore,
+      msgId: context.msgId,
     });
 
     if (!page.hasMore) {
@@ -846,8 +838,8 @@ export const createSyncServer = ({
     if (session.state === "closed") return;
 
     const contextMsgId =
-      isObject(message) && typeof message.msg_id === "string"
-        ? message.msg_id
+      isObject(message) && typeof message.msgId === "string"
+        ? message.msgId
         : undefined;
     const allowed = await enforceInboundGuards(session, message, contextMsgId);
     if (!allowed) return;
@@ -865,8 +857,8 @@ export const createSyncServer = ({
 
     const type = message.type;
     const payload = message.payload;
-    const protocolVersion = message.protocol_version;
-    const msgId = message.msg_id;
+    const protocolVersion = message.protocolVersion;
+    const msgId = message.msgId;
     const parsedMsgId = typeof msgId === "string" ? msgId : undefined;
 
     if (typeof type !== "string" || !isObject(payload)) {
@@ -883,29 +875,29 @@ export const createSyncServer = ({
       await sendError(
         session.transport,
         "bad_request",
-        "msg_id must be a string when provided",
+        "msgId must be a string when provided",
       );
       return;
     }
 
     log({
       event: "message_received",
-      connection_id: session.transport.connectionId,
-      message_type: type,
-      msg_id: parsedMsgId,
+      connectionId: session.transport.connectionId,
+      messageType: type,
+      msgId: parsedMsgId,
     });
 
     if (!isSupportedVersion(protocolVersion)) {
       await sendError(
         session.transport,
-        "protocol_version_unsupported",
+        "protocolVersion_unsupported",
         "Unsupported protocol version",
         {},
         { msgId: parsedMsgId },
       );
       await closeSession(
         session.transport.connectionId,
-        "protocol_version_unsupported",
+        "protocolVersion_unsupported",
       );
       return;
     }
@@ -950,9 +942,9 @@ export const createSyncServer = ({
         );
         log({
           event: "bad_request",
-          connection_id: session.transport.connectionId,
-          message_type: type,
-          msg_id: parsedMsgId,
+          connectionId: session.transport.connectionId,
+          messageType: type,
+          msgId: parsedMsgId,
         });
     }
   };
@@ -974,8 +966,8 @@ export const createSyncServer = ({
       return {
         receive: async (message) => {
           const inboundMsgId =
-            isObject(message) && typeof message.msg_id === "string"
-              ? message.msg_id
+            isObject(message) && typeof message.msgId === "string"
+              ? message.msgId
               : undefined;
           try {
             await handleMessage(session, message);
@@ -989,8 +981,8 @@ export const createSyncServer = ({
             );
             log({
               event: "server_error",
-              connection_id: session.transport.connectionId,
-              msg_id: inboundMsgId,
+              connectionId: session.transport.connectionId,
+              msgId: inboundMsgId,
             });
             await closeSession(session.transport.connectionId, "server_error");
           }

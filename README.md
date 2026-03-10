@@ -23,6 +23,7 @@ import {
   createSqliteSyncStore,
   createLibsqlClientStore,
   createLibsqlSyncStore,
+  createReducer,
 } from "insieme";
 ```
 
@@ -35,6 +36,7 @@ import {
 - `createSqliteSyncStore`: SQLite adapter for authoritative server committed log.
 - `createLibsqlClientStore`: `@libsql/client` adapter for the client store interface.
 - `createLibsqlSyncStore`: `@libsql/client` adapter for authoritative server committed log.
+- `createReducer`: helper for dispatching committed events by `type`.
 
 ## LibSQL Usage
 
@@ -101,7 +103,7 @@ Your client store must implement:
 - `loadCursor()`
 - `insertDraft(item)`
 - `loadDraftsOrdered()`
-- `applySubmitResult({ result, fallbackClientId })`
+- `applySubmitResult({ result })`
 - `applyCommittedBatch({ events, nextCursor? })`
 
 See `docs/reference/javascript-interface.md` and `docs/client/storage.md`.
@@ -111,8 +113,8 @@ Optional materialized-view extension (supported by both `createInMemoryClientSto
 ```js
 const reducer = createReducer({
   schemaHandlers: {
-    "counter.increment": ({ state, data }) => {
-      state.count = (state.count || 0) + data.amount;
+    "counter.increment": ({ state, payload }) => {
+      state.count = (state.count ?? 0) + payload.amount;
     },
   },
 });
@@ -143,8 +145,8 @@ Operational guidance:
 - Keep view count small: usually `1-3`, generally up to `~10` lightweight views.
 - Reuse the same domain reducer logic you already use for state replay to avoid duplicated logic paths.
 - Materialized views require an explicit `reduce` function.
-- For `type: "event"` payloads, use `createReducer({ schemaHandlers })`.
-- `createReducer` throws on unknown event types/schemas by default; pass `fallback` to customize.
+- `createReducer` dispatches by committed-event `type`.
+- `createReducer` throws on unknown event types by default; pass `fallback` to customize.
 - Full guide: `docs/client/materialized-views.md`.
 
 Server runtime also supports optional inbound guardrails via `limits` (message rate and envelope size caps) for defense-in-depth reliability.

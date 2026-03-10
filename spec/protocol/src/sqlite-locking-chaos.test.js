@@ -43,9 +43,10 @@ describeSqlite("src sqlite locking chaos", () => {
     await expectSqliteBusy(
       store.insertDraft({
         id: "evt-lock-1",
-        clientId: "C1",
         partitions: ["P1"],
-        event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
+        type: "x",
+        payload: { n: 1 },
+        meta: { clientId: "C1", clientTs: 100 },
         createdAt: 100,
       }),
     );
@@ -53,9 +54,10 @@ describeSqlite("src sqlite locking chaos", () => {
     lockerDb.exec("ROLLBACK;");
     await store.insertDraft({
       id: "evt-lock-1",
-      clientId: "C1",
       partitions: ["P1"],
-      event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
+      type: "x",
+      payload: { n: 1 },
+      meta: { clientId: "C1", clientTs: 100 },
       createdAt: 100,
     });
 
@@ -79,9 +81,10 @@ describeSqlite("src sqlite locking chaos", () => {
     await expectSqliteBusy(
       store.commitOrGetExisting({
         id: "evt-lock-2",
-        clientId: "C1",
         partitions: ["P1"],
-        event: { type: "event", payload: { schema: "x", data: { n: 2 } } },
+        type: "x",
+        payload: { n: 2 },
+        meta: { clientId: "C1", clientTs: 200 },
         now: 200,
       }),
     );
@@ -89,16 +92,17 @@ describeSqlite("src sqlite locking chaos", () => {
     lockerDb.exec("ROLLBACK;");
     const committed = await store.commitOrGetExisting({
       id: "evt-lock-2",
-      clientId: "C1",
       partitions: ["P1"],
-      event: { type: "event", payload: { schema: "x", data: { n: 2 } } },
+      type: "x",
+      payload: { n: 2 },
+      meta: { clientId: "C1", clientTs: 200 },
       now: 200,
     });
     expect(committed).toMatchObject({
       deduped: false,
       committedEvent: {
         id: "evt-lock-2",
-        committed_id: 1,
+        committedId: 1,
       },
     });
 

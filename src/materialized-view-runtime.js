@@ -270,7 +270,7 @@ export const createMaterializedViewRuntime = ({
       for (const event of events) {
         for (const partition of event.partitions || []) {
           const entry = entries.get(partition);
-          if (!entry || event.committed_id <= entry.lastCommittedId) {
+          if (!entry || event.committedId <= entry.lastCommittedId) {
             continue;
           }
           entry.state = applyMaterializedViewReducer(
@@ -279,11 +279,11 @@ export const createMaterializedViewRuntime = ({
             event,
             partition,
           );
-          entry.lastCommittedId = event.committed_id;
-          entry.updatedAt = event.status_updated_at || now();
+          entry.lastCommittedId = event.committedId;
+          entry.updatedAt = event.created || now();
           entry.dirtyEventCount += 1;
         }
-        cursor = event.committed_id;
+        cursor = event.committedId;
       }
 
       if (events.length < normalizedChunkSize) break;
@@ -358,7 +358,7 @@ export const createMaterializedViewRuntime = ({
           const hotEntries = getHotEntries(definition.name);
           for (const partition of uniquePartitions) {
             const entry = hotEntries.get(partition);
-            if (!entry || event.committed_id <= entry.lastCommittedId) {
+            if (!entry || event.committedId <= entry.lastCommittedId) {
               continue;
             }
             entry.state = applyMaterializedViewReducer(
@@ -367,8 +367,8 @@ export const createMaterializedViewRuntime = ({
               event,
               partition,
             );
-            entry.lastCommittedId = event.committed_id;
-            entry.updatedAt = event.status_updated_at || now();
+            entry.lastCommittedId = event.committedId;
+            entry.updatedAt = event.created || now();
             entry.dirtyEventCount += 1;
             await scheduleFlush(definition, partition, entry);
           }

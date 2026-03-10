@@ -7,11 +7,16 @@ import {
 } from "../../../src/index.js";
 
 describe("src command-profile", () => {
-  it("maps command envelope to sync event envelope", () => {
+  it("maps command envelope to normalized sync fields", () => {
     const command = {
       id: "cmd-1",
       type: "scene.create",
       payload: { sceneId: "scene-1", name: "Intro" },
+      meta: {
+        foo: "bar",
+        clientId: "user-provided-client",
+        clientTs: 1,
+      },
       actor: { userId: "u1", clientId: "c1" },
       projectId: "proj-1",
       clientTs: 1000,
@@ -19,35 +24,29 @@ describe("src command-profile", () => {
     };
 
     expect(commandToSyncEvent(command)).toEqual({
-      type: "event",
-      payload: {
-        commandId: "cmd-1",
-        schema: "scene.create",
-        data: { sceneId: "scene-1", name: "Intro" },
-        commandVersion: 2,
-        actor: { userId: "u1", clientId: "c1" },
-        projectId: "proj-1",
-        clientTs: 1000,
-      },
+      projectId: "proj-1",
+      userId: "u1",
+      type: "scene.create",
+      payload: { sceneId: "scene-1", name: "Intro" },
+      meta: { foo: "bar", clientId: "c1", clientTs: 1000 },
     });
   });
 
   it("maps committed sync row to command envelope with partition project fallback", () => {
     const command = committedSyncEventToCommand({
-      id: "evt-1",
-      client_id: "client-1",
+      id: "cmd-1",
       partitions: ["project:proj-1:story", "project:proj-1:settings"],
-      event: {
-        type: "event",
-        payload: {
-          commandId: "cmd-1",
-          schema: "scene.create",
-          data: { sceneId: "scene-1" },
-          actor: { userId: "u1", clientId: "c1" },
-          clientTs: 1234,
-        },
+      type: "scene.create",
+      payload: {
+        sceneId: "scene-1",
       },
-      status_updated_at: 2000,
+      userId: "u1",
+      meta: {
+        clientId: "c1",
+        clientTs: 1234,
+        foo: "bar",
+      },
+      created: 2000,
     });
 
     expect(command).toMatchObject({
@@ -57,47 +56,79 @@ describe("src command-profile", () => {
       partition: "project:proj-1:story",
       partitions: ["project:proj-1:story", "project:proj-1:settings"],
       clientTs: 1234,
+      meta: {
+        clientId: "c1",
+        clientTs: 1234,
+        foo: "bar",
+      },
+      actor: { userId: "u1", clientId: "c1" },
+    });
+  });
+
+  it("preserves arbitrary normalized meta on validation", () => {
+    const result = validateCommandSubmitItem({
+      id: "cmd-2",
+      partitions: ["project:proj-1:story"],
+      type: "scene.update",
+      payload: { sceneId: "scene-1" },
+      meta: {
+        clientId: "c1",
+        clientTs: 1000,
+        foo: "bar",
+        nested: { ok: true },
+      },
+    });
+
+    expect(result.meta).toEqual({
+      clientId: "c1",
+      clientTs: 1000,
+      foo: "bar",
+      nested: { ok: true },
     });
   });
 
   it("validates command submit item and normalizes partitions", () => {
     const result = validateCommandSubmitItem({
-      id: "evt-1",
+      id: "cmd-1",
       partitions: [
         "project:proj-1:settings",
         "project:proj-1:settings",
         "project:proj-1:story",
       ],
-      event: {
-        type: "event",
-        payload: {
-          commandId: "cmd-1",
-          schema: "project.created",
-          data: { state: { project: { id: "proj-1" } } },
-          actor: { userId: "u1", clientId: "c1" },
-          clientTs: 1000,
-        },
+      type: "project.created",
+      payload: { state: { project: { id: "proj-1" } } },
+      userId: "u1",
+      meta: {
+        clientId: "c1",
+        clientTs: 1000,
       },
     });
 
     expect(result).toEqual({
       commandId: "cmd-1",
-      schema: "project.created",
+      type: "project.created",
       projectId: "proj-1",
+      userId: "u1",
       partitions: ["project:proj-1:settings", "project:proj-1:story"],
+      meta: {
+        clientId: "c1",
+        clientTs: 1000,
+      },
     });
   });
 
-  it("rejects unsupported event type during command validation", () => {
+  it("rejects missing required normalized fields during command validation", () => {
     expect(() =>
       validateCommandSubmitItem({
         partitions: ["project:proj-1:story"],
-        event: {
-          type: "resource.created",
-          payload: {},
+        type: "",
+        payload: {},
+        meta: {
+          clientId: "c1",
+          clientTs: 1000,
         },
       }),
-    ).toThrow("Unsupported item.event.type");
+    ).toThrow("item.id is required");
   });
 
   it("extracts project id from partition scope", () => {

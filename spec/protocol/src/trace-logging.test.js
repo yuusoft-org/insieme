@@ -60,7 +60,7 @@ const createLoopbackTransport = ({ server, connectionId }) => {
 };
 
 describe("src trace logging", () => {
-  it("logs id and committed_id on server commit path", async () => {
+  it("logs id and committedId on server commit path", async () => {
     const logs = [];
     const serverStore = createInMemorySyncStore();
     const server = createSyncServer({
@@ -100,13 +100,13 @@ describe("src trace logging", () => {
     );
     expect(submitCommitted).toBeTruthy();
     expect(submitCommitted.id).toBe("evt-log-1");
-    expect(submitCommitted.committed_id).toBe(1);
+    expect(submitCommitted.committedId).toBe(1);
 
     const syncPage = logs.find((entry) => entry.event === "sync_page_sent");
     expect(syncPage).toBeTruthy();
     expect(syncPage).toMatchObject({
-      event_count: expect.any(Number),
-      next_since_committed_id: expect.any(Number),
+      eventCount: expect.any(Number),
+      nextSinceCommittedId: expect.any(Number),
     });
   });
 
@@ -155,7 +155,7 @@ describe("src trace logging", () => {
     expect(inserted.id).toBe("evt-client-log-1");
     expect(committed).toBeTruthy();
     expect(committed.id).toBe("evt-client-log-1");
-    expect(committed.committed_id).toBe(1);
+    expect(committed.committedId).toBe(1);
   });
 
   it("continues protocol flow even if logger throws", async () => {
@@ -196,7 +196,7 @@ describe("src trace logging", () => {
     await tick();
   });
 
-  it("propagates msg_id across client/server logs for submit flow", async () => {
+  it("propagates msgId across client/server logs for submit flow", async () => {
     const serverLogs = [];
     const clientLogs = [];
     let nextMsg = 0;
@@ -239,11 +239,11 @@ describe("src trace logging", () => {
     const serverSubmitLog = serverLogs.find(
       (entry) => entry.event === "submit_committed",
     );
-    expect(serverSubmitLog.msg_id).toBe("msg-3");
+    expect(serverSubmitLog.msgId).toBe("msg-3");
 
     const clientSubmitLog = clientLogs.find(
       (entry) => entry.event === "submit_committed",
     );
-    expect(clientSubmitLog.msg_id).toBe("msg-3");
+    expect(clientSubmitLog.msgId).toBe("msg-3");
   });
 });

@@ -149,11 +149,12 @@ describe("src reliability integration", () => {
       events: [
         {
           id: "evt-130",
-          client_id: "C2",
           partitions: ["P1"],
-          committed_id: 130,
-          event: { type: "event", payload: { schema: "x", data: { n: 130 } } },
-          status_updated_at: 1300,
+          committedId: 130,
+          type: "x",
+          payload: { n: 130 },
+          meta: { clientId: "C2", clientTs: 1300 },
+          created: 1300,
         },
       ],
     });
@@ -162,18 +163,19 @@ describe("src reliability integration", () => {
       events: [
         {
           id: "evt-129",
-          client_id: "C2",
           partitions: ["P1"],
-          committed_id: 129,
-          event: { type: "event", payload: { schema: "x", data: { n: 129 } } },
-          status_updated_at: 1290,
+          committedId: 129,
+          type: "x",
+          payload: { n: 129 },
+          meta: { clientId: "C2", clientTs: 1290 },
+          created: 1290,
         },
       ],
       nextCursor: 130,
     });
 
     const committed = store._debug.getCommitted();
-    expect(committed.map((entry) => entry.committed_id)).toEqual([129, 130]);
+    expect(committed.map((entry) => entry.committedId)).toEqual([129, 130]);
     expect(await store.loadCursor()).toBe(130);
   });
 
@@ -184,11 +186,12 @@ describe("src reliability integration", () => {
       events: [
         {
           id: "evt-1",
-          client_id: "C1",
           partitions: ["P1"],
-          committed_id: 1,
-          event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
-          status_updated_at: 1,
+          committedId: 1,
+          type: "x",
+          payload: { n: 1 },
+          meta: { clientId: "C1", clientTs: 1 },
+          created: 1,
         },
       ],
     });
@@ -200,19 +203,21 @@ describe("src reliability integration", () => {
       events: [
         {
           id: "evt-1",
-          client_id: "C1",
           partitions: ["P1"],
-          committed_id: 1,
-          event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
-          status_updated_at: 1,
+          committedId: 1,
+          type: "x",
+          payload: { n: 1 },
+          meta: { clientId: "C1", clientTs: 1 },
+          created: 1,
         },
         {
           id: "evt-2",
-          client_id: "C1",
           partitions: ["P1"],
-          committed_id: 2,
-          event: { type: "event", payload: { schema: "x", data: { n: 2 } } },
-          status_updated_at: 2,
+          committedId: 2,
+          type: "x",
+          payload: { n: 2 },
+          meta: { clientId: "C1", clientTs: 2 },
+          created: 2,
         },
       ],
       nextCursor: 2,
@@ -238,7 +243,7 @@ describe("src reliability integration", () => {
       now: createNowFactory(),
       uuid: createUuidFactory("evt"),
       validateLocalEvent: (item) => {
-        if (!item.event?.payload?.data?.ok) {
+        if (!item.payload?.ok) {
           throw new Error("local validation failed");
         }
       },
@@ -250,7 +255,8 @@ describe("src reliability integration", () => {
     await expect(
       node.client.submitEvent({
         partitions: ["P1"],
-        event: { type: "event", payload: { schema: "x", data: { ok: false } } },
+        type: "x",
+        payload: { ok: false },
       }),
     ).rejects.toThrow("local validation failed");
 
@@ -258,7 +264,8 @@ describe("src reliability integration", () => {
 
     await node.client.submitEvent({
       partitions: ["P1"],
-      event: { type: "event", payload: { schema: "x", data: { ok: true } } },
+      type: "x",
+      payload: { ok: true },
     });
     await tick();
 
@@ -272,23 +279,26 @@ describe("src reliability integration", () => {
 
     await store.insertDraft({
       id: "evt-d1",
-      clientId: "C1",
       partitions: ["P1"],
-      event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
+      type: "x",
+      payload: { n: 1 },
+      meta: { clientId: "C1", clientTs: 1 },
       createdAt: 1,
     });
     await store.insertDraft({
       id: "evt-d2",
-      clientId: "C1",
       partitions: ["P1"],
-      event: { type: "event", payload: { schema: "x", data: { n: 2 } } },
+      type: "x",
+      payload: { n: 2 },
+      meta: { clientId: "C1", clientTs: 2 },
       createdAt: 2,
     });
     await store.insertDraft({
       id: "evt-d3",
-      clientId: "C1",
       partitions: ["P1"],
-      event: { type: "event", payload: { schema: "x", data: { n: 3 } } },
+      type: "x",
+      payload: { n: 3 },
+      meta: { clientId: "C1", clientTs: 3 },
       createdAt: 3,
     });
 
@@ -296,33 +306,30 @@ describe("src reliability integration", () => {
       result: {
         id: "evt-d2",
         status: "committed",
-        committed_id: 501,
-        status_updated_at: 501,
+        committedId: 501,
+        created: 501,
       },
-      fallbackClientId: "C1",
     });
     await store.applySubmitResult({
       result: {
         id: "evt-d1",
         status: "committed",
-        committed_id: 502,
-        status_updated_at: 502,
+        committedId: 502,
+        created: 502,
       },
-      fallbackClientId: "C1",
     });
     await store.applySubmitResult({
       result: {
         id: "evt-d3",
         status: "committed",
-        committed_id: 503,
-        status_updated_at: 503,
+        committedId: 503,
+        created: 503,
       },
-      fallbackClientId: "C1",
     });
 
     expect(store._debug.getDrafts()).toHaveLength(0);
     expect(
-      store._debug.getCommitted().map((entry) => entry.committed_id),
+      store._debug.getCommitted().map((entry) => entry.committedId),
     ).toEqual([501, 502, 503]);
   });
 
@@ -332,23 +339,26 @@ describe("src reliability integration", () => {
 
     await serverStore.commitOrGetExisting({
       id: "evt-p2-1",
-      clientId: "C2",
       partitions: ["P2"],
-      event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
+      type: "x",
+      payload: { n: 1 },
+      meta: { clientId: "C2", clientTs: now() },
       now: now(),
     });
     await serverStore.commitOrGetExisting({
       id: "evt-p1-1",
-      clientId: "C2",
       partitions: ["P1"],
-      event: { type: "event", payload: { schema: "x", data: { n: 2 } } },
+      type: "x",
+      payload: { n: 2 },
+      meta: { clientId: "C2", clientTs: now() },
       now: now(),
     });
     await serverStore.commitOrGetExisting({
       id: "evt-p2-2",
-      clientId: "C2",
       partitions: ["P2"],
-      event: { type: "event", payload: { schema: "x", data: { n: 3 } } },
+      type: "x",
+      payload: { n: 3 },
+      meta: { clientId: "C2", clientTs: now() },
       now: now(),
     });
 
@@ -422,7 +432,8 @@ describe("src reliability integration", () => {
 
     await node.client.submitEvent({
       partitions: ["P1"],
-      event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
+      type: "x",
+      payload: { n: 1 },
     });
     await tick();
 
@@ -448,19 +459,20 @@ describe("src reliability integration", () => {
 
     const committed = node.store._debug.getCommitted();
     expect(committed).toHaveLength(1);
-    expect(committed[0]).toMatchObject({ id: "evt-crash-1", committed_id: 1 });
+    expect(committed[0]).toMatchObject({ id: "evt-crash-1", committedId: 1 });
     expect(node.store._debug.getDrafts()).toHaveLength(0);
 
     await node.client.submitEvent({
       partitions: ["P1"],
-      event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
+      type: "x",
+      payload: { n: 1 },
     });
     await tick();
 
     expect(node.store._debug.getCommitted()).toHaveLength(1);
   });
 
-  it("SC-14: concurrent writes converge by committed_id order", async () => {
+  it("SC-14: concurrent writes converge by committedId order", async () => {
     const serverStore = createInMemorySyncStore();
     const server = makeServer({ store: serverStore, now: createNowFactory() });
 
@@ -485,21 +497,23 @@ describe("src reliability integration", () => {
     await c2.client.start();
     await tick();
 
-    await Promise.all([
-      c1.client.submitEvent({
-        partitions: ["P1"],
-        event: { type: "event", payload: { schema: "x", data: { v: "U1" } } },
-      }),
-      c2.client.submitEvent({
-        partitions: ["P1"],
-        event: { type: "event", payload: { schema: "x", data: { v: "U2" } } },
-      }),
-    ]);
+      await Promise.all([
+        c1.client.submitEvent({
+          partitions: ["P1"],
+          type: "x",
+          payload: { v: "U1" },
+        }),
+        c2.client.submitEvent({
+          partitions: ["P1"],
+          type: "x",
+          payload: { v: "U2" },
+        }),
+      ]);
     await tick();
 
     const committed = serverStore._debug.getCommitted();
     expect(committed).toHaveLength(2);
-    expect(committed[0].committed_id).toBeLessThan(committed[1].committed_id);
+    expect(committed[0].committedId).toBeLessThan(committed[1].committedId);
 
     await c1.client.syncNow();
     await c2.client.syncNow();
@@ -530,23 +544,26 @@ describe("src reliability integration", () => {
     // offline draft creation and persistence
     await store.insertDraft({
       id: "offline-1",
-      clientId: "C1",
       partitions: ["P1"],
-      event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
+      type: "x",
+      payload: { n: 1 },
+      meta: { clientId: "C1", clientTs: 1 },
       createdAt: 1,
     });
     await store.insertDraft({
       id: "offline-2",
-      clientId: "C1",
       partitions: ["P1"],
-      event: { type: "event", payload: { schema: "x", data: { n: 2 } } },
+      type: "x",
+      payload: { n: 2 },
+      meta: { clientId: "C1", clientTs: 2 },
       createdAt: 2,
     });
     await store.insertDraft({
       id: "offline-3",
-      clientId: "C1",
       partitions: ["P1"],
-      event: { type: "event", payload: { schema: "x", data: { n: 3 } } },
+      type: "x",
+      payload: { n: 3 },
+      meta: { clientId: "C1", clientTs: 3 },
       createdAt: 3,
     });
 
@@ -661,7 +678,7 @@ describe("src reliability integration", () => {
 
       const committedNumbers = serverStore._debug
         .getCommitted()
-        .map((entry) => entry.committed_id);
+        .map((entry) => entry.committedId);
       const uniqueNumbers = new Set(committedNumbers);
       expect(uniqueNumbers.size).toBe(committedNumbers.length);
       for (let i = 1; i <= committedNumbers.length; i += 1) {

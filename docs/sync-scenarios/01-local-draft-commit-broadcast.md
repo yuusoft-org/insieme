@@ -1,6 +1,6 @@
 # Scenario 01 - Local Draft Commit + Peer Broadcast
 
-Note: Envelope metadata (`msg_id`, `timestamp`) is omitted when not central.
+Note: Envelope metadata (`msgId`, `timestamp`) is omitted when not central.
 
 ## Goal
 Verify local draft resolution to committed and peer broadcast delivery.
@@ -13,7 +13,7 @@ Verify local draft resolution to committed and peer broadcast delivery.
 ## Preconditions
 - C1 and C2 are connected.
 - C1 and C2 active partition scope includes `P1`.
-- Server last `committed_id` is 100.
+- Server last `committedId` is 100.
 - C1 has a local draft row `id=evt-uuid-1` in `local_drafts`.
 
 ## Steps
@@ -23,21 +23,23 @@ Verify local draft resolution to committed and peer broadcast delivery.
 **C1 -> Server**
 ```yaml
 type: submit_events
-protocol_version: "1.0"
+protocolVersion: "1.0"
 payload:
   events:
     - id: evt-uuid-1
       partitions: [P1]
-      event:
-        type: event
-        payload:
-          schema: explorer.folderCreated
-          data: { id: A, parent: _root, position: first }
+      projectId: P1
+      userId: U1
+      type: explorer.folderCreated
+      payload: { id: A, parentId: _root, index: 0 }
+      meta:
+        clientId: C1
+        clientTs: 1738451204000
 ```
 
 ### 2) Server commits
 - Validate payload + authorization.
-- Assign `committed_id=101`.
+- Assign `committedId=101`.
 - Persist event durably.
 
 ### 3) Server responds and broadcasts
@@ -45,30 +47,31 @@ payload:
 **Server -> C1**
 ```yaml
 type: submit_events_result
-protocol_version: "1.0"
+protocolVersion: "1.0"
 payload:
   results:
     - id: evt-uuid-1
       status: committed
-      committed_id: 101
-      status_updated_at: 1738451205000
+      committedId: 101
+      created: 1738451205000
 ```
 
 **Server -> C2**
 ```yaml
 type: event_broadcast
-protocol_version: "1.0"
+protocolVersion: "1.0"
 payload:
+  committedId: 101
   id: evt-uuid-1
-  client_id: C1
   partitions: [P1]
-  committed_id: 101
-  event:
-    type: event
-    payload:
-      schema: explorer.folderCreated
-      data: { id: A, parent: _root, position: first }
-  status_updated_at: 1738451205000
+  projectId: P1
+  userId: U1
+  type: explorer.folderCreated
+  payload: { id: A, parentId: _root, index: 0 }
+  meta:
+    clientId: C1
+    clientTs: 1738451204000
+  created: 1738451205000
 ```
 
 ## Assertions

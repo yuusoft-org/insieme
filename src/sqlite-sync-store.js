@@ -3,6 +3,7 @@ import {
   intersectsPartitions,
   normalizePartitionSet,
 } from "./canonicalize.js";
+import { normalizeMeta } from "./event-record.js";
 
 const SCHEMA_VERSION = 1;
 const DEFAULT_SCAN_CHUNK_SIZE = 512;
@@ -83,11 +84,13 @@ export const createSqliteSyncStore = (
         CREATE TABLE IF NOT EXISTS committed_events (
           committed_id INTEGER PRIMARY KEY AUTOINCREMENT,
           id TEXT NOT NULL UNIQUE,
-          client_id TEXT NOT NULL,
+          project_id TEXT,
+          user_id TEXT,
           partitions TEXT NOT NULL,
-          event TEXT NOT NULL,
-          canonical TEXT NOT NULL,
-          status_updated_at INTEGER NOT NULL
+          type TEXT NOT NULL,
+          payload TEXT NOT NULL,
+          meta TEXT NOT NULL,
+          created INTEGER NOT NULL
         );
       `);
     },
@@ -118,23 +121,38 @@ export const createSqliteSyncStore = (
 
   const parseCommittedRow = (row) => ({
     id: row.id,
-    client_id: row.client_id,
+    projectId: row.project_id || undefined,
+    userId: row.user_id || undefined,
     partitions: JSON.parse(row.partitions),
-    committed_id: row.committed_id,
-    event: JSON.parse(row.event),
-    status_updated_at: row.status_updated_at,
+    committedId: row.committed_id,
+    type: row.type,
+    payload: JSON.parse(row.payload),
+    meta: normalizeMeta(JSON.parse(row.meta)),
+    created: row.created,
   });
+
+  const toComparisonKey = (event) =>
+    canonicalizeSubmitItem({
+      partitions: event.partitions,
+      projectId: event.projectId,
+      userId: event.userId,
+      type: event.type,
+      payload: event.payload,
+      meta: event.meta,
+    });
 
   const prepareStatements = () => {
     getByIdStmt = db.prepare(`
       SELECT
         committed_id,
         id,
-        client_id,
+        project_id,
+        user_id,
         partitions,
-        event,
-        canonical,
-        status_updated_at
+        type,
+        payload,
+        meta,
+        created
       FROM committed_events
       WHERE id = @id
     `);
@@ -142,18 +160,22 @@ export const createSqliteSyncStore = (
     insertCommittedStmt = db.prepare(`
       INSERT INTO committed_events(
         id,
-        client_id,
+        project_id,
+        user_id,
         partitions,
-        event,
-        canonical,
-        status_updated_at
+        type,
+        payload,
+        meta,
+        created
       ) VALUES (
         @id,
-        @client_id,
+        @project_id,
+        @user_id,
         @partitions,
-        @event,
-        @canonical,
-        @status_updated_at
+        @type,
+        @payload,
+        @meta,
+        @created
       )
     `);
 
@@ -161,10 +183,13 @@ export const createSqliteSyncStore = (
       SELECT
         committed_id,
         id,
-        client_id,
+        project_id,
+        user_id,
         partitions,
-        event,
-        status_updated_at
+        type,
+        payload,
+        meta,
+        created
       FROM committed_events
       WHERE committed_id > @since_committed_id
         AND committed_id <= @upper_bound
@@ -190,10 +215,30 @@ export const createSqliteSyncStore = (
 
     commitTxn = createTransaction(
       db,
-      ({ id, clientId, partitions, event, now, canonical }) => {
+      ({
+        id,
+        partitions,
+        projectId,
+        userId,
+        type,
+        payload,
+        meta,
+        now,
+      }) => {
         const existing = getByIdStmt.get({ id });
+        const normalizedMeta = normalizeMeta(meta);
+        const comparisonKey = canonicalizeSubmitItem({
+          partitions,
+          projectId,
+          userId,
+          type,
+          payload,
+          meta: normalizedMeta,
+        });
+
         if (existing) {
-          if (existing.canonical !== canonical) {
+          const parsedExisting = parseCommittedRow(existing);
+          if (toComparisonKey(parsedExisting) !== comparisonKey) {
             const error = new Error("same id submitted with different payload");
             // @ts-ignore
             error.code = "validation_failed";
@@ -202,17 +247,19 @@ export const createSqliteSyncStore = (
 
           return {
             deduped: true,
-            committedEvent: parseCommittedRow(existing),
+            committedEvent: parsedExisting,
           };
         }
 
         insertCommittedStmt.run({
           id,
-          client_id: clientId,
+          project_id: projectId ?? null,
+          user_id: userId ?? null,
           partitions: JSON.stringify(partitions),
-          event: JSON.stringify(event),
-          canonical,
-          status_updated_at: now,
+          type,
+          payload: JSON.stringify(payload),
+          meta: JSON.stringify(normalizedMeta),
+          created: now,
         });
 
         const inserted = getByIdStmt.get({ id });
@@ -241,21 +288,28 @@ export const createSqliteSyncStore = (
       ensureInitialized();
     },
 
-    commitOrGetExisting: async ({ id, clientId, partitions, event, now }) => {
+    commitOrGetExisting: async ({
+      id,
+      partitions,
+      projectId,
+      userId,
+      type,
+      payload,
+      meta,
+      now,
+    }) => {
       ensureInitialized();
       const normalizedPartitions = normalizePartitionSet(partitions);
-      const canonical = canonicalizeSubmitItem({
-        partitions: normalizedPartitions,
-        event,
-      });
 
       return commitTxn({
         id,
-        clientId,
         partitions: normalizedPartitions,
-        event,
+        projectId,
+        userId,
+        type,
+        payload,
+        meta,
         now,
-        canonical,
       });
     },
 
@@ -318,7 +372,7 @@ export const createSqliteSyncStore = (
       const hasMore = matched.length > limit;
       const nextSinceCommittedId =
         events.length > 0
-          ? events[events.length - 1].committed_id
+          ? events[events.length - 1].committedId
           : sinceCommittedId;
 
       return {

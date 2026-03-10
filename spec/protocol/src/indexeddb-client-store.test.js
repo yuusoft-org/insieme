@@ -21,6 +21,42 @@ afterEach(async () => {
   }
 });
 
+const makeDraft = ({
+  id = "evt-1",
+  partitions = ["P1"],
+  type = "x",
+  payload = { n: 1 },
+  clientId = "C1",
+  clientTs = 100,
+  createdAt = 100,
+} = {}) => ({
+  id,
+  partitions,
+  type,
+  payload,
+  meta: { clientId, clientTs },
+  createdAt,
+});
+
+const makeCommitted = ({
+  id = "evt-1",
+  partitions = ["P1"],
+  committedId = 1,
+  type = "x",
+  payload = { n: 1 },
+  clientId = "C1",
+  clientTs = 10,
+  created = 10,
+} = {}) => ({
+  id,
+  partitions,
+  committedId,
+  type,
+  payload,
+  meta: { clientId, clientTs },
+  created,
+});
+
 describe("src createIndexedDbClientStore", () => {
   it("rejects missing indexeddb implementations", () => {
     expect(() => createIndexedDbClientStore({ indexedDB: {} })).toThrow(
@@ -41,19 +77,19 @@ describe("src createIndexedDbClientStore", () => {
 
       await store.insertDraft({
         id: "evt-1",
-        clientId: "C1",
         partitions: ["P1"],
-        event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
+        type: "x",
+        payload: { n: 1 },
+        meta: { clientId: "C1", clientTs: 100 },
         createdAt: 100,
       });
       await store.applySubmitResult({
         result: {
           id: "evt-1",
           status: "committed",
-          committed_id: 5,
-          status_updated_at: 500,
+          committedId: 5,
+          created: 500,
         },
-        fallbackClientId: "C1",
       });
       await store.applyCommittedBatch({ events: [], nextCursor: 5 });
       await store.applyCommittedBatch({ events: [], nextCursor: 2 });
@@ -63,8 +99,10 @@ describe("src createIndexedDbClientStore", () => {
       expect(committed).toHaveLength(1);
       expect(committed[0]).toMatchObject({
         id: "evt-1",
-        committed_id: 5,
-        client_id: "C1",
+        committedId: 5,
+        meta: {
+          clientId: "C1",
+        },
       });
     }
 
@@ -80,7 +118,7 @@ describe("src createIndexedDbClientStore", () => {
       expect(committed).toHaveLength(1);
       expect(committed[0]).toMatchObject({
         id: "evt-1",
-        committed_id: 5,
+        committedId: 5,
       });
     }
   });
@@ -94,20 +132,19 @@ describe("src createIndexedDbClientStore", () => {
     });
     await store.init();
 
-    await store.insertDraft({
-      id: "b",
-      clientId: "C1",
-      partitions: ["P1"],
-      event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
-      createdAt: 100,
-    });
-    await store.insertDraft({
-      id: "a",
-      clientId: "C1",
-      partitions: ["P1"],
-      event: { type: "event", payload: { schema: "x", data: { n: 2 } } },
-      createdAt: 101,
-    });
+    await store.insertDraft(
+      makeDraft({
+        id: "b",
+        payload: { n: 1 },
+      }),
+    );
+    await store.insertDraft(
+      makeDraft({
+        id: "a",
+        payload: { n: 2 },
+        createdAt: 101,
+      }),
+    );
 
     const drafts = await store.loadDraftsOrdered();
     expect(drafts.map((draft) => draft.id)).toEqual(["b", "a"]);
@@ -123,31 +160,13 @@ describe("src createIndexedDbClientStore", () => {
     await store.init();
 
     await store.applyCommittedBatch({
-      events: [
-        {
-          id: "evt-1",
-          client_id: "C1",
-          partitions: ["P1"],
-          committed_id: 1,
-          event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
-          status_updated_at: 10,
-        },
-      ],
+      events: [makeCommitted()],
       nextCursor: 1,
     });
 
     await expect(
       store.applyCommittedBatch({
-        events: [
-          {
-            id: "evt-1",
-            client_id: "C1",
-            partitions: ["P1"],
-            committed_id: 2,
-            event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
-            status_updated_at: 11,
-          },
-        ],
+        events: [makeCommitted({ committedId: 2, created: 11 })],
       }),
     ).rejects.toThrow("committed event invariant violation");
   });
@@ -162,30 +181,18 @@ describe("src createIndexedDbClientStore", () => {
     await store.init();
 
     await store.applyCommittedBatch({
-      events: [
-        {
-          id: "evt-1",
-          client_id: "C1",
-          partitions: ["P1"],
-          committed_id: 1,
-          event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
-          status_updated_at: 10,
-        },
-      ],
+      events: [makeCommitted()],
       nextCursor: 1,
     });
 
     await expect(
       store.applyCommittedBatch({
         events: [
-          {
+          makeCommitted({
             id: "evt-2",
-            client_id: "C1",
-            partitions: ["P1"],
-            committed_id: 1,
-            event: { type: "event", payload: { schema: "x", data: { n: 2 } } },
-            status_updated_at: 11,
-          },
+            payload: { n: 2 },
+            created: 11,
+          }),
         ],
       }),
     ).rejects.toThrow("committed event invariant violation");
@@ -203,7 +210,7 @@ describe("src createIndexedDbClientStore", () => {
           checkpoint: { mode: "manual" },
           initialState: () => ({ count: 0 }),
           reduce: ({ state, event }) => ({
-            count: state.count + (event.event.type === "increment" ? 1 : 0),
+            count: state.count + (event.type === "increment" ? 1 : 0),
           }),
         },
       ],
@@ -212,22 +219,19 @@ describe("src createIndexedDbClientStore", () => {
 
     await store.applyCommittedBatch({
       events: [
-        {
+        makeCommitted({
           id: "evt-1",
-          client_id: "C1",
-          partitions: ["P1"],
-          committed_id: 1,
-          event: { type: "increment", payload: {} },
-          status_updated_at: 10,
-        },
-        {
+          type: "increment",
+          payload: {},
+        }),
+        makeCommitted({
           id: "evt-2",
-          client_id: "C1",
           partitions: ["P1", "P2"],
-          committed_id: 2,
-          event: { type: "increment", payload: {} },
-          status_updated_at: 11,
-        },
+          committedId: 2,
+          type: "increment",
+          payload: {},
+          created: 11,
+        }),
       ],
       nextCursor: 2,
     });
@@ -271,7 +275,7 @@ describe("src createIndexedDbClientStore", () => {
             checkpoint: { mode: "manual" },
             initialState: () => ({ count: 0 }),
             reduce: ({ state, event }) => ({
-              count: state.count + (event.event.type === "increment" ? 1 : 0),
+              count: state.count + (event.type === "increment" ? 1 : 0),
             }),
           },
         ],
@@ -280,22 +284,19 @@ describe("src createIndexedDbClientStore", () => {
 
       await store.applyCommittedBatch({
         events: [
-          {
+          makeCommitted({
             id: "evt-1",
-            client_id: "C1",
-            partitions: ["P1"],
-            committed_id: 1,
-            event: { type: "increment", payload: {} },
-            status_updated_at: 10,
-          },
-          {
+            type: "increment",
+            payload: {},
+          }),
+          makeCommitted({
             id: "evt-2",
-            client_id: "C1",
             partitions: ["P1", "P2"],
-            committed_id: 2,
-            event: { type: "increment", payload: {} },
-            status_updated_at: 11,
-          },
+            committedId: 2,
+            type: "increment",
+            payload: {},
+            created: 11,
+          }),
         ],
         nextCursor: 2,
       });
@@ -312,7 +313,7 @@ describe("src createIndexedDbClientStore", () => {
             checkpoint: { mode: "manual" },
             initialState: () => ({ count: 0 }),
             reduce: ({ state, event }) => ({
-              count: state.count + (event.event.type === "increment" ? 1 : 0),
+              count: state.count + (event.type === "increment" ? 1 : 0),
             }),
           },
         ],
@@ -345,7 +346,7 @@ describe("src createIndexedDbClientStore", () => {
           checkpoint: { mode: "manual" },
           initialState: () => ({ count: 0 }),
           reduce: ({ state, event }) => ({
-            count: state.count + (event.event.type === "increment" ? 1 : 0),
+            count: state.count + (event.type === "increment" ? 1 : 0),
           }),
         },
       ],
@@ -354,14 +355,14 @@ describe("src createIndexedDbClientStore", () => {
 
     const events = [];
     for (let index = 1; index <= 150; index += 1) {
-      events.push({
+      events.push(makeCommitted({
         id: `evt-${index}`,
-        client_id: "C1",
         partitions: index % 3 === 0 ? ["P1", "P2"] : index % 2 === 0 ? ["P2"] : ["P1"],
-        committed_id: index,
-        event: { type: "increment", payload: {} },
-        status_updated_at: index,
-      });
+        committedId: index,
+        type: "increment",
+        payload: {},
+        created: index,
+      }));
     }
 
     await firstStore.applyCommittedBatch({
@@ -380,7 +381,7 @@ describe("src createIndexedDbClientStore", () => {
           checkpoint: { mode: "manual" },
           initialState: () => ({ count: 0 }),
           reduce: ({ state, event }) => ({
-            count: state.count + (event.event.type === "increment" ? 1 : 0),
+            count: state.count + (event.type === "increment" ? 1 : 0),
           }),
         },
       ],
@@ -415,20 +416,19 @@ describe("src createIndexedDbClientStore", () => {
       });
       await store.init();
 
-      await store.insertDraft({
-        id: "b",
-        clientId: "C1",
-        partitions: ["P1"],
-        event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
-        createdAt: 100,
-      });
-      await store.insertDraft({
-        id: "a",
-        clientId: "C1",
-        partitions: ["P1"],
-        event: { type: "event", payload: { schema: "x", data: { n: 2 } } },
-        createdAt: 101,
-      });
+      await store.insertDraft(
+        makeDraft({
+          id: "b",
+          payload: { n: 1 },
+        }),
+      );
+      await store.insertDraft(
+        makeDraft({
+          id: "a",
+          payload: { n: 2 },
+          createdAt: 101,
+        }),
+      );
 
       expect((await store.loadDraftsOrdered()).map((draft) => draft.id)).toEqual([
         "b",
@@ -436,16 +436,7 @@ describe("src createIndexedDbClientStore", () => {
       ]);
 
       await store.applyCommittedBatch({
-        events: [
-          {
-            id: "evt-1",
-            client_id: "C1",
-            partitions: ["P1"],
-            committed_id: 1,
-            event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
-            status_updated_at: 10,
-          },
-        ],
+        events: [makeCommitted()],
         nextCursor: 1,
       });
 
@@ -470,36 +461,33 @@ describe("src createIndexedDbClientStore", () => {
         indexedDB,
         dbName,
         materializedViews: [
-          {
-            name: "counter",
-            checkpoint: { mode: "manual" },
-            initialState: () => ({ count: 0 }),
-            reduce: ({ state, event }) => ({
-              count: state.count + (event.event.type === "increment" ? 1 : 0),
-            }),
-          },
-        ],
+        {
+          name: "counter",
+          checkpoint: { mode: "manual" },
+          initialState: () => ({ count: 0 }),
+          reduce: ({ state, event }) => ({
+            count: state.count + (event.type === "increment" ? 1 : 0),
+          }),
+        },
+      ],
       });
       await store.init();
 
       await store.applyCommittedBatch({
         events: [
-          {
+          makeCommitted({
             id: "evt-1",
-            client_id: "C1",
-            partitions: ["P1"],
-            committed_id: 1,
-            event: { type: "increment", payload: {} },
-            status_updated_at: 10,
-          },
-          {
+            type: "increment",
+            payload: {},
+          }),
+          makeCommitted({
             id: "evt-2",
-            client_id: "C1",
             partitions: ["P1", "P2"],
-            committed_id: 2,
-            event: { type: "increment", payload: {} },
-            status_updated_at: 11,
-          },
+            committedId: 2,
+            type: "increment",
+            payload: {},
+            created: 11,
+          }),
         ],
         nextCursor: 2,
       });
@@ -528,15 +516,15 @@ describe("src createIndexedDbClientStore", () => {
         indexedDB,
         dbName,
         materializedViews: [
-          {
-            name: "counter",
-            checkpoint: { mode: "manual" },
-            initialState: () => ({ count: 0 }),
-            reduce: ({ state, event }) => ({
-              count: state.count + (event.event.type === "increment" ? 1 : 0),
-            }),
-          },
-        ],
+        {
+          name: "counter",
+          checkpoint: { mode: "manual" },
+          initialState: () => ({ count: 0 }),
+          reduce: ({ state, event }) => ({
+            count: state.count + (event.type === "increment" ? 1 : 0),
+          }),
+        },
+      ],
       });
       await store.init();
 

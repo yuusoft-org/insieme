@@ -89,7 +89,7 @@ export const initializeStreamIfEmpty = async ({
   logger({
     component: "stream_initializer",
     event: "seed_events_submitted",
-    submitted_count: seedEvents.length,
+    submittedCount: seedEvents.length,
   });
 
   return {

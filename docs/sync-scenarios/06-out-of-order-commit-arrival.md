@@ -1,6 +1,6 @@
 # Scenario 06 - Out-of-Order Commit Arrival
 
-Note: Envelope metadata (`msg_id`, `timestamp`) is omitted when not central.
+Note: Envelope metadata (`msgId`, `timestamp`) is omitted when not central.
 
 ## Goal
 Verify client convergence when committed deliveries arrive out of order.
@@ -11,8 +11,8 @@ Verify client convergence when committed deliveries arrive out of order.
 
 ## Preconditions
 - Server has:
-  - `committed_id=129` (`id=evt-uuid-129`)
-  - `committed_id=130` (`id=evt-uuid-130`)
+  - `committedId=129` (`id=evt-uuid-129`)
+  - `committedId=130` (`id=evt-uuid-130`)
 
 ## Steps
 
@@ -21,13 +21,15 @@ Verify client convergence when committed deliveries arrive out of order.
 **Server -> C1**
 ```yaml
 type: event_broadcast
-protocol_version: "1.0"
+protocolVersion: "1.0"
 payload:
+  committedId: 130
   id: evt-uuid-130
-  committed_id: 130
   partitions: [P1]
-  event: { type: event, payload: { schema: explorer.folderCreated, data: { id: B } } }
-  status_updated_at: 1738451207000
+  type: explorer.folderCreated
+  payload: { id: B }
+  meta: { clientId: C2, clientTs: 1738451206800 }
+  created: 1738451207000
 ```
 
 ### 2) C1 receives 129 later
@@ -35,15 +37,17 @@ payload:
 **Server -> C1**
 ```yaml
 type: event_broadcast
-protocol_version: "1.0"
+protocolVersion: "1.0"
 payload:
+  committedId: 129
   id: evt-uuid-129
-  committed_id: 129
   partitions: [P1]
-  event: { type: event, payload: { schema: explorer.folderCreated, data: { id: A } } }
-  status_updated_at: 1738451206900
+  type: explorer.folderCreated
+  payload: { id: A }
+  meta: { clientId: C2, clientTs: 1738451206700 }
+  created: 1738451206900
 ```
 
 ## Assertions
 - Client stores both events idempotently.
-- State computation uses `ORDER BY committed_id`, yielding 129 then 130.
+- State computation uses `ORDER BY committed_id`, yielding `committedId` order `129` then `130`.

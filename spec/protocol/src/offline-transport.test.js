@@ -14,34 +14,34 @@ describe("src createOfflineTransport", () => {
     await transport.connect();
     await transport.send({
       type: "connect",
-      protocol_version: "1.0",
-      msg_id: "offline-connect-1",
-      payload: { token: "jwt", client_id: "C1" },
+      protocolVersion: "1.0",
+      msgId: "offline-connect-1",
+      payload: { token: "jwt", clientId: "C1" },
     });
     await transport.send({
       type: "sync",
-      protocol_version: "1.0",
-      msg_id: "offline-sync-1",
-      payload: { partitions: ["P1"], since_committed_id: 4 },
+      protocolVersion: "1.0",
+      msgId: "offline-sync-1",
+      payload: { partitions: ["P1"], sinceCommittedId: 4 },
     });
 
     expect(received[0]).toMatchObject({
       type: "connected",
-      msg_id: "offline-connect-1",
+      msgId: "offline-connect-1",
       payload: {
-        client_id: "C1",
-        global_last_committed_id: 11,
+        clientId: "C1",
+        globalLastCommittedId: 11,
       },
     });
     expect(received[1]).toMatchObject({
       type: "sync_response",
-      msg_id: "offline-sync-1",
+      msgId: "offline-sync-1",
       payload: {
         partitions: ["P1"],
         events: [],
-        next_since_committed_id: 4,
-        has_more: false,
-        sync_to_committed_id: 4,
+        nextSinceCommittedId: 4,
+        hasMore: false,
+        syncToCommittedId: 4,
       },
     });
   });
@@ -58,10 +58,10 @@ describe("src createOfflineTransport", () => {
         if (message.type === "connect" && onlineOnMessage) {
           onlineOnMessage({
             type: "connected",
-            protocol_version: "1.0",
+            protocolVersion: "1.0",
             payload: {
-              client_id: message.payload.client_id,
-              global_last_committed_id: 0,
+              clientId: message.payload.clientId,
+              globalLastCommittedId: 0,
             },
           });
         }
@@ -78,19 +78,19 @@ describe("src createOfflineTransport", () => {
     await transport.connect();
     await transport.send({
       type: "connect",
-      protocol_version: "1.0",
-      payload: { token: "jwt", client_id: "C1" },
+      protocolVersion: "1.0",
+      payload: { token: "jwt", clientId: "C1" },
     });
     await transport.send({
       type: "submit_events",
-      protocol_version: "1.0",
+      protocolVersion: "1.0",
       payload: {
         events: [{ id: "evt-1", partitions: ["P1"], event: { type: "event" } }],
       },
     });
     await transport.send({
       type: "submit_events",
-      protocol_version: "1.0",
+      protocolVersion: "1.0",
       payload: {
         events: [{ id: "evt-2", partitions: ["P1"], event: { type: "event" } }],
       },
@@ -128,8 +128,8 @@ describe("src createOfflineTransport", () => {
     await transport.send("bad-message");
     await transport.send({
       type: "not_supported",
-      protocol_version: "1.0",
-      msg_id: "unknown-1",
+      protocolVersion: "1.0",
+      msgId: "unknown-1",
       payload: {},
     });
 
@@ -142,7 +142,7 @@ describe("src createOfflineTransport", () => {
     });
     expect(received[1]).toMatchObject({
       type: "error",
-      msg_id: "unknown-1",
+      msgId: "unknown-1",
       payload: {
         code: "bad_request",
       },
@@ -161,7 +161,7 @@ describe("src createOfflineTransport", () => {
 
     await transport.send({
       type: "submit_events",
-      protocol_version: "1.0",
+      protocolVersion: "1.0",
       payload: {
         events: [
           { id: "evt-cap-1", partitions: ["P1"], event: { type: "event" } },
@@ -170,8 +170,8 @@ describe("src createOfflineTransport", () => {
     });
     await transport.send({
       type: "submit_events",
-      protocol_version: "1.0",
-      msg_id: "evt-cap-2",
+      protocolVersion: "1.0",
+      msgId: "evt-cap-2",
       payload: {
         events: [
           { id: "evt-cap-2", partitions: ["P1"], event: { type: "event" } },
@@ -182,7 +182,7 @@ describe("src createOfflineTransport", () => {
     expect(buffered).toEqual([{ id: "evt-cap-1", bufferedCount: 1 }]);
     expect(received[0]).toMatchObject({
       type: "error",
-      msg_id: "evt-cap-2",
+      msgId: "evt-cap-2",
       payload: {
         code: "rate_limited",
       },
@@ -223,10 +223,10 @@ describe("src createOfflineTransport", () => {
             if (message.type === "connect" && handler) {
               handler({
                 type: "connected",
-                protocol_version: "1.0",
+                protocolVersion: "1.0",
                 payload: {
-                  client_id: message.payload.client_id,
-                  global_last_committed_id: 0,
+                  clientId: message.payload.clientId,
+                  globalLastCommittedId: 0,
                 },
               });
             }
@@ -259,8 +259,8 @@ describe("src createOfflineTransport", () => {
 
     await transport.send({
       type: "connect",
-      protocol_version: "1.0",
-      payload: { token: "jwt", client_id: "C1" },
+      protocolVersion: "1.0",
+      payload: { token: "jwt", clientId: "C1" },
     });
     expect(onlineA.sent[0].type).toBe("connect");
 

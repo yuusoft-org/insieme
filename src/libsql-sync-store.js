@@ -3,6 +3,7 @@ import {
   intersectsPartitions,
   normalizePartitionSet,
 } from "./canonicalize.js";
+import { normalizeMeta } from "./event-record.js";
 import { createLibsqlDriver, parseIntSafe } from "./libsql-driver.js";
 
 const SCHEMA_VERSION = 1;
@@ -10,12 +11,25 @@ const DEFAULT_SCAN_CHUNK_SIZE = 512;
 
 const parseCommittedRow = (row) => ({
   id: row.id,
-  client_id: row.client_id,
+  projectId: row.project_id || undefined,
+  userId: row.user_id || undefined,
   partitions: JSON.parse(row.partitions),
-  committed_id: parseIntSafe(row.committed_id, 0),
-  event: JSON.parse(row.event),
-  status_updated_at: parseIntSafe(row.status_updated_at, 0),
+  committedId: parseIntSafe(row.committed_id, 0),
+  type: row.type,
+  payload: JSON.parse(row.payload),
+  meta: normalizeMeta(JSON.parse(row.meta)),
+  created: parseIntSafe(row.created, 0),
 });
+
+const toComparisonKey = (event) =>
+  canonicalizeSubmitItem({
+    partitions: event.partitions,
+    projectId: event.projectId,
+    userId: event.userId,
+    type: event.type,
+    payload: event.payload,
+    meta: event.meta,
+  });
 
 export const createLibsqlSyncStore = (
   client,
@@ -64,11 +78,13 @@ export const createLibsqlSyncStore = (
           CREATE TABLE IF NOT EXISTS committed_events (
             committed_id INTEGER PRIMARY KEY AUTOINCREMENT,
             id TEXT NOT NULL UNIQUE,
-            client_id TEXT NOT NULL,
+            project_id TEXT,
+            user_id TEXT,
             partitions TEXT NOT NULL,
-            event TEXT NOT NULL,
-            canonical TEXT NOT NULL,
-            status_updated_at INTEGER NOT NULL
+            type TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            meta TEXT NOT NULL,
+            created INTEGER NOT NULL
           );
         `);
       } else {
@@ -85,11 +101,13 @@ export const createLibsqlSyncStore = (
         SELECT
           committed_id,
           id,
-          client_id,
+          project_id,
+          user_id,
           partitions,
-          event,
-          canonical,
-          status_updated_at
+          type,
+          payload,
+          meta,
+          created
         FROM committed_events
         WHERE id = ?
       `,
@@ -146,32 +164,50 @@ export const createLibsqlSyncStore = (
       await ensureInitialized();
     },
 
-    commitOrGetExisting: async ({ id, clientId, partitions, event, now }) => {
+    commitOrGetExisting: async ({
+      id,
+      partitions,
+      projectId,
+      userId,
+      type,
+      payload,
+      meta,
+      now,
+    }) => {
       await ensureInitialized();
       const normalizedPartitions = normalizePartitionSet(partitions);
-      const canonical = canonicalizeSubmitItem({
+      const normalizedMeta = normalizeMeta(meta);
+      const comparisonKey = canonicalizeSubmitItem({
         partitions: normalizedPartitions,
-        event,
+        projectId,
+        userId,
+        type,
+        payload,
+        meta: normalizedMeta,
       });
 
       const insertResult = await db.execute(
         `
           INSERT INTO committed_events(
             id,
-            client_id,
+            project_id,
+            user_id,
             partitions,
-            event,
-            canonical,
-            status_updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?)
+            type,
+            payload,
+            meta,
+            created
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO NOTHING
         `,
         [
           id,
-          clientId,
+          projectId ?? null,
+          userId ?? null,
           JSON.stringify(normalizedPartitions),
-          JSON.stringify(event),
-          canonical,
+          type,
+          JSON.stringify(payload),
+          JSON.stringify(normalizedMeta),
           now,
         ],
       );
@@ -181,8 +217,9 @@ export const createLibsqlSyncStore = (
         throw new Error("commit insert succeeded but row was not readable");
       }
 
+      const parsed = parseCommittedRow(insertedOrExisting);
       if (db.rowsAffected(insertResult) === 0) {
-        if (insertedOrExisting.canonical !== canonical) {
+        if (toComparisonKey(parsed) !== comparisonKey) {
           const error = new Error("same id submitted with different payload");
           // @ts-ignore
           error.code = "validation_failed";
@@ -190,13 +227,13 @@ export const createLibsqlSyncStore = (
         }
         return {
           deduped: true,
-          committedEvent: parseCommittedRow(insertedOrExisting),
+          committedEvent: parsed,
         };
       }
 
       return {
         deduped: false,
-        committedEvent: parseCommittedRow(insertedOrExisting),
+        committedEvent: parsed,
       };
     },
 
@@ -231,10 +268,13 @@ export const createLibsqlSyncStore = (
             SELECT
               committed_id,
               id,
-              client_id,
+              project_id,
+              user_id,
               partitions,
-              event,
-              status_updated_at
+              type,
+              payload,
+              meta,
+              created
             FROM committed_events
             WHERE committed_id > ?
               AND committed_id <= ?
@@ -268,7 +308,7 @@ export const createLibsqlSyncStore = (
       const hasMore = matched.length > limit;
       const nextSinceCommittedId =
         events.length > 0
-          ? events[events.length - 1].committed_id
+          ? events[events.length - 1].committedId
           : sinceCommittedId;
 
       return {

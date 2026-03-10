@@ -46,16 +46,17 @@ describeSqlite("src sqlite process crash safety", () => {
 
     const retry = await store.commitOrGetExisting({
       id: "evt-proc-1",
-      clientId: "C1",
       partitions: ["P1"],
-      event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
+      type: "x",
+      payload: { n: 1 },
+      meta: { clientId: "C1", clientTs: 100 },
       now: 200,
     });
     expect(retry).toMatchObject({
       deduped: true,
       committedEvent: {
         id: "evt-proc-1",
-        committed_id: 1,
+        committedId: 1,
       },
     });
 

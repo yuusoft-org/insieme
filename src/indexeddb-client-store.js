@@ -1,8 +1,9 @@
 import { canonicalizeSubmitItem } from "./canonicalize.js";
+import { buildCommittedEventFromDraft, normalizeMeta } from "./event-record.js";
 import { normalizeMaterializedViewDefinitions } from "./materialized-view.js";
 import { createMaterializedViewRuntime } from "./materialized-view-runtime.js";
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const DEFAULT_DB_NAME = "insieme-client";
 const META_STORE = "meta";
 const DRAFT_STORE = "drafts";
@@ -11,6 +12,9 @@ const MATERIALIZED_VIEW_STORE = "materialized_view_state";
 const CURSOR_KEY = "cursor_committed_id";
 const NEXT_DRAFT_CLOCK_KEY = "next_draft_clock";
 const DEFAULT_MATERIALIZED_BACKFILL_CHUNK_SIZE = 256;
+
+const DRAFT_CLOCK_INDEX = "by_draft_clock";
+const COMMITTED_ID_INDEX = "by_committed_id";
 
 const parseIntSafe = (value, fallback = 0) => {
   const parsed = Number.parseInt(value, 10);
@@ -63,7 +67,7 @@ const listCommittedAfter = async (
   limit,
   IDBKeyRangeImpl,
 ) => {
-  const index = committedStore.index("by_committed_id");
+  const index = committedStore.index(COMMITTED_ID_INDEX);
   const keyRange = IDBKeyRangeImpl?.lowerBound(sinceCommittedId, true);
   const items = [];
 
@@ -86,7 +90,7 @@ const listCommittedAfter = async (
 };
 
 const loadLatestCommittedId = async (committedStore) => {
-  const index = committedStore.index("by_committed_id");
+  const index = committedStore.index(COMMITTED_ID_INDEX);
   return new Promise((resolve, reject) => {
     const request = index.openCursor(null, "prev");
     request.onsuccess = () => {
@@ -112,31 +116,112 @@ const openDatabase = ({ indexedDB, dbName }) =>
         });
       }
 
-      if (!db.objectStoreNames.contains(DRAFT_STORE)) {
-        const draftsStore = db.createObjectStore(DRAFT_STORE, {
-          keyPath: "id",
-        });
-        draftsStore.createIndex("by_draft_clock", "draftClock", {
-          unique: false,
-        });
+      if (db.objectStoreNames.contains(DRAFT_STORE)) {
+        db.deleteObjectStore(DRAFT_STORE);
       }
+      const draftsStore = db.createObjectStore(DRAFT_STORE, {
+        keyPath: "id",
+      });
+      draftsStore.createIndex(DRAFT_CLOCK_INDEX, "draft_clock", {
+        unique: false,
+      });
 
-      if (!db.objectStoreNames.contains(COMMITTED_STORE)) {
-        const committedStore = db.createObjectStore(COMMITTED_STORE, {
-          keyPath: "id",
-        });
-        committedStore.createIndex("by_committed_id", "committed_id", {
-          unique: true,
-        });
+      if (db.objectStoreNames.contains(COMMITTED_STORE)) {
+        db.deleteObjectStore(COMMITTED_STORE);
       }
+      const committedStore = db.createObjectStore(COMMITTED_STORE, {
+        keyPath: "id",
+      });
+      committedStore.createIndex(COMMITTED_ID_INDEX, "committed_id", {
+        unique: true,
+      });
 
-      if (!db.objectStoreNames.contains(MATERIALIZED_VIEW_STORE)) {
-        db.createObjectStore(MATERIALIZED_VIEW_STORE, {
-          keyPath: ["viewName", "partition"],
-        });
+      if (db.objectStoreNames.contains(MATERIALIZED_VIEW_STORE)) {
+        db.deleteObjectStore(MATERIALIZED_VIEW_STORE);
       }
+      db.createObjectStore(MATERIALIZED_VIEW_STORE, {
+        keyPath: ["view_name", "partition"],
+      });
     };
     request.onsuccess = () => resolve(request.result);
+  });
+
+const parseDraftRow = (row) => ({
+  draftClock: parseIntSafe(row.draft_clock, 0),
+  id: row.id,
+  partitions: [...row.partitions],
+  projectId: row.project_id || undefined,
+  userId: row.user_id || undefined,
+  type: row.type,
+  payload: structuredClone(row.payload),
+  meta: normalizeMeta(row.meta),
+  createdAt: parseIntSafe(row.created_at, 0),
+});
+
+const serializeDraftRow = ({
+  draftClock,
+  id,
+  partitions,
+  projectId,
+  userId,
+  type,
+  payload,
+  meta,
+  createdAt,
+}) => ({
+  draft_clock: draftClock,
+  id,
+  partitions: [...partitions],
+  project_id: projectId,
+  user_id: userId,
+  type,
+  payload: structuredClone(payload),
+  meta: normalizeMeta(meta),
+  created_at: createdAt,
+});
+
+const parseCommittedRow = (row) => ({
+  committedId: parseIntSafe(row.committed_id, 0),
+  id: row.id,
+  projectId: row.project_id || undefined,
+  userId: row.user_id || undefined,
+  partitions: [...row.partitions],
+  type: row.type,
+  payload: structuredClone(row.payload),
+  meta: normalizeMeta(row.meta),
+  created: parseIntSafe(row.created, 0),
+});
+
+const serializeCommittedRow = ({
+  committedId,
+  id,
+  projectId,
+  userId,
+  partitions,
+  type,
+  payload,
+  meta,
+  created,
+}) => ({
+  committed_id: committedId,
+  id,
+  project_id: projectId,
+  user_id: userId,
+  partitions: [...partitions],
+  type,
+  payload: structuredClone(payload),
+  meta: normalizeMeta(meta),
+  created,
+});
+
+const toComparisonKey = (event) =>
+  canonicalizeSubmitItem({
+    partitions: event.partitions,
+    projectId: event.projectId,
+    userId: event.userId,
+    type: event.type,
+    payload: event.payload,
+    meta: event.meta,
   });
 
 export const createIndexedDbClientStore = ({
@@ -195,10 +280,7 @@ export const createIndexedDbClientStore = ({
               limit,
               IDBKeyRange,
             );
-            return rows.map((row) => ({
-              ...row,
-              partitions: [...row.partitions],
-            }));
+            return rows.map(parseCommittedRow);
           }),
         loadCheckpoint: async ({ viewName, partition }) =>
           withTransaction([MATERIALIZED_VIEW_STORE], "readonly", async (stores) => {
@@ -207,10 +289,10 @@ export const createIndexedDbClientStore = ({
             );
             if (!row) return undefined;
             return {
-              viewVersion: row.viewVersion,
-              lastCommittedId: parseIntSafe(row.lastCommittedId, 0),
+              viewVersion: row.view_version,
+              lastCommittedId: parseIntSafe(row.last_committed_id, 0),
               value: row.value,
-              updatedAt: parseIntSafe(row.updatedAt, 0),
+              updatedAt: parseIntSafe(row.updated_at, 0),
             };
           }),
         saveCheckpoint: async ({
@@ -226,12 +308,12 @@ export const createIndexedDbClientStore = ({
             "readwrite",
             async (stores) => {
               stores[MATERIALIZED_VIEW_STORE].put({
-                viewName,
+                view_name: viewName,
                 partition,
-                viewVersion,
-                lastCommittedId,
+                view_version: viewVersion,
+                last_committed_id: lastCommittedId,
                 value: structuredClone(value),
-                updatedAt,
+                updated_at: updatedAt,
               });
             },
           );
@@ -291,17 +373,12 @@ export const createIndexedDbClientStore = ({
     committedIdIndex,
     event,
   ) => {
-    const canonical = canonicalizeSubmitItem({
-      partitions: event.partitions,
-      event: event.event,
-    });
-
     const existingById = await requestToPromise(committedStore.get(event.id));
     if (existingById) {
+      const parsedExistingById = parseCommittedRow(existingById);
       if (
-        existingById.committed_id !== event.committed_id ||
-        existingById.client_id !== event.client_id ||
-        existingById.canonical !== canonical
+        parsedExistingById.committedId !== event.committedId ||
+        toComparisonKey(parsedExistingById) !== toComparisonKey(event)
       ) {
         throw new Error(
           `committed event invariant violation for id ${event.id}: conflicting duplicate`,
@@ -311,19 +388,15 @@ export const createIndexedDbClientStore = ({
     }
 
     const existingByCommittedId = await requestToPromise(
-      committedIdIndex.get(event.committed_id),
+      committedIdIndex.get(event.committedId),
     );
     if (existingByCommittedId && existingByCommittedId.id !== event.id) {
       throw new Error(
-        `committed event invariant violation for committed_id ${event.committed_id}: id mismatch`,
+        `committed event invariant violation for committedId ${event.committedId}: id mismatch`,
       );
     }
 
-    committedStore.add({
-      ...event,
-      partitions: [...event.partitions],
-      canonical,
-    });
+    committedStore.add(serializeCommittedRow(event));
     return true;
   };
 
@@ -337,7 +410,16 @@ export const createIndexedDbClientStore = ({
         loadMetaInt(stores[META_STORE], CURSOR_KEY, 0),
       ),
 
-    insertDraft: async ({ id, clientId, partitions, event, createdAt }) => {
+    insertDraft: async ({
+      id,
+      partitions,
+      projectId,
+      userId,
+      type,
+      payload,
+      meta,
+      createdAt,
+    }) => {
       await withTransaction(
         [META_STORE, DRAFT_STORE],
         "readwrite",
@@ -350,14 +432,17 @@ export const createIndexedDbClientStore = ({
           }
 
           const draftClock = await loadMetaInt(metaStore, NEXT_DRAFT_CLOCK_KEY, 1);
-          draftStore.add({
+          draftStore.add(serializeDraftRow({
             id,
             draftClock,
-            clientId,
             partitions: [...partitions],
-            event,
+            projectId,
+            userId,
+            type,
+            payload: structuredClone(payload),
+            meta: normalizeMeta(meta),
             createdAt,
-          });
+          }));
           await saveMetaInt(metaStore, NEXT_DRAFT_CLOCK_KEY, draftClock + 1);
         },
       );
@@ -365,39 +450,34 @@ export const createIndexedDbClientStore = ({
 
     loadDraftsOrdered: async () =>
       withTransaction([DRAFT_STORE], "readonly", async (stores) => {
-        const drafts = await listAll(stores[DRAFT_STORE]);
+        const drafts = (await listAll(stores[DRAFT_STORE])).map(parseDraftRow);
         drafts.sort((left, right) => {
           if (left.draftClock !== right.draftClock) {
             return left.draftClock - right.draftClock;
           }
           return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
         });
-        return drafts.map((draft) => ({
-          ...draft,
-          partitions: [...draft.partitions],
-        }));
+        return drafts;
       }),
 
-    applySubmitResult: async ({ result, fallbackClientId }) => {
+    applySubmitResult: async ({ result }) => {
       const committedEvent = await withTransaction(
         [DRAFT_STORE, COMMITTED_STORE],
         "readwrite",
         async (stores) => {
           const draftStore = stores[DRAFT_STORE];
           const committedStore = stores[COMMITTED_STORE];
-          const committedIdIndex = committedStore.index("by_committed_id");
-          const draft = await requestToPromise(draftStore.get(result.id));
+          const committedIdIndex = committedStore.index(COMMITTED_ID_INDEX);
+          const storedDraft = await requestToPromise(draftStore.get(result.id));
+          const draft = storedDraft ? parseDraftRow(storedDraft) : undefined;
           let insertedEvent;
 
           if (result.status === "committed" && draft) {
-            const committed = {
-              committed_id: result.committed_id,
-              id: draft.id,
-              client_id: draft.clientId || fallbackClientId,
-              partitions: [...draft.partitions],
-              event: draft.event,
-              status_updated_at: result.status_updated_at,
-            };
+            const committed = buildCommittedEventFromDraft({
+              draft,
+              committedId: result.committedId,
+              created: result.created,
+            });
             const inserted = await assertCommittedInvariant(
               committedStore,
               committedIdIndex,
@@ -426,7 +506,7 @@ export const createIndexedDbClientStore = ({
           const metaStore = stores[META_STORE];
           const draftStore = stores[DRAFT_STORE];
           const committedStore = stores[COMMITTED_STORE];
-          const committedIdIndex = committedStore.index("by_committed_id");
+          const committedIdIndex = committedStore.index(COMMITTED_ID_INDEX);
           const inserted = [];
 
           for (const event of events) {
@@ -500,13 +580,15 @@ export const createIndexedDbClientStore = ({
     _debug: {
       getDrafts: async () =>
         withTransaction([DRAFT_STORE], "readonly", async (stores) =>
-          listAll(stores[DRAFT_STORE]),
+          (await listAll(stores[DRAFT_STORE])).map(parseDraftRow),
         ),
       getCommitted: async () =>
         withTransaction([COMMITTED_STORE], "readonly", async (stores) => {
-          const committed = await listAll(stores[COMMITTED_STORE]);
+          const committed = (await listAll(stores[COMMITTED_STORE])).map(
+            parseCommittedRow,
+          );
           committed.sort(
-            (left, right) => left.committed_id - right.committed_id,
+            (left, right) => left.committedId - right.committedId,
           );
           return committed;
         }),

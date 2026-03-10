@@ -15,7 +15,7 @@ Use this checklist before production rollout.
   - `rateWindowMs`
   - `maxEnvelopeBytes`
 - [ ] Monitor `error.code=rate_limited` and `message_too_large` logs.
-- [ ] Ensure all structured logs include `connection_id`, `id`, `committed_id`, and `msg_id` when available.
+- [ ] Ensure all structured logs include `connectionId`, `id`, `committedId`, and `msgId` when available.
 
 ## SQLite Durability
 

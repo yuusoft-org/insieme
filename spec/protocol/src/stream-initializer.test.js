@@ -143,7 +143,7 @@ describe("src initializeStreamIfEmpty", () => {
     expect(logger).toHaveBeenCalledWith({
       component: "stream_initializer",
       event: "seed_events_submitted",
-      submitted_count: 1,
+      submittedCount: 1,
     });
   });
 });

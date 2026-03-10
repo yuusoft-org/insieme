@@ -23,11 +23,11 @@ const client = createCoreSyncClient({
     if (type === "sync_page") {
       console.log("applied sync page", {
         events: payload.events.length,
-        next: payload.next_since_committed_id,
+        next: payload.nextSinceCommittedId,
       });
     }
     if (type === "committed") {
-      console.log("pending draft resolved", payload.id, payload.committed_id);
+      console.log("pending draft resolved", payload.id, payload.committedId);
     }
   },
 });

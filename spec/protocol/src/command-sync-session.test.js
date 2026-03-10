@@ -64,7 +64,7 @@ describe("src createCommandSyncSession", () => {
 
     transport.emit({
       type: "connected",
-      payload: { client_id: "c1", global_last_committed_id: 0 },
+      payload: { clientId: "c1", globalLastCommittedId: 0 },
     });
     await tick();
 
@@ -74,29 +74,25 @@ describe("src createCommandSyncSession", () => {
         partitions: ["project:p1:story"],
         events: [
           {
-            id: "evt-1",
-            client_id: "c2",
+            id: "cmd-1",
+            projectId: "p1",
+            userId: "u2",
             partitions: ["project:p1:story"],
-            committed_id: 1,
-            event: {
-              type: "event",
-              payload: {
-                commandId: "cmd-1",
-                schema: "scene.create",
-                data: { sceneId: "s1" },
-                actor: {
-                  userId: "u2",
-                  clientId: "c2",
-                },
-                projectId: "p1",
-                clientTs: 1,
-              },
+            committedId: 1,
+            type: "scene.create",
+            payload: {
+              sceneId: "s1",
             },
-            status_updated_at: 1,
+            meta: {
+              clientId: "c2",
+              clientTs: 1,
+              foo: "bar",
+            },
+            created: 1,
           },
         ],
-        next_since_committed_id: 1,
-        has_more: false,
+        nextSinceCommittedId: 1,
+        hasMore: false,
       },
     });
     await tick();
@@ -107,10 +103,16 @@ describe("src createCommandSyncSession", () => {
       projectId: "p1",
       type: "scene.create",
       payload: { sceneId: "s1" },
+      meta: {
+        clientId: "c2",
+        clientTs: 1,
+        foo: "bar",
+      },
+      actor: { userId: "u2", clientId: "c2" },
     });
   });
 
-  it("submits command via sync client", async () => {
+  it("submits command via sync client with command id as submit id", async () => {
     const session = createCommandSyncSession({
       token: "t1",
       actor: {
@@ -125,7 +127,7 @@ describe("src createCommandSyncSession", () => {
     await session.start();
     transport.emit({
       type: "connected",
-      payload: { client_id: "c1", global_last_committed_id: 0 },
+      payload: { clientId: "c1", globalLastCommittedId: 0 },
     });
     await tick();
     transport.emit({
@@ -133,8 +135,8 @@ describe("src createCommandSyncSession", () => {
       payload: {
         partitions: ["project:p1:story"],
         events: [],
-        next_since_committed_id: 0,
-        has_more: false,
+        nextSinceCommittedId: 0,
+        hasMore: false,
       },
     });
     await tick();
@@ -143,14 +145,27 @@ describe("src createCommandSyncSession", () => {
       id: "cmd-local-1",
       type: "scene.create",
       payload: { sceneId: "s1" },
+      meta: {
+        foo: "bar",
+        clientId: "user-provided-client",
+        clientTs: 1,
+      },
       actor: { userId: "u1", clientId: "c1" },
       projectId: "p1",
-      clientTs: Date.now(),
+      clientTs: 5,
       partitions: ["project:p1:story"],
     });
 
     expect(commandId).toBe("cmd-local-1");
     const submit = transport.sent.find((entry) => entry.type === "submit_events");
     expect(submit).toBeTruthy();
+    expect(submit.payload.events[0]).toMatchObject({
+      id: "cmd-local-1",
+      projectId: "p1",
+      userId: "u1",
+      type: "scene.create",
+      payload: { sceneId: "s1" },
+      meta: { foo: "bar", clientId: "c1", clientTs: 5 },
+    });
   });
 });

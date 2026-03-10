@@ -125,11 +125,13 @@ describeSqlite("src sqlite end-to-end reliability", () => {
     await tick();
     await client.submitEvent({
       partitions: ["P1"],
-      event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
+      type: "x",
+      payload: { n: 1 },
     });
     await client.submitEvent({
       partitions: ["P1"],
-      event: { type: "event", payload: { schema: "x", data: { n: 2 } } },
+      type: "x",
+      payload: { n: 2 },
     });
     await client.flushDrafts();
     await client.syncNow();
@@ -144,9 +146,10 @@ describeSqlite("src sqlite end-to-end reliability", () => {
     await clientStore.init();
     await clientStore.insertDraft({
       id: "offline-3",
-      clientId: "C1",
       partitions: ["P1"],
-      event: { type: "event", payload: { schema: "x", data: { n: 3 } } },
+      type: "x",
+      payload: { n: 3 },
+      meta: { clientId: "C1", clientTs: 3000 },
       createdAt: 3000,
     });
     clientDb.close();

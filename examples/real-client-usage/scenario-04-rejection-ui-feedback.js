@@ -35,11 +35,13 @@ await client.start();
 
 await client.submitEvent({
   partitions: ["workspace-1"],
-  event: {
-    type: "event",
-    payload: {
-      schema: "todo.created",
-      data: { id: "", title: "" }, // intentionally invalid for server-side example
-    },
+  projectId: "workspace-1",
+  type: "todo.created",
+  payload: {
+    id: "",
+    title: "",
+  }, // intentionally invalid for server-side example
+  meta: {
+    clientTs: Date.now(),
   },
 });

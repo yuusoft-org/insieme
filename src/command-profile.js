@@ -1,8 +1,11 @@
-const isObject = (value) =>
-  !!value && typeof value === "object" && !Array.isArray(value);
-
-const isNonEmptyString = (value) =>
-  typeof value === "string" && value.length > 0;
+import {
+  cloneObject,
+  isNonEmptyString,
+  isObject,
+  normalizeMeta,
+  toFiniteNumberOrNull,
+} from "./event-record.js";
+import { extractScopeId } from "./partition-scope.js";
 
 const toUniqueNonEmptyStrings = (values = []) =>
   [...new Set(values.filter((value) => isNonEmptyString(value)))];
@@ -26,41 +29,51 @@ export const projectIdFromPartitions = (partitions = []) => {
 };
 
 /**
- * Convert an app command envelope to Insieme sync event envelope.
+ * Convert an app command envelope to normalized sync submit fields.
  *
  * @param {{
  *   id: string,
  *   type: string,
  *   payload: object,
- *   actor: { userId: string, clientId: string },
+ *   meta?: object,
+ *   actor: { userId?: string, clientId: string },
  *   projectId?: string,
  *   clientTs: number,
- *   commandVersion?: number,
  * }} command
  */
-export const commandToSyncEvent = (command) => ({
-  type: "event",
-  payload: {
-    commandId: command.id,
-    schema: command.type,
-    data: structuredClone(command.payload),
-    commandVersion: command.commandVersion,
-    actor: structuredClone(command.actor),
+export const commandToSyncEvent = (command) => {
+  const meta = cloneObject(command?.meta, {});
+  if (command?.actor?.clientId !== undefined) {
+    meta.clientId = command.actor.clientId;
+  }
+  if (command?.clientTs !== undefined) {
+    meta.clientTs = command.clientTs;
+  }
+
+  return {
     projectId: command.projectId,
-    clientTs: command.clientTs,
-  },
-});
+    userId: command?.actor?.userId,
+    type: command.type,
+    payload: structuredClone(command.payload),
+    meta: normalizeMeta(meta, {
+      defaultClientId: command?.actor?.clientId,
+      defaultClientTs: command?.clientTs,
+    }),
+  };
+};
 
 /**
- * Convert committed sync event row to app command envelope.
+ * Convert committed sync row to app command envelope.
  *
  * @param {{
  *   id: string,
- *   client_id?: string,
- *   project_id?: string,
+ *   projectId?: string,
+ *   userId?: string,
  *   partitions?: string[],
- *   event?: { type?: string, payload?: object },
- *   status_updated_at?: number,
+ *   type?: string,
+ *   payload?: object,
+ *   meta?: object,
+ *   created?: number,
  * }} committedEvent
  * @param {{ defaultCommandVersion?: number }} [options]
  */
@@ -68,14 +81,11 @@ export const committedSyncEventToCommand = (
   committedEvent,
   { defaultCommandVersion = 1 } = {},
 ) => {
-  const payload = committedEvent?.event?.payload;
-  if (!isObject(payload) || committedEvent?.event?.type !== "event") {
-    return null;
-  }
-
-  const schema = payload.schema;
-  const data = payload.data;
-  if (!isNonEmptyString(schema) || !isObject(data)) {
+  if (
+    !isNonEmptyString(committedEvent?.id) ||
+    !isNonEmptyString(committedEvent?.type) ||
+    !isObject(committedEvent?.payload)
+  ) {
     return null;
   }
 
@@ -83,42 +93,45 @@ export const committedSyncEventToCommand = (
     Array.isArray(committedEvent?.partitions) ? committedEvent.partitions : [],
   );
   const resolvedProjectId =
-    payload.projectId ||
-    committedEvent?.project_id ||
-    projectIdFromPartitions(partitions);
+    committedEvent?.projectId || projectIdFromPartitions(partitions);
+  const meta = normalizeMeta(committedEvent?.meta);
+  const fallbackClientTs = toFiniteNumberOrNull(committedEvent?.created);
 
   return {
-    id: isNonEmptyString(payload.commandId) ? payload.commandId : committedEvent.id,
+    id: committedEvent.id,
     projectId: resolvedProjectId,
     partition: partitions[0],
     partitions,
-    type: schema,
-    payload: structuredClone(data),
-    commandVersion: payload.commandVersion ?? defaultCommandVersion,
-    actor: payload.actor || {
-      userId: "unknown",
-      clientId: committedEvent?.client_id,
+    type: committedEvent.type,
+    payload: structuredClone(committedEvent.payload),
+    meta: structuredClone(meta),
+    commandVersion: defaultCommandVersion,
+    actor: {
+      userId: isNonEmptyString(committedEvent?.userId)
+        ? committedEvent.userId
+        : undefined,
+      clientId: isNonEmptyString(meta.clientId) ? meta.clientId : undefined,
     },
-    clientTs: payload.clientTs || committedEvent?.status_updated_at,
+    clientTs: toFiniteNumberOrNull(meta.clientTs) ?? fallbackClientTs,
   };
 };
 
 /**
- * Validate submit item in command profile (`event.type === "event"` payload shape).
+ * Validate submit item in the normalized command profile.
  *
  * @param {{
  *   id?: string,
- *   clientId?: string,
  *   partitions?: string[],
- *   event?: { type?: string, payload?: object },
-   * }} item
+ *   projectId?: string,
+ *   userId?: string,
+ *   type?: string,
+ *   payload?: object,
+ *   meta?: object,
+ * }} item
  */
 export const validateCommandSubmitItem = (item) => {
   if (!isObject(item)) {
-    failValidation("event envelope is required");
-  }
-  if (!isObject(item.event)) {
-    failValidation("item.event is required");
+    failValidation("submit item is required");
   }
   if (!Array.isArray(item.partitions) || item.partitions.length === 0) {
     failValidation("partitions are required");
@@ -129,50 +142,38 @@ export const validateCommandSubmitItem = (item) => {
     failValidation("partitions must include at least one non-empty string");
   }
 
-  const event = item.event;
-  if (event.type !== "event") {
-    failValidation(`Unsupported item.event.type: ${event.type}`);
+  if (!isNonEmptyString(item.id)) {
+    failValidation("item.id is required");
+  }
+  if (!isNonEmptyString(item.type)) {
+    failValidation("item.type is required");
+  }
+  if (!isObject(item.payload)) {
+    failValidation("item.payload is required");
+  }
+  if (item.userId !== undefined && !isNonEmptyString(item.userId)) {
+    failValidation("item.userId must be a non-empty string when provided");
   }
 
-  const payload = event.payload;
-  if (!isObject(payload)) {
-    failValidation("item.event.payload is required");
-  }
-  if (!isNonEmptyString(payload.commandId)) {
-    failValidation("event.payload.commandId is required");
-  }
-  if (!isNonEmptyString(payload.schema)) {
-    failValidation("event.payload.schema is required");
-  }
-  if (!isObject(payload.data)) {
-    failValidation("event.payload.data is required");
-  }
-
-  const projectId =
-    payload.projectId || projectIdFromPartitions(partitions);
+  const projectId = item.projectId || projectIdFromPartitions(partitions);
   if (!isNonEmptyString(projectId)) {
-    failValidation("event.payload.projectId is required");
+    failValidation("item.projectId is required");
   }
 
-  if (!Number.isFinite(Number(payload.clientTs))) {
-    failValidation("event.payload.clientTs must be a finite number");
+  const meta = normalizeMeta(item.meta);
+  if (!isNonEmptyString(meta.clientId)) {
+    failValidation("item.meta.clientId is required");
   }
-
-  if (!isObject(payload.actor)) {
-    failValidation("actor is required");
-  }
-  if (!isNonEmptyString(payload.actor.userId)) {
-    failValidation("actor.userId is required");
-  }
-  if (!isNonEmptyString(payload.actor.clientId)) {
-    failValidation("actor.clientId is required");
+  if (toFiniteNumberOrNull(meta.clientTs) === null) {
+    failValidation("item.meta.clientTs must be a finite number");
   }
 
   return {
-    commandId: payload.commandId,
-    schema: payload.schema,
+    commandId: item.id,
+    type: item.type,
     projectId,
+    userId: item.userId,
     partitions,
+    meta,
   };
 };
-import { extractScopeId } from "./partition-scope.js";

@@ -31,4 +31,4 @@ For `partitions: ["P1", "P2"]`:
 
 - event is visible in both partition views,
 - broadcast is delivered to connections whose active partition scope intersects the event partitions,
-- per-partition ordering is the global `committed_id` subsequence.
+- per-partition ordering is the global `committedId` subsequence.

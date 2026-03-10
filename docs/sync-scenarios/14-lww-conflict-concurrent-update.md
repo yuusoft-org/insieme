@@ -1,6 +1,6 @@
 # Scenario 14 - LWW Conflict (Concurrent Update)
 
-Note: Envelope metadata (`msg_id`, `timestamp`) is omitted when not central.
+Note: Envelope metadata (`msgId`, `timestamp`) is omitted when not central.
 
 ## Goal
 Verify convergence under concurrent writes via server commit order.
@@ -22,7 +22,7 @@ Verify convergence under concurrent writes via server commit order.
 
 ### 2) Server commit order
 - Server commits U1 then U2 (or vice versa).
-- Each commit gets unique `committed_id`.
+- Each commit gets unique `committedId`.
 
 ### 3) Replication
 - Origin clients get submit results.
@@ -30,5 +30,5 @@ Verify convergence under concurrent writes via server commit order.
 - Reconnect clients receive same ordering through sync.
 
 ## Assertions
-- All clients converge to state produced by highest `committed_id`.
+- All clients converge to state produced by highest `committedId`.
 - Outcome is deterministic regardless of local submit timing.

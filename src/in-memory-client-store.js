@@ -1,4 +1,5 @@
 import { canonicalizeSubmitItem } from "./canonicalize.js";
+import { buildCommittedEventFromDraft, normalizeMeta } from "./event-record.js";
 import { normalizeMaterializedViewDefinitions } from "./materialized-view.js";
 import { createMaterializedViewRuntime } from "./materialized-view-runtime.js";
 
@@ -13,13 +14,13 @@ const sortDrafts = (left, right) => {
  * In-memory client store implementing the simplified client storage interface.
  */
 export const createInMemoryClientStore = ({ materializedViews } = {}) => {
-  /** @type {{ draftClock: number, id: string, clientId: string, partitions: string[], event: object, createdAt: number }[]} */
+  /** @type {{ draftClock: number, id: string, partitions: string[], projectId?: string, userId?: string, type: string, payload: object, meta: object, createdAt: number }[]} */
   const drafts = [];
 
-  /** @type {{ committed_id: number, id: string, client_id: string, partitions: string[], event: object, status_updated_at: number }[]} */
+  /** @type {{ committedId: number, id: string, projectId?: string, userId?: string, partitions: string[], type: string, payload: object, meta: object, created: number }[]} */
   const committed = [];
 
-  /** @type {Map<string, { canonical: string, committedEvent: { committed_id: number, id: string, client_id: string, partitions: string[], event: object, status_updated_at: number } }>} */
+  /** @type {Map<string, { comparisonKey: string, committedEvent: { committedId: number, id: string, projectId?: string, userId?: string, partitions: string[], type: string, payload: object, meta: object, created: number } }>} */
   const committedById = new Map();
 
   const materializedViewDefinitions =
@@ -29,10 +30,10 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
     getLatestCommittedId: async () =>
       committed.length === 0
         ? 0
-        : committed[committed.length - 1].committed_id,
+        : committed[committed.length - 1].committedId,
     listCommittedAfter: async ({ sinceCommittedId, limit }) =>
       committed
-        .filter((event) => event.committed_id > sinceCommittedId)
+        .filter((event) => event.committedId > sinceCommittedId)
         .slice(0, limit),
   });
 
@@ -44,28 +45,42 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
     if (index >= 0) drafts.splice(index, 1);
   };
 
-  const upsertCommitted = (event) => {
-    const existing = committedById.get(event.id);
-    const canonical = canonicalizeSubmitItem({
+  const toComparisonKey = (event) =>
+    canonicalizeSubmitItem({
       partitions: event.partitions,
-      event: event.event,
+      projectId: event.projectId,
+      userId: event.userId,
+      type: event.type,
+      payload: event.payload,
+      meta: event.meta,
     });
+
+  const upsertCommitted = (event) => {
+    const normalizedEvent = {
+      ...event,
+      payload: structuredClone(event.payload),
+      meta: normalizeMeta(event.meta),
+    };
+    const existing = committedById.get(normalizedEvent.id);
+    const comparisonKey = toComparisonKey(normalizedEvent);
     if (existing) {
       if (
-        existing.committedEvent.committed_id !== event.committed_id ||
-        existing.committedEvent.client_id !== event.client_id ||
-        existing.canonical !== canonical
+        existing.committedEvent.committedId !== normalizedEvent.committedId ||
+        existing.comparisonKey !== comparisonKey
       ) {
         throw new Error(
-          `committed event invariant violation for id ${event.id}: conflicting duplicate`,
+          `committed event invariant violation for id ${normalizedEvent.id}: conflicting duplicate`,
         );
       }
       return false;
     }
 
-    committedById.set(event.id, { canonical, committedEvent: event });
-    committed.push(event);
-    committed.sort((left, right) => left.committed_id - right.committed_id);
+    committedById.set(normalizedEvent.id, {
+      comparisonKey,
+      committedEvent: normalizedEvent,
+    });
+    committed.push(normalizedEvent);
+    committed.sort((left, right) => left.committedId - right.committedId);
     return true;
   };
 
@@ -74,7 +89,16 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
 
     loadCursor: async () => cursor,
 
-    insertDraft: async ({ id, clientId, partitions, event, createdAt }) => {
+    insertDraft: async ({
+      id,
+      partitions,
+      projectId,
+      userId,
+      type,
+      payload,
+      meta,
+      createdAt,
+    }) => {
       const existing = drafts.find((entry) => entry.id === id);
       if (existing) {
         throw new Error(`draft with id ${id} already exists`);
@@ -83,9 +107,12 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
       drafts.push({
         draftClock: nextDraftClock,
         id,
-        clientId,
         partitions: [...partitions],
-        event,
+        projectId,
+        userId,
+        type,
+        payload: structuredClone(payload),
+        meta: normalizeMeta(meta),
         createdAt,
       });
       nextDraftClock += 1;
@@ -93,18 +120,15 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
 
     loadDraftsOrdered: async () => [...drafts].sort(sortDrafts),
 
-    applySubmitResult: async ({ result, fallbackClientId }) => {
+    applySubmitResult: async ({ result }) => {
       if (result.status === "committed") {
         const draft = drafts.find((entry) => entry.id === result.id);
         if (draft) {
-          const committedEvent = {
-            committed_id: result.committed_id,
-            id: draft.id,
-            client_id: draft.clientId || fallbackClientId,
-            partitions: [...draft.partitions],
-            event: draft.event,
-            status_updated_at: result.status_updated_at,
-          };
+          const committedEvent = buildCommittedEventFromDraft({
+            draft,
+            committedId: result.committedId,
+            created: result.created,
+          });
           if (upsertCommitted(committedEvent)) {
             await materializedViewRuntime.onCommittedEvent(committedEvent);
           }

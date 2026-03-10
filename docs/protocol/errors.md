@@ -9,7 +9,7 @@ Normative keywords in this document are to be interpreted as described in RFC 21
 | Code | Connection | Meaning |
 |------|-----------|---------|
 | `auth_failed` | close | Invalid/expired token or authenticated identity mismatch. |
-| `protocol_version_unsupported` | close | Unsupported `protocol_version`. |
+| `protocolVersion_unsupported` | close | Unsupported `protocolVersion`. |
 | `bad_request` | keep open | Malformed message, missing required fields, or unknown message type. |
 | `forbidden` | keep open | Authenticated client lacks required partition/resource access. |
 | `validation_failed` | keep open | Event payload or domain validation failure. |
@@ -20,7 +20,7 @@ Normative keywords in this document are to be interpreted as described in RFC 21
 
 ```yaml
 type: error
-protocol_version: "1.0"
+protocolVersion: "1.0"
 payload:
   code: bad_request
   message: Missing payload.events
@@ -36,7 +36,7 @@ Fields:
 ## Recovery Guidance
 
 - `auth_failed`: reconnect with fresh credentials.
-- `protocol_version_unsupported`: reconnect using supported version.
+- `protocolVersion_unsupported`: reconnect using supported version.
 - `bad_request`: fix payload and retry.
 - `forbidden`: change scope/ACL before retry.
 - `validation_failed`: correct event data before retry.
@@ -52,7 +52,7 @@ Example:
 
 ```yaml
 type: error
-protocol_version: "1.0"
+protocolVersion: "1.0"
 payload:
   code: server_error
   message: Unexpected server error

@@ -16,19 +16,30 @@ This document defines the minimal client-side storage model.
 CREATE TABLE local_drafts (
   draft_clock INTEGER PRIMARY KEY AUTOINCREMENT,
   id TEXT NOT NULL UNIQUE,
-  client_id TEXT NOT NULL,
-  event TEXT NOT NULL,              -- JSON: { type, payload }
   partitions TEXT NOT NULL,
+  project_id TEXT,
+  user_id TEXT,
+  type TEXT NOT NULL,
+  payload TEXT NOT NULL,            -- JSON object
+  meta TEXT NOT NULL,               -- JSON object
   created_at INTEGER NOT NULL
 );
 
 CREATE TABLE committed_events (
   committed_id INTEGER PRIMARY KEY,
   id TEXT NOT NULL UNIQUE,
-  client_id TEXT NOT NULL,
-  event TEXT NOT NULL,              -- JSON: { type, payload }
+  project_id TEXT,
+  user_id TEXT,
   partitions TEXT NOT NULL,
-  status_updated_at INTEGER NOT NULL
+  type TEXT NOT NULL,
+  payload TEXT NOT NULL,            -- JSON object
+  meta TEXT NOT NULL,               -- JSON object
+  created INTEGER NOT NULL
+);
+
+CREATE TABLE app_state (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
 );
 ```
 
@@ -36,6 +47,8 @@ Notes:
 
 - `id` is global event UUID and dedupe key.
 - `draft_clock` is local ordering only.
+- `meta` is open-ended JSON-safe metadata. The runtime reserves `meta.clientId` and `meta.clientTs`.
+- Public JS objects use camelCase; SQL adapters persist snake_case columns internally.
 - `draft_clock` and `committed_id` primary keys already provide ordered access paths in SQLite/LibSQL.
 - `partitions` should be stored as a normalized set representation.
 - Reference adapters:
@@ -60,8 +73,21 @@ Optional only when product requirements need them:
 
 - `snapshots` for faster local startup,
 - `rejected_drafts` for UI/audit history.
-- `materialized_view_state` for partitioned derived state checkpoints
-  (legacy adapters may also keep `materialized_view_offsets`).
+- `materialized_view_state` for partitioned derived state checkpoints.
+
+Built-in SQL adapters also create:
+
+```sql
+CREATE TABLE materialized_view_state (
+  view_name TEXT NOT NULL,
+  partition TEXT NOT NULL,
+  view_version TEXT NOT NULL,
+  last_committed_id INTEGER NOT NULL,
+  value TEXT NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY(view_name, partition)
+);
+```
 
 ## Query Patterns
 
@@ -83,5 +109,6 @@ This converges submit-result and sync/broadcast paths.
 
 ## Cursor
 
-- Persist one durable sync cursor: last applied `committed_id`.
-- Use it as `since_committed_id` on reconnect.
+- Persist one durable sync cursor: last applied `committedId`.
+- In SQL adapters this lives in `app_state.key = 'cursor_committed_id'`.
+- Use it as `sinceCommittedId` on reconnect.

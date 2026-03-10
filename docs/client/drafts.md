@@ -9,9 +9,12 @@ This document defines the minimal client-side draft lifecycle for offline-first 
 - Validate draft locally (best-effort UX validation).
 - Insert into `local_drafts` with:
   - `id`
-  - `draft_clock` (storage-assigned monotonic order key)
+  - `draftClock` (storage-assigned monotonic order key)
   - `partitions`
-  - `event`
+  - `projectId` / `userId` when applicable
+  - `type`
+  - `payload`
+  - `meta`
 - Apply draft immediately to local view (optimistic UI).
 
 ### 2) Submit
@@ -45,14 +48,15 @@ On `event_broadcast` or `sync_response.events`:
 
 ## Ordering Rules
 
-- Committed state order: `ORDER BY committed_id`.
-- Draft overlay order: `ORDER BY draft_clock, id`.
+- Committed state order: `ORDER BY committed_id` (`committedId` in JS).
+- Draft overlay order: `ORDER BY draft_clock, id` (`draftClock` in JS).
 - Effective state: committed state, then draft overlay.
 
 ## Retry / Idempotency
 
 - Retries use the same event `id`.
 - Server dedupes by `id`.
+- Retry equality includes normalized `partitions`, `projectId`, `userId`, `type`, `payload`, and `meta`.
 - Client apply path must be idempotent:
   - repeated committed insert -> no duplicate,
   - repeated draft cleanup -> safe no-op.
@@ -60,5 +64,5 @@ On `event_broadcast` or `sync_response.events`:
 ## Startup / Recovery
 
 - Restore durable committed cursor.
-- Run `sync` until `has_more=false`.
-- Retry remaining local drafts in `(draft_clock, id)` order.
+- Run `sync` until `hasMore=false`.
+- Retry remaining local drafts in `(draftClock, id)` order.

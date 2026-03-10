@@ -47,18 +47,39 @@ const createServer = ({
 const connectSession = async ({ session, clientId = "C1", token = "jwt" }) => {
   await session.receive({
     type: "connect",
-    protocol_version: "1.0",
-    payload: { token, client_id: clientId },
+    protocolVersion: "1.0",
+    payload: { token, clientId: clientId },
   });
 };
 
 const syncSession = async ({ session, partitions = ["P1"], since = 0 }) => {
   await session.receive({
     type: "sync",
-    protocol_version: "1.0",
-    payload: { partitions, since_committed_id: since, limit: 500 },
+    protocolVersion: "1.0",
+    payload: { partitions, sinceCommittedId: since, limit: 500 },
   });
 };
+
+const toSubmitItem = ({
+  id,
+  partitions = ["P1"],
+  event = { type: "x", payload: {} },
+  projectId,
+  userId,
+  meta,
+} = {}) => ({
+  id,
+  partitions,
+  projectId,
+  userId,
+  type: event.type,
+  payload: event.payload,
+  meta: {
+    clientId: "C1",
+    clientTs: 1,
+    ...meta,
+  },
+});
 
 describe("src createSyncServer", () => {
   it("PT-SC-00 [SC-00]: handshake + empty sync", async () => {
@@ -69,7 +90,7 @@ describe("src createSyncServer", () => {
     await connectSession({ session: s1 });
     expect(c1.sent[0]).toMatchObject({
       type: "connected",
-      payload: { client_id: "C1", global_last_committed_id: 0 },
+      payload: { clientId: "C1", globalLastCommittedId: 0 },
     });
 
     await syncSession({ session: s1 });
@@ -78,9 +99,9 @@ describe("src createSyncServer", () => {
       payload: {
         partitions: ["P1"],
         events: [],
-        next_since_committed_id: 0,
-        has_more: false,
-        sync_to_committed_id: 0,
+        nextSinceCommittedId: 0,
+        hasMore: false,
+        syncToCommittedId: 0,
       },
     });
   });
@@ -105,14 +126,14 @@ describe("src createSyncServer", () => {
 
     await s1.receive({
       type: "submit_events",
-      protocol_version: "1.0",
+      protocolVersion: "1.0",
       payload: {
         events: [
-          {
+          toSubmitItem({
             id: "evt-1",
             partitions: ["P1"],
-            event: { type: "event", payload: { schema: "x", data: {} } },
-          },
+            event: { type: "x", payload: {} },
+          }),
         ],
       },
     });
@@ -124,7 +145,7 @@ describe("src createSyncServer", () => {
     expect(c1SubmitResult.payload.results[0]).toMatchObject({
       id: "evt-1",
       status: "committed",
-      committed_id: 1,
+      committedId: 1,
     });
 
     const c1Broadcasts = c1.sent.filter((m) => m.type === "event_broadcast");
@@ -133,7 +154,7 @@ describe("src createSyncServer", () => {
     expect(c2Broadcasts).toHaveLength(1);
     expect(c2Broadcasts[0].payload).toMatchObject({
       id: "evt-1",
-      committed_id: 1,
+      committedId: 1,
       partitions: ["P1"],
     });
   });
@@ -156,14 +177,14 @@ describe("src createSyncServer", () => {
 
     await s1.receive({
       type: "submit_events",
-      protocol_version: "1.0",
+      protocolVersion: "1.0",
       payload: {
         events: [
-          {
+          toSubmitItem({
             id: "evt-bad-1",
             partitions: ["P1"],
-            event: { type: "event", payload: { schema: "x", data: {} } },
-          },
+            event: { type: "x", payload: {} },
+          }),
         ],
       },
     });
@@ -187,10 +208,10 @@ describe("src createSyncServer", () => {
 
     await s1.receive({
       type: "submit_events",
-      protocol_version: "1.0",
+      protocolVersion: "1.0",
       payload: {
         events: [
-          {
+          toSubmitItem({
             id: "evt-invalid-1",
             partitions: ["P1"],
             event: {
@@ -199,7 +220,7 @@ describe("src createSyncServer", () => {
                 any: "value",
               },
             },
-          },
+          }),
         ],
       },
     });
@@ -209,7 +230,7 @@ describe("src createSyncServer", () => {
     expect(result.payload.results[0]).toMatchObject({
       id: "evt-invalid-1",
       status: "committed",
-      committed_id: 1,
+      committedId: 1,
     });
   });
 
@@ -223,14 +244,14 @@ describe("src createSyncServer", () => {
 
     const submit = {
       type: "submit_events",
-      protocol_version: "1.0",
+      protocolVersion: "1.0",
       payload: {
         events: [
-          {
+          toSubmitItem({
             id: "evt-retry-1",
             partitions: ["P1"],
-            event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
-          },
+            event: { type: "x", payload: { n: 1 } },
+          }),
         ],
       },
     };
@@ -241,14 +262,14 @@ describe("src createSyncServer", () => {
     const results = c1.sent.filter((m) => m.type === "submit_events_result");
     expect(results).toHaveLength(2);
 
-    const firstCommittedId = results[0].payload.results[0].committed_id;
-    const secondCommittedId = results[1].payload.results[0].committed_id;
+    const firstCommittedId = results[0].payload.results[0].committedId;
+    const secondCommittedId = results[1].payload.results[0].committedId;
 
     expect(firstCommittedId).toBe(1);
     expect(secondCommittedId).toBe(1);
   });
 
-  it("uses partition-scoped sync_to_committed_id", async () => {
+  it("uses partition-scoped syncToCommittedId", async () => {
     const { server } = createServer();
     const c1 = createConnectionTransport("c1");
     const c2 = createConnectionTransport("c2");
@@ -261,40 +282,40 @@ describe("src createSyncServer", () => {
 
     await s1.receive({
       type: "submit_events",
-      protocol_version: "1.0",
+      protocolVersion: "1.0",
       payload: {
         events: [
-          {
+          toSubmitItem({
             id: "evt-p1-1",
             partitions: ["P1"],
             event: { type: "legacy.action", payload: { n: 1 } },
-          },
+          }),
         ],
       },
     });
     await s1.receive({
       type: "submit_events",
-      protocol_version: "1.0",
+      protocolVersion: "1.0",
       payload: {
         events: [
-          {
+          toSubmitItem({
             id: "evt-p2-1",
             partitions: ["P2"],
             event: { type: "legacy.action", payload: { n: 2 } },
-          },
+          }),
         ],
       },
     });
     await s1.receive({
       type: "submit_events",
-      protocol_version: "1.0",
+      protocolVersion: "1.0",
       payload: {
         events: [
-          {
+          toSubmitItem({
             id: "evt-p1-2",
             partitions: ["P1"],
             event: { type: "legacy.action", payload: { n: 3 } },
-          },
+          }),
         ],
       },
     });
@@ -306,45 +327,45 @@ describe("src createSyncServer", () => {
     expect(syncResponse.payload.events.map((event) => event.id)).toEqual([
       "evt-p2-1",
     ]);
-    expect(syncResponse.payload.sync_to_committed_id).toBe(2);
+    expect(syncResponse.payload.syncToCommittedId).toBe(2);
   });
 
-  it("echoes request msg_id on direct responses and errors", async () => {
+  it("echoes request msgId on direct responses and errors", async () => {
     const { server } = createServer();
     const c1 = createConnectionTransport("c1");
     const s1 = server.attachConnection(c1);
 
     await s1.receive({
       type: "connect",
-      protocol_version: "1.0",
-      msg_id: "msg-connect-1",
-      payload: { token: "jwt", client_id: "C1" },
+      protocolVersion: "1.0",
+      msgId: "msg-connect-1",
+      payload: { token: "jwt", clientId: "C1" },
     });
     expect(c1.sent[0]).toMatchObject({
       type: "connected",
-      msg_id: "msg-connect-1",
+      msgId: "msg-connect-1",
     });
 
     await s1.receive({
       type: "sync",
-      protocol_version: "1.0",
-      msg_id: "msg-sync-1",
-      payload: { partitions: ["P1"], since_committed_id: 0, limit: 500 },
+      protocolVersion: "1.0",
+      msgId: "msg-sync-1",
+      payload: { partitions: ["P1"], sinceCommittedId: 0, limit: 500 },
     });
     expect(c1.sent[1]).toMatchObject({
       type: "sync_response",
-      msg_id: "msg-sync-1",
+      msgId: "msg-sync-1",
     });
 
     await s1.receive({
       type: "unknown",
-      protocol_version: "1.0",
-      msg_id: "msg-err-1",
+      protocolVersion: "1.0",
+      msgId: "msg-err-1",
       payload: {},
     });
     expect(c1.sent[2]).toMatchObject({
       type: "error",
-      msg_id: "msg-err-1",
+      msgId: "msg-err-1",
       payload: { code: "bad_request" },
     });
   });
@@ -364,21 +385,21 @@ describe("src createSyncServer", () => {
     await connectSession({ session: s1 });
     await s1.receive({
       type: "sync",
-      protocol_version: "1.0",
-      payload: { partitions: ["P1"], since_committed_id: 0, limit: 10 },
+      protocolVersion: "1.0",
+      payload: { partitions: ["P1"], sinceCommittedId: 0, limit: 10 },
     });
 
     await s1.receive({
       type: "sync",
-      protocol_version: "1.0",
-      msg_id: "limit-msg",
-      payload: { partitions: ["P1"], since_committed_id: 0, limit: 10 },
+      protocolVersion: "1.0",
+      msgId: "limit-msg",
+      payload: { partitions: ["P1"], sinceCommittedId: 0, limit: 10 },
     });
 
     const last = c1.sent[c1.sent.length - 1];
     expect(last).toMatchObject({
       type: "error",
-      msg_id: "limit-msg",
+      msgId: "limit-msg",
       payload: { code: "rate_limited" },
     });
     expect(c1.closed).toBe(true);
@@ -395,21 +416,21 @@ describe("src createSyncServer", () => {
 
     await s1.receive({
       type: "connect",
-      protocol_version: "1.0",
-      msg_id: "too-big-1",
+      protocolVersion: "1.0",
+      msgId: "too-big-1",
       payload: {
         token: "x".repeat(200),
-        client_id: "C1",
+        clientId: "C1",
       },
     });
 
     expect(c1.sent[0]).toMatchObject({
       type: "error",
-      msg_id: "too-big-1",
+      msgId: "too-big-1",
       payload: {
         code: "bad_request",
         details: {
-          max_envelope_bytes: 64,
+          maxEnvelopeBytes: 64,
         },
       },
     });
@@ -470,18 +491,18 @@ describe("src createSyncServer", () => {
 
     await s1.receive({
       type: "sync",
-      protocol_version: "1.0",
-      payload: { partitions: ["P1"], since_committed_id: 0, limit: 99999 },
+      protocolVersion: "1.0",
+      payload: { partitions: ["P1"], sinceCommittedId: 0, limit: 99999 },
     });
     await s1.receive({
       type: "sync",
-      protocol_version: "1.0",
-      payload: { partitions: ["P1"], since_committed_id: 0, limit: -5 },
+      protocolVersion: "1.0",
+      payload: { partitions: ["P1"], sinceCommittedId: 0, limit: -5 },
     });
     await s1.receive({
       type: "sync",
-      protocol_version: "1.0",
-      payload: { partitions: ["P1"], since_committed_id: 0 },
+      protocolVersion: "1.0",
+      payload: { partitions: ["P1"], sinceCommittedId: 0 },
     });
 
     expect(seenLimits).toEqual([1000, 1, 500]);

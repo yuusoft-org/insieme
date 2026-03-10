@@ -27,7 +27,11 @@ const store = createLibsqlClientStore(client, {
       },
       initialState: () => ({ count: 0 }),
       reduce: ({ state, event, partition }) => ({
-        count: state.count + (event.event.type === "increment" ? 1 : 0),
+        count:
+          state.count +
+          (event.type === "counter.increment" && partition === "workspace-1"
+            ? event.payload.amount
+            : 0),
       }),
     },
   ],
@@ -108,43 +112,37 @@ The runtime exports:
 
 - `createReducer(...)`
 
-`createReducer` supports schema-driven `event` payloads:
+`createReducer` dispatches by committed-event `type`:
 
 ```js
 const reducer = createReducer({
   schemaHandlers: {
-    "counter.increment": ({ state, data }) => {
-      state.count = (state.count || 0) + data.amount;
+    "counter.increment": ({ state, payload }) => {
+      state.count = (state.count ?? 0) + payload.amount;
     },
   },
 });
 ```
 
 Handlers run through `immer`, so mutating `state` inside a handler is safe.
-By default, `createReducer` throws for unknown event types/schemas; pass
-`fallback` if you want a different policy.
+By default, `createReducer` throws for unknown event types; pass `fallback` if
+you want a different policy.
 
 ## Reusing Existing Event Reducers
 
-For schema-driven `event` profile payloads, plug your existing app reducer into
-`createReducer` and reuse the same logic for replay and materialized views.
+Plug your existing app reducer into `createReducer` and reuse the same logic
+for replay and materialized views.
 
 Recommended pattern:
 
 ```js
 import { createReducer } from "insieme";
 
-const applyDomainCommand = ({ state, payload }) => {
-  if (payload.schema === "counter.increment") {
-    return { ...state, count: (state.count || 0) + payload.data.amount };
-  }
-  return state;
-};
-
 const reducer = createReducer({
   schemaHandlers: {
-    "counter.increment": ({ state, payload }) =>
-      applyDomainCommand({ state, payload }),
+    "counter.increment": ({ state, payload }) => {
+      state.count = (state.count ?? 0) + payload.amount;
+    },
   },
 });
 
@@ -170,3 +168,4 @@ This avoids duplicating event logic between:
 - `version` defaults to `"1"` when omitted.
 - Change `version` when reducer semantics or state shape changes.
 - Persistent stores invalidate stale checkpoints lazily on next load and rebuild from committed events as needed.
+- Reducers receive the full committed event record, so they may also inspect `meta`, `projectId`, or `userId` when needed.

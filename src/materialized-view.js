@@ -113,6 +113,21 @@ export const normalizeMaterializedViewDefinitions = (definitions) => {
   });
 };
 
+const toReducerEvent = (event) => {
+  if (!event || typeof event !== "object") return event;
+  if (event.event && typeof event.event === "object") {
+    return event;
+  }
+
+  return {
+    ...event,
+    event: {
+      type: event.type,
+      payload: event.payload,
+    },
+  };
+};
+
 /**
  * @param {{ reduce: ({ state: unknown, event: object, partition: string }) => unknown }} definition
  * @param {unknown} state
@@ -128,7 +143,7 @@ export const applyMaterializedViewReducer = (
 ) => {
   const next = definition.reduce({
     state,
-    event,
+    event: toReducerEvent(event),
     partition,
   });
   return next === undefined ? state : next;

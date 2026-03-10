@@ -12,10 +12,26 @@ This file defines a minimal JS API surface aligned with the simplified core prot
 /**
  * @typedef {Object} SubmitItem
  * @property {string} id
- * @property {string} clientId
  * @property {string[]} partitions
- * @property {{ type: string, payload: object }} event
+ * @property {string} [projectId]
+ * @property {string} [userId]
+ * @property {string} type
+ * @property {object} payload
+ * @property {{ clientId: string, clientTs: number, [key: string]: any }} meta
  * @property {number} createdAt
+ */
+
+/**
+ * @typedef {Object} CommittedEvent
+ * @property {number} committedId
+ * @property {string} id
+ * @property {string[]} partitions
+ * @property {string} [projectId]
+ * @property {string} [userId]
+ * @property {string} type
+ * @property {object} payload
+ * @property {{ clientId: string, clientTs: number, [key: string]: any }} meta
+ * @property {number} created
  */
 ```
 
@@ -64,8 +80,8 @@ export function createOfflineTransport(options) {}
  *   loadCursor: () => Promise<number>,
  *   insertDraft: (item: SubmitItem) => Promise<void>,
  *   loadDraftsOrdered: () => Promise<SubmitItem[]>,
- *   applySubmitResult: (input: { result: object, fallbackClientId: string }) => Promise<void>,
- *   applyCommittedBatch: (input: { events: object[], nextCursor?: number }) => Promise<void>,
+ *   applySubmitResult: (input: { result: object }) => Promise<void>,
+ *   applyCommittedBatch: (input: { events: CommittedEvent[], nextCursor?: number }) => Promise<void>,
  *   loadMaterializedView?: (input: { viewName: string, partition: string }) => Promise<unknown>,
  *   loadMaterializedViews?: (input: { viewName: string, partitions: string[] }) => Promise<Record<string, unknown>>,
  *   evictMaterializedView?: (input: { viewName: string, partition: string }) => Promise<void>,
@@ -104,7 +120,15 @@ export function createSyncClient(deps) {}
  * @property {() => Promise<void>} start
  * @property {() => Promise<void>} stop
  * @property {(partitions: string[], options?: { sinceCommittedId?: number }) => Promise<void>} setPartitions
- * @property {(item: { partitions: string[], event: { type: string, payload: object } }) => Promise<string>} submitEvent
+ * @property {(item: {
+ *   id?: string,
+ *   partitions: string[],
+ *   projectId?: string,
+ *   userId?: string,
+ *   type: string,
+ *   payload: object,
+ *   meta?: object,
+ * }) => Promise<string>} submitEvent
  * @property {(options?: { sinceCommittedId?: number }) => Promise<void>} syncNow
  * @property {() => Promise<void>} flushDrafts
  * @property {() => {
@@ -114,6 +138,7 @@ export function createSyncClient(deps) {}
  *   syncInFlight: boolean,
  *   reconnectInFlight: boolean,
  *   reconnectAttempts: number,
+ *   connectedServerLastCommittedId: number | null,
  *   activePartitions: string[],
  *   lastError: null | { code?: string, message?: string, details?: object }
  * }} getStatus
@@ -144,18 +169,26 @@ Client runtime events:
  * @param {{ authorizePartitions: (identity: object, partitions: string[]) => Promise<boolean> }} deps.authz
  * @param {{ validate: (item: SubmitItem, ctx: object) => Promise<void> }} deps.validation
  * @param {{
- *   commitOrGetExisting: (input: { id: string, clientId: string, partitions: string[], event: object, now: number }) => Promise<{
+ *   commitOrGetExisting: (input: {
+ *     id: string,
+ *     partitions: string[],
+ *     projectId?: string,
+ *     userId?: string,
+ *     type: string,
+ *     payload: object,
+ *     meta: object,
+ *     now: number
+ *   }) => Promise<{
  *     deduped: boolean,
- *     committedEvent: {
- *       id: string,
- *       client_id: string,
- *       partitions: string[],
- *       committed_id: number,
- *       event: object,
- *       status_updated_at: number
- *     }
+ *     committedEvent: CommittedEvent
  *   }>,
- *   listCommittedSince: (input: { partitions: string[], sinceCommittedId: number, limit: number, syncToCommittedId?: number }) => Promise<{ events: object[], hasMore: boolean, nextSinceCommittedId: number }>,
+ *   listCommittedSince: (input: {
+ *     partitions: string[],
+ *     sinceCommittedId: number,
+ *     limit: number,
+ *     syncToCommittedId?: number
+ *   }) => Promise<{ events: CommittedEvent[], hasMore: boolean, nextSinceCommittedId: number }>,
+ *   getMaxCommittedIdForPartitions: (input: { partitions: string[] }) => Promise<number>,
  *   getMaxCommittedId: () => Promise<number>
  * }} deps.store
  * @param {{ now: () => number }} deps.clock
@@ -194,7 +227,8 @@ export function createSyncServer(deps) {}
 - Server still receives `submit_events` wire message shape with one `events[0]` item.
 - Client store methods that mutate committed/draft/cursor state should use single DB transactions when available, or equivalent idempotent/monotonic SQL semantics when transactional APIs are not available.
 - All behavior must match `docs/protocol/*.md`.
-- Client-generated `msg_id` values should be stable per outbound message for traceability.
+- Client-generated `msgId` values should be stable per outbound message for traceability.
+- `meta` is open-ended JSON-safe metadata. The runtime reserves `meta.clientId` and `meta.clientTs` and may overwrite them.
 
 ## Built-in Store Adapters
 
@@ -236,7 +270,7 @@ Reducer contract:
 ```js
 reduce({
   state,      // previous state for this (viewName, partition)
-  event,      // committed event shape from storage
+  event,      // committed event record
   partition,  // active partition being reduced
 }) => nextState;
 ```
@@ -253,12 +287,11 @@ Read semantics:
 - `invalidateMaterializedView(...)` drops hot state and the persisted checkpoint for that partition.
 - `flushMaterializedViews()` persists dirty checkpoints immediately.
 
-For schema-based `event` profile payloads (`event.type === "event"`), use
-`createReducer({ schemaHandlers: { "<schema>": fn } })`.
-Handlers run in an immer recipe context, so they may mutate `state` directly
-or return a replacement object.
-Default reducer fallback throws for unknown event types/schemas unless
-`fallback` is overridden.
+`createReducer({ schemaHandlers })` dispatches by committed-event `type`.
+Handlers receive `{ state, event, payload, partition, type }` and run in an
+immer recipe context, so they may mutate `state` directly or return a
+replacement object. Default reducer fallback throws for unknown event types
+unless `fallback` is overridden.
 
 Operational guidance:
 

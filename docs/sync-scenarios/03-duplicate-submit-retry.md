@@ -1,6 +1,6 @@
 # Scenario 03 - Duplicate Submit Retry
 
-Note: Envelope metadata (`msg_id`, `timestamp`) is omitted when not central.
+Note: Envelope metadata (`msgId`, `timestamp`) is omitted when not central.
 
 ## Goal
 Ensure retry with same `id` and same payload is idempotent.
@@ -12,7 +12,7 @@ Ensure retry with same `id` and same payload is idempotent.
 ## Preconditions
 - Server already has committed event:
   - `id=evt-uuid-1`
-  - `committed_id=101`
+  - `committedId=101`
 
 ## Steps
 
@@ -21,16 +21,18 @@ Ensure retry with same `id` and same payload is idempotent.
 **C1 -> Server**
 ```yaml
 type: submit_events
-protocol_version: "1.0"
+protocolVersion: "1.0"
 payload:
   events:
     - id: evt-uuid-1
       partitions: [P1]
-      event:
-        type: event
-        payload:
-          schema: explorer.folderCreated
-          data: { id: A, parent: _root, position: first }
+      projectId: P1
+      userId: U1
+      type: explorer.folderCreated
+      payload: { id: A, parentId: _root, index: 0 }
+      meta:
+        clientId: C1
+        clientTs: 1738451204000
 ```
 
 ### 2) Server dedupes by `id`
@@ -38,15 +40,15 @@ payload:
 **Server -> C1**
 ```yaml
 type: submit_events_result
-protocol_version: "1.0"
+protocolVersion: "1.0"
 payload:
   results:
     - id: evt-uuid-1
       status: committed
-      committed_id: 101
-      status_updated_at: 1738451205000
+      committedId: 101
+      created: 1738451205000
 ```
 
 ## Assertions
 - No new commit is created.
-- `committed_id` sequence does not advance for this retry.
+- `committedId` sequence does not advance for this retry.
