@@ -1,4 +1,5 @@
 import {
+  cloneObject,
   isNonEmptyString,
   isObject,
   normalizeMeta,
@@ -34,27 +35,32 @@ export const projectIdFromPartitions = (partitions = []) => {
  *   id: string,
  *   type: string,
  *   payload: object,
+ *   meta?: object,
  *   actor: { userId?: string, clientId: string },
  *   projectId?: string,
  *   clientTs: number,
  * }} command
  */
-export const commandToSyncEvent = (command) => ({
-  projectId: command.projectId,
-  userId: command?.actor?.userId,
-  type: command.type,
-  payload: structuredClone(command.payload),
-  meta: normalizeMeta(
-    {
-      clientId: command?.actor?.clientId,
-      clientTs: command?.clientTs,
-    },
-    {
+export const commandToSyncEvent = (command) => {
+  const meta = cloneObject(command?.meta, {});
+  if (command?.actor?.clientId !== undefined) {
+    meta.clientId = command.actor.clientId;
+  }
+  if (command?.clientTs !== undefined) {
+    meta.clientTs = command.clientTs;
+  }
+
+  return {
+    projectId: command.projectId,
+    userId: command?.actor?.userId,
+    type: command.type,
+    payload: structuredClone(command.payload),
+    meta: normalizeMeta(meta, {
       defaultClientId: command?.actor?.clientId,
       defaultClientTs: command?.clientTs,
-    },
-  ),
-});
+    }),
+  };
+};
 
 /**
  * Convert committed sync row to app command envelope.
@@ -98,6 +104,7 @@ export const committedSyncEventToCommand = (
     partitions,
     type: committedEvent.type,
     payload: structuredClone(committedEvent.payload),
+    meta: structuredClone(meta),
     commandVersion: defaultCommandVersion,
     actor: {
       userId: isNonEmptyString(committedEvent?.userId)

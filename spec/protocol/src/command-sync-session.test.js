@@ -86,6 +86,7 @@ describe("src createCommandSyncSession", () => {
             meta: {
               clientId: "c2",
               clientTs: 1,
+              foo: "bar",
             },
             created: 1,
           },
@@ -102,6 +103,11 @@ describe("src createCommandSyncSession", () => {
       projectId: "p1",
       type: "scene.create",
       payload: { sceneId: "s1" },
+      meta: {
+        clientId: "c2",
+        clientTs: 1,
+        foo: "bar",
+      },
       actor: { userId: "u2", clientId: "c2" },
     });
   });
@@ -139,6 +145,11 @@ describe("src createCommandSyncSession", () => {
       id: "cmd-local-1",
       type: "scene.create",
       payload: { sceneId: "s1" },
+      meta: {
+        foo: "bar",
+        clientId: "user-provided-client",
+        clientTs: 1,
+      },
       actor: { userId: "u1", clientId: "c1" },
       projectId: "p1",
       clientTs: 5,
@@ -154,7 +165,7 @@ describe("src createCommandSyncSession", () => {
       userId: "u1",
       type: "scene.create",
       payload: { sceneId: "s1" },
-      meta: { clientId: "c1", clientTs: 5 },
+      meta: { foo: "bar", clientId: "c1", clientTs: 5 },
     });
   });
 });

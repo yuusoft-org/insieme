@@ -12,6 +12,11 @@ describe("src command-profile", () => {
       id: "cmd-1",
       type: "scene.create",
       payload: { sceneId: "scene-1", name: "Intro" },
+      meta: {
+        foo: "bar",
+        clientId: "user-provided-client",
+        clientTs: 1,
+      },
       actor: { userId: "u1", clientId: "c1" },
       projectId: "proj-1",
       clientTs: 1000,
@@ -23,7 +28,7 @@ describe("src command-profile", () => {
       userId: "u1",
       type: "scene.create",
       payload: { sceneId: "scene-1", name: "Intro" },
-      meta: { clientId: "c1", clientTs: 1000 },
+      meta: { foo: "bar", clientId: "c1", clientTs: 1000 },
     });
   });
 
@@ -39,6 +44,7 @@ describe("src command-profile", () => {
       meta: {
         clientId: "c1",
         clientTs: 1234,
+        foo: "bar",
       },
       created: 2000,
     });
@@ -50,7 +56,34 @@ describe("src command-profile", () => {
       partition: "project:proj-1:story",
       partitions: ["project:proj-1:story", "project:proj-1:settings"],
       clientTs: 1234,
+      meta: {
+        clientId: "c1",
+        clientTs: 1234,
+        foo: "bar",
+      },
       actor: { userId: "u1", clientId: "c1" },
+    });
+  });
+
+  it("preserves arbitrary normalized meta on validation", () => {
+    const result = validateCommandSubmitItem({
+      id: "cmd-2",
+      partitions: ["project:proj-1:story"],
+      type: "scene.update",
+      payload: { sceneId: "scene-1" },
+      meta: {
+        clientId: "c1",
+        clientTs: 1000,
+        foo: "bar",
+        nested: { ok: true },
+      },
+    });
+
+    expect(result.meta).toEqual({
+      clientId: "c1",
+      clientTs: 1000,
+      foo: "bar",
+      nested: { ok: true },
     });
   });
 
