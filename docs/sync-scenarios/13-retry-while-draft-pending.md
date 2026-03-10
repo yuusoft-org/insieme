@@ -1,6 +1,6 @@
 # Scenario 13 - Retry While Draft Still Pending
 
-Note: Envelope metadata (`msg_id`, `timestamp`) is omitted when not central.
+Note: Envelope metadata (`msgId`, `timestamp`) is omitted when not central.
 
 ## Goal
 Verify idempotent recovery when original submit result was not received.
@@ -10,10 +10,10 @@ Verify idempotent recovery when original submit result was not received.
 - Server
 
 ## Preconditions
-- Server already committed `id=evt-uuid-r1` at `committed_id=410`.
+- Server already committed `id=evt-uuid-r1` at `committedId=410`.
 - C1 still has unresolved local draft row:
   - `id=evt-uuid-r1`
-  - `draft_clock=5`
+  - `draftClock=5`
 
 ## Steps
 
@@ -22,7 +22,7 @@ Verify idempotent recovery when original submit result was not received.
 - C1 inserts into `committed_events` and removes matching `local_drafts` row.
 
 ### 2) C1 may retry submit with same `id`
-- Server dedupes and returns existing `committed_id=410`.
+- Server dedupes and returns existing `committedId=410`.
 - Client apply is idempotent (no duplicates).
 
 ## Assertions

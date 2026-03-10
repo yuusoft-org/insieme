@@ -10,18 +10,18 @@ All messages (both directions) **MUST** include:
 
 - `type` (string): message type.
 - `payload` (object): message-specific payload.
-- `protocol_version` (string): current version is `"1.0"`.
+- `protocolVersion` (string): current version is `"1.0"`.
 
 Optional metadata:
 
-- `msg_id` (string): trace/debug id.
+- `msgId` (string): trace/debug id.
 - `timestamp` (number): sender time in ms.
 
 Envelope rules:
 
 - Unknown message `type` **MUST** be rejected with `bad_request`.
 - Missing required envelope fields **MUST** be rejected with `bad_request`.
-- Unsupported `protocol_version` **MUST** be rejected with `protocol_version_unsupported` and the connection **MUST** close.
+- Unsupported `protocolVersion` **MUST** be rejected with `protocolVersion_unsupported` and the connection **MUST** close.
 - Unknown extra fields **MUST** be ignored for forward compatibility.
 - Servers **MAY** enforce inbound safety limits (message rate/size). On limit breach, server returns `rate_limited` or `bad_request` and may close the connection.
 
@@ -31,10 +31,10 @@ Envelope rules:
 
 ```yaml
 type: connect
-protocol_version: "1.0"
+protocolVersion: "1.0"
 payload:
   token: jwt
-  client_id: client-123
+  clientId: client-123
 ```
 
 ### `submit_events`
@@ -43,16 +43,18 @@ Core mode uses exactly one submitted event per request.
 
 ```yaml
 type: submit_events
-protocol_version: "1.0"
+protocolVersion: "1.0"
 payload:
   events:
     - id: evt-uuid-1
       partitions: [workspace-1]
-      event:
-        type: event
-        payload:
-          schema: explorer.folderCreated
-          data: { id: A, name: Folder A }
+      projectId: workspace-1
+      userId: user-123
+      type: explorer.folderCreated
+      payload: { id: A, name: Folder A }
+      meta:
+        clientId: client-123
+        clientTs: 1738451200000
 ```
 
 Rules:
@@ -60,22 +62,27 @@ Rules:
 - `payload.events` **MUST** be an array with exactly 1 item.
 - `payload.events[0].id` **MUST** be present.
 - `payload.events[0].partitions` **MUST** follow `partitions.md`.
+- `payload.events[0].type` **MUST** be present.
+- `payload.events[0].payload` **MUST** be an object.
+- `payload.events[0].meta.clientId` **MUST** match the authenticated connection client.
+- `payload.events[0].meta.clientTs` **MUST** be a finite number.
+- `payload.events[0].meta` **MAY** include extra JSON-safe fields. Reserved keys may be overwritten by the runtime.
 
 ### `sync`
 
 ```yaml
 type: sync
-protocol_version: "1.0"
+protocolVersion: "1.0"
 payload:
   partitions:
     - workspace-1
-  since_committed_id: 1200
+  sinceCommittedId: 1200
   limit: 500
 ```
 
 Rules:
 
-- `since_committed_id` is exclusive.
+- `sinceCommittedId` is exclusive.
 - `limit` is optional.
 - If omitted, server **MUST** use default `500`.
 - If provided, server **MUST** clamp to `[1, 1000]`.
@@ -86,10 +93,10 @@ Rules:
 
 ```yaml
 type: connected
-protocol_version: "1.0"
+protocolVersion: "1.0"
 payload:
-  client_id: client-123
-  server_last_committed_id: 1700
+  clientId: client-123
+  globalLastCommittedId: 1700
 ```
 
 ### `submit_events_result`
@@ -98,29 +105,29 @@ Response to `submit_events`.
 
 ```yaml
 type: submit_events_result
-protocol_version: "1.0"
+protocolVersion: "1.0"
 payload:
   results:
     - id: evt-uuid-1
       status: committed
-      committed_id: 1201
-      status_updated_at: 1738451201500
+      committedId: 1201
+      created: 1738451201500
 ```
 
 Rejected example:
 
 ```yaml
 type: submit_events_result
-protocol_version: "1.0"
+protocolVersion: "1.0"
 payload:
   results:
     - id: evt-uuid-1
       status: rejected
       reason: validation_failed    # validation_failed | forbidden
       errors:
-        - field: event.payload.data.id
+        - field: payload.id
           message: duplicate id
-      status_updated_at: 1738451201600
+      created: 1738451201600
 ```
 
 Rules:
@@ -135,19 +142,20 @@ Sent to other clients to announce a committed event.
 
 ```yaml
 type: event_broadcast
-protocol_version: "1.0"
+protocolVersion: "1.0"
 payload:
+  committedId: 1201
   id: evt-uuid-1
-  client_id: client-123
   partitions:
     - workspace-1
-  committed_id: 1201
-  event:
-    type: event
-    payload:
-      schema: explorer.folderCreated
-      data: { id: A, name: Folder A }
-  status_updated_at: 1738451205000
+  projectId: workspace-1
+  userId: user-123
+  type: explorer.folderCreated
+  payload: { id: A, name: Folder A }
+  meta:
+    clientId: client-123
+    clientTs: 1738451200000
+  created: 1738451205000
 ```
 
 Server **MUST NOT** send `event_broadcast` for an item to the same connection that submitted that item.
@@ -156,36 +164,39 @@ Server **MUST NOT** send `event_broadcast` for an item to the same connection th
 
 ```yaml
 type: sync_response
-protocol_version: "1.0"
+protocolVersion: "1.0"
 payload:
   partitions:
     - workspace-1
   events:
-    - id: evt-uuid-50
-      client_id: client-456
+    - committedId: 1201
+      id: evt-uuid-50
       partitions: [workspace-1]
-      committed_id: 1201
-      event:
-        type: event
-        payload:
-          schema: explorer.folderCreated
-          data: { id: B, name: Folder B }
-      status_updated_at: 1738451200000
-  next_since_committed_id: 1700
-  has_more: false
+      projectId: workspace-1
+      userId: user-456
+      type: explorer.folderCreated
+      payload: { id: B, name: Folder B }
+      meta:
+        clientId: client-456
+        clientTs: 1738451200000
+      created: 1738451200000
+  nextSinceCommittedId: 1700
+  hasMore: false
+  syncToCommittedId: 1700
 ```
 
 Cursor rule:
 
-- If `has_more=true`, client **MUST** use `next_since_committed_id` in the next `sync` call.
-- If `has_more=false`, `next_since_committed_id` becomes the durable cursor.
+- If `hasMore=true`, client **MUST** use `nextSinceCommittedId` in the next `sync` call.
+- If `hasMore=false`, `nextSinceCommittedId` becomes the durable cursor.
 - `payload.partitions` **MUST** be present and reflect the normalized active sync scope used for this response page.
+- `payload.syncToCommittedId` **MUST** remain fixed for the full paging cycle.
 
 ### `error`
 
 ```yaml
 type: error
-protocol_version: "1.0"
+protocolVersion: "1.0"
 payload:
   code: bad_request
   message: Missing payload.events

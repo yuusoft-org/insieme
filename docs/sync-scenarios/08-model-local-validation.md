@@ -1,6 +1,6 @@
 # Scenario 08 - Local Validation Gate
 
-Note: Envelope metadata (`msg_id`, `timestamp`) is omitted when not central.
+Note: Envelope metadata (`msgId`, `timestamp`) is omitted when not central.
 
 ## Goal
 Verify local validation prevents obviously invalid drafts from being queued.

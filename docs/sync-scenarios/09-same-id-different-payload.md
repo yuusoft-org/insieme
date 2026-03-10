@@ -1,6 +1,6 @@
 # Scenario 09 - Same `id`, Different Payload
 
-Note: Envelope metadata (`msg_id`, `timestamp`) is omitted when not central.
+Note: Envelope metadata (`msgId`, `timestamp`) is omitted when not central.
 
 ## Goal
 Ensure server rejects same `id` when canonical payload differs.
@@ -13,7 +13,7 @@ Ensure server rejects same `id` when canonical payload differs.
 - Server already committed:
   - `id=evt-uuid-4`
   - payload A
-  - `committed_id=200`
+  - `committedId=200`
 
 ## Steps
 
@@ -22,16 +22,18 @@ Ensure server rejects same `id` when canonical payload differs.
 **C1 -> Server**
 ```yaml
 type: submit_events
-protocol_version: "1.0"
+protocolVersion: "1.0"
 payload:
   events:
     - id: evt-uuid-4
       partitions: [P1]
-      event:
-        type: event
-        payload:
-          schema: explorer.folderCreated
-          data: { id: DIFFERENT, parent: _root, position: first }
+      projectId: P1
+      userId: U1
+      type: explorer.folderCreated
+      payload: { id: DIFFERENT, parentId: _root, index: 0 }
+      meta:
+        clientId: C1
+        clientTs: 1738451208800
 ```
 
 ### 2) Server rejects
@@ -39,16 +41,16 @@ payload:
 **Server -> C1**
 ```yaml
 type: submit_events_result
-protocol_version: "1.0"
+protocolVersion: "1.0"
 payload:
   results:
     - id: evt-uuid-4
       status: rejected
       reason: validation_failed
       errors:
-        - field: event
+        - field: payload
           message: id already committed with different payload
-      status_updated_at: 1738451209000
+      created: 1738451209000
 ```
 
 ## Assertions

@@ -1,6 +1,6 @@
 # Scenario 00 - Handshake + Empty Sync
 
-Note: Envelope metadata (`msg_id`, `timestamp`) is omitted when not central.
+Note: Envelope metadata (`msgId`, `timestamp`) is omitted when not central.
 
 ## Goal
 Verify a successful connect and an empty sync page.
@@ -19,19 +19,19 @@ Verify a successful connect and an empty sync page.
 **C1 -> Server**
 ```yaml
 type: connect
-protocol_version: "1.0"
+protocolVersion: "1.0"
 payload:
   token: jwt
-  client_id: C1
+  clientId: C1
 ```
 
 **Server -> C1**
 ```yaml
 type: connected
-protocol_version: "1.0"
+protocolVersion: "1.0"
 payload:
-  client_id: C1
-  server_last_committed_id: 0
+  clientId: C1
+  globalLastCommittedId: 0
 ```
 
 ### 2) Sync
@@ -39,25 +39,26 @@ payload:
 **C1 -> Server**
 ```yaml
 type: sync
-protocol_version: "1.0"
+protocolVersion: "1.0"
 payload:
   partitions: [P1]
-  since_committed_id: 0
+  sinceCommittedId: 0
   limit: 50
 ```
 
 **Server -> C1**
 ```yaml
 type: sync_response
-protocol_version: "1.0"
+protocolVersion: "1.0"
 payload:
   partitions: [P1]
   events: []
-  next_since_committed_id: 0
-  has_more: false
+  nextSinceCommittedId: 0
+  hasMore: false
+  syncToCommittedId: 0
 ```
 
 ## Assertions
 - Handshake succeeds.
-- Empty sync is represented by `events: []` and `has_more: false`.
+- Empty sync is represented by `events: []` and `hasMore: false`.
 - Durable cursor remains `0`.

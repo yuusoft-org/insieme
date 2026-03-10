@@ -15,15 +15,18 @@ For each `submit_events` request (core mode: one event):
 1. Envelope and request shape are valid.
 2. `payload.events` has exactly one item.
 3. `id` is present and well-formed for your UUID policy.
-4. `partitions` are valid and authorized.
-5. Event payload passes app/domain validation.
-6. Event type/schema is recognized by the active application model.
+4. `type` is a non-empty string and `payload` is an object.
+5. `partitions` are valid and authorized.
+6. `meta.clientId` and `meta.clientTs` are valid, and `meta.clientId` matches the authenticated client.
+7. If `userId` is present, validate it against the authenticated user when your auth layer exposes one.
+8. Event payload passes app/domain validation.
+9. Event `type` is recognized by the active application model.
 
 If any check fails, server **MUST** reject with:
 
 - `bad_request` for malformed request shape,
 - `forbidden` for authorization failures,
-- `validation_failed` for domain/schema failures.
+- `validation_failed` for metadata or domain validation failures.
 
 ## App-Level Validation Extensions
 

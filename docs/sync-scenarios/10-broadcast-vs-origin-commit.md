@@ -1,6 +1,6 @@
 # Scenario 10 - Origin Result vs Peer Broadcast
 
-Note: Envelope metadata (`msg_id`, `timestamp`) is omitted when not central.
+Note: Envelope metadata (`msgId`, `timestamp`) is omitted when not central.
 
 ## Goal
 Verify origin outcome comes from submit result; peers observe broadcast.
@@ -17,7 +17,7 @@ Verify origin outcome comes from submit result; peers observe broadcast.
 ## Steps
 
 ### 1) C1 submits draft
-- Server commits as `committed_id=300`.
+- Server commits as `committedId=300`.
 
 ### 2) Delivery split
 - Server sends `submit_events_result` to C1.

@@ -1,6 +1,6 @@
 # Scenario 17 - Transport Close + Reconnect
 
-Note: Envelope metadata (`msg_id`, `timestamp`) is omitted when not central.
+Note: Envelope metadata (`msgId`, `timestamp`) is omitted when not central.
 
 ## Goal
 Verify behavior when transport drops and client reconnects (core mode has no protocol heartbeat/disconnect messages).

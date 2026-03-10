@@ -1,6 +1,6 @@
 # Scenario 12 - Add Partition Mid-Session
 
-Note: Envelope metadata (`msg_id`, `timestamp`) is omitted when not central.
+Note: Envelope metadata (`msgId`, `timestamp`) is omitted when not central.
 
 ## Goal
 Verify partition-scope expansion with the simplified sync scope model.
@@ -11,7 +11,7 @@ Verify partition-scope expansion with the simplified sync scope model.
 
 ## Preconditions
 - C1 current active scope is `[P1]` and durable cursor is `800`.
-- Server contains older history in `P2` at `committed_id=50,120,350`.
+- Server contains older history in `P2` at `committedId=50,120,350`.
 
 ## Steps
 
@@ -23,10 +23,10 @@ To include full history for newly added `P2`, C1 performs a union full catch-up:
 **C1 -> Server**
 ```yaml
 type: sync
-protocol_version: "1.0"
+protocolVersion: "1.0"
 payload:
   partitions: [P1, P2]
-  since_committed_id: 0
+  sinceCommittedId: 0
   limit: 500
 ```
 
@@ -34,7 +34,7 @@ payload:
 - Includes historical events for P1 and P2 up to current watermark.
 
 ### 3) C1 applies idempotently
-- Existing P1 committed rows are deduped by `id`/`committed_id`.
+- Existing P1 committed rows are deduped by `id`/`committedId`.
 - Missing P2 history is added.
 
 ## Assertions

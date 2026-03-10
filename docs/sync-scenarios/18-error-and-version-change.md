@@ -1,6 +1,6 @@
 # Scenario 18 - Error Boundaries (Core)
 
-Note: Envelope metadata (`msg_id`, `timestamp`) is omitted when not central.
+Note: Envelope metadata (`msgId`, `timestamp`) is omitted when not central.
 
 ## Goal
 Verify core error handling boundaries: protocol version, auth, bad request, forbidden.
@@ -16,18 +16,18 @@ Verify core error handling boundaries: protocol version, auth, bad request, forb
 **C1 -> Server**
 ```yaml
 type: connect
-protocol_version: "99.0"
+protocolVersion: "99.0"
 payload:
   token: jwt
-  client_id: C1
+  clientId: C1
 ```
 
 **Server -> C1**
 ```yaml
 type: error
-protocol_version: "1.0"
+protocolVersion: "1.0"
 payload:
-  code: protocol_version_unsupported
+  code: protocolVersion_unsupported
   message: Unsupported protocol version
 ```
 
@@ -46,5 +46,5 @@ Connection closes.
 - Server returns `forbidden` and keeps connection open.
 
 ## Assertions
-- Close behavior: `protocol_version_unsupported`, `auth_failed`.
+- Close behavior: `protocolVersion_unsupported`, `auth_failed`.
 - Keep-open behavior: `bad_request`, `forbidden`.

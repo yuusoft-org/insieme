@@ -1,6 +1,6 @@
 # Scenario 16 - Offline Queue Drain + Catch-Up
 
-Note: Envelope metadata (`msg_id`, `timestamp`) is omitted when not central.
+Note: Envelope metadata (`msgId`, `timestamp`) is omitted when not central.
 
 ## Goal
 Verify offline drafts are drained sequentially in core mode and remain convergent with catch-up.
@@ -11,18 +11,18 @@ Verify offline drafts are drained sequentially in core mode and remain convergen
 
 ## Preconditions
 - C1 was offline and created drafts:
-  - D1 (`draft_clock=1`)
-  - D2 (`draft_clock=2`)
-  - D3 (`draft_clock=3`)
+  - D1 (`draftClock=1`)
+  - D2 (`draftClock=2`)
+  - D3 (`draftClock=3`)
 - Server may have additional remote commits during offline window.
 
 ## Steps
 
 ### 1) Reconnect catch-up
-- C1 runs sync until `has_more=false` and applies committed events.
+- C1 runs sync until `hasMore=false` and applies committed events.
 
 ### 2) Drain local queue
-- C1 submits D1, D2, D3 one-by-one in `(draft_clock, id)` order.
+- C1 submits D1, D2, D3 one-by-one in `(draftClock, id)` order.
 - Server may commit/reject each independently.
 
 ### 3) Apply outcomes

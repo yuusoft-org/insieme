@@ -1,6 +1,6 @@
 # Scenario 02 - Local Draft Rejected
 
-Note: Envelope metadata (`msg_id`, `timestamp`) is omitted when not central.
+Note: Envelope metadata (`msgId`, `timestamp`) is omitted when not central.
 
 ## Goal
 Verify rejected submit removes local draft and does not broadcast.
@@ -20,16 +20,18 @@ Verify rejected submit removes local draft and does not broadcast.
 **C1 -> Server**
 ```yaml
 type: submit_events
-protocol_version: "1.0"
+protocolVersion: "1.0"
 payload:
   events:
     - id: evt-uuid-rj1
       partitions: [P1]
-      event:
-        type: event
-        payload:
-          schema: explorer.folderCreated
-          data: { id: A, parent: does-not-exist, position: first }
+      projectId: P1
+      userId: U1
+      type: explorer.folderCreated
+      payload: { id: A, parentId: does-not-exist, index: 0 }
+      meta:
+        clientId: C1
+        clientTs: 1738451205000
 ```
 
 ### 2) Server rejects
@@ -37,16 +39,16 @@ payload:
 **Server -> C1**
 ```yaml
 type: submit_events_result
-protocol_version: "1.0"
+protocolVersion: "1.0"
 payload:
   results:
     - id: evt-uuid-rj1
       status: rejected
       reason: validation_failed
       errors:
-        - field: event.payload.data.parent
+        - field: payload.parentId
           message: parent not found
-      status_updated_at: 1738451205100
+      created: 1738451205100
 ```
 
 ## Assertions

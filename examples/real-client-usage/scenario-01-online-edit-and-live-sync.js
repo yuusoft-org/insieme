@@ -24,8 +24,8 @@ const client = createCoreSyncClient({
   onEvent: ({ type, payload }) => {
     if (type === "connected") console.log("connected", payload);
     if (type === "synced") console.log("synced", payload.cursor);
-    if (type === "committed") console.log("local commit", payload.id, payload.committed_id);
-    if (type === "broadcast") console.log("peer commit", payload.id, payload.committed_id);
+    if (type === "committed") console.log("local commit", payload.id, payload.committedId);
+    if (type === "broadcast") console.log("peer commit", payload.id, payload.committedId);
     if (type === "rejected") console.warn("rejected", payload.id, payload.reason, payload.errors);
     if (type === "error") console.error("server error", payload.code, payload.message);
   },
@@ -35,12 +35,14 @@ await client.start();
 
 await client.submitEvent({
   partitions: ["workspace-1"],
-  event: {
-    type: "event",
-    payload: {
-      schema: "explorer.folderCreated",
-      data: { id: "folder-A", name: "Folder A" },
-    },
+  projectId: "workspace-1",
+  type: "explorer.folderCreated",
+  payload: {
+    id: "folder-A",
+    name: "Folder A",
+  },
+  meta: {
+    clientTs: Date.now(),
   },
 });
 

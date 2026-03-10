@@ -20,7 +20,7 @@ const client = createCoreSyncClient({
   partitions: ["workspace-1"],
   onEvent: ({ type, payload }) => {
     if (type === "synced") console.log("catch-up done at", payload.cursor);
-    if (type === "committed") console.log("drained draft committed", payload.id, payload.committed_id);
+    if (type === "committed") console.log("drained draft committed", payload.id, payload.committedId);
     if (type === "rejected") console.log("drained draft rejected", payload.id, payload.reason);
   },
 });
@@ -29,22 +29,26 @@ const client = createCoreSyncClient({
 await store.init();
 await client.submitEvent({
   partitions: ["workspace-1"],
-  event: {
-    type: "event",
-    payload: {
-      schema: "todo.created",
-      data: { id: "t1", title: "Buy milk" },
-    },
+  projectId: "workspace-1",
+  type: "todo.created",
+  payload: {
+    id: "t1",
+    title: "Buy milk",
+  },
+  meta: {
+    clientTs: Date.now(),
   },
 });
 await client.submitEvent({
   partitions: ["workspace-1"],
-  event: {
-    type: "event",
-    payload: {
-      schema: "todo.created",
-      data: { id: "t2", title: "Book flights" },
-    },
+  projectId: "workspace-1",
+  type: "todo.created",
+  payload: {
+    id: "t2",
+    title: "Book flights",
+  },
+  meta: {
+    clientTs: Date.now(),
   },
 });
 
