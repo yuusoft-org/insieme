@@ -11,6 +11,7 @@ const createMockTransport = () => {
     sent,
     connect: vi.fn(async () => {}),
     disconnect: vi.fn(async () => {}),
+    setOnlineTransport: vi.fn(async () => {}),
     send: vi.fn(async (message) => {
       sent.push(message);
     }),
@@ -166,6 +167,103 @@ describe("src createCommandSyncSession", () => {
       type: "scene.create",
       payload: { sceneId: "s1" },
       meta: { foo: "bar", clientId: "c1", clientTs: 5 },
+    });
+  });
+
+  it("exposes session helpers and clears local lastError state", async () => {
+    const forwardedEvents = [];
+    const session = createCommandSyncSession({
+      token: "t1",
+      actor: {
+        userId: "u1",
+        clientId: "c1",
+      },
+      partitions: ["project:p1:story"],
+      transport,
+      store,
+      onEvent: (entry) => {
+        forwardedEvents.push(entry);
+      },
+    });
+
+    expect(session.getActor()).toEqual({
+      userId: "u1",
+      clientId: "c1",
+    });
+    expect(session.getStatus()).toMatchObject({
+      started: false,
+      connected: false,
+      activePartitions: ["project:p1:story"],
+    });
+
+    await session.start();
+    transport.emit({
+      type: "connected",
+      payload: { clientId: "c1", globalLastCommittedId: 0 },
+    });
+    await tick();
+    transport.emit({
+      type: "sync_response",
+      payload: {
+        partitions: ["project:p1:story"],
+        events: [],
+        nextSinceCommittedId: 0,
+        hasMore: false,
+      },
+    });
+    await tick();
+
+    expect(session.getStatus()).toMatchObject({
+      started: true,
+      connected: true,
+      connectedServerLastCommittedId: 0,
+    });
+
+    const submittedId = await session.submitEvent({
+      id: "evt-direct-1",
+      partitions: ["project:p1:story"],
+      projectId: "p1",
+      userId: "u1",
+      type: "scene.create",
+      payload: { sceneId: "s2" },
+      meta: { clientId: "c1", clientTs: 6 },
+    });
+    expect(submittedId).toBe("evt-direct-1");
+
+    await session.syncNow({ sinceCommittedId: 0 });
+    await session.flushDrafts();
+    await session.setOnlineTransport({ transportId: "next" });
+
+    expect(transport.setOnlineTransport).toHaveBeenCalledWith({
+      transportId: "next",
+    });
+    expect(
+      transport.sent.some((entry) => entry.type === "submit_events"),
+    ).toBe(true);
+    expect(transport.sent.some((entry) => entry.type === "sync")).toBe(true);
+
+    transport.emit({
+      type: "error",
+      payload: {
+        code: "server_error",
+        message: "boom",
+      },
+    });
+    await tick();
+
+    expect(session.getLastError()).toMatchObject({
+      code: "server_error",
+      message: "boom",
+    });
+    session.clearLastError();
+    expect(session.getLastError()).toBeNull();
+    expect(forwardedEvents.some((entry) => entry.type === "error")).toBe(true);
+
+    await session.stop();
+    expect(transport.disconnect).toHaveBeenCalled();
+    expect(session.getStatus()).toMatchObject({
+      started: false,
+      connected: false,
     });
   });
 });
