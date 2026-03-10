@@ -197,11 +197,13 @@ export const createCommandSyncSession = ({
       }
 
       boundedRemember(command?.id);
+      const syncEvent = mapCommandToSyncEvent(command);
 
       try {
         await syncClient.submitEvent({
+          id: command.id,
           partitions: partitionsForCommand,
-          event: mapCommandToSyncEvent(command),
+          ...syncEvent,
         });
       } catch (error) {
         if (!swallowTransportDisconnect || !isTransportDisconnectedError(error)) {
@@ -216,10 +218,9 @@ export const createCommandSyncSession = ({
       return command.id;
     },
 
-    submitEvent: async ({ partitions: eventPartitions, event }) => {
+    submitEvent: async (input) => {
       return syncClient.submitEvent({
-        partitions: eventPartitions,
-        event,
+        ...input,
       });
     },
 

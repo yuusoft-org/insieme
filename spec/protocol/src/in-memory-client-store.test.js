@@ -1,25 +1,43 @@
 import { describe, expect, it } from "vitest";
 import { createInMemoryClientStore } from "../../../src/index.js";
 
+const makeDraft = (overrides = {}) => ({
+  id: "evt-1",
+  partitions: ["P1"],
+  type: "x",
+  payload: { n: 1 },
+  meta: { clientId: "C1", clientTs: 100 },
+  createdAt: 100,
+  ...overrides,
+});
+
+const makeCommitted = (overrides = {}) => ({
+  id: "evt-1",
+  partitions: ["P1"],
+  committedId: 1,
+  type: "x",
+  payload: { n: 1 },
+  meta: { clientId: "C1", clientTs: 10 },
+  created: 10,
+  ...overrides,
+});
+
+const counterView = {
+  name: "counter",
+  checkpoint: { mode: "manual" },
+  initialState: () => ({ count: 0 }),
+  reduce: ({ state, event }) => ({
+    count: state.count + (event.type === "increment" ? 1 : 0),
+  }),
+};
+
 describe("src createInMemoryClientStore", () => {
   it("orders drafts by draftClock then id", async () => {
     const store = createInMemoryClientStore();
     await store.init();
 
-    await store.insertDraft({
-      id: "b",
-      clientId: "C1",
-      partitions: ["P1"],
-      event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
-      createdAt: 100,
-    });
-    await store.insertDraft({
-      id: "a",
-      clientId: "C1",
-      partitions: ["P1"],
-      event: { type: "event", payload: { schema: "x", data: { n: 2 } } },
-      createdAt: 101,
-    });
+    await store.insertDraft(makeDraft({ id: "b", payload: { n: 1 }, createdAt: 100 }));
+    await store.insertDraft(makeDraft({ id: "a", payload: { n: 2 }, createdAt: 101 }));
 
     const drafts = await store.loadDraftsOrdered();
     expect(drafts.map((draft) => draft.id)).toEqual(["b", "a"]);
@@ -28,22 +46,15 @@ describe("src createInMemoryClientStore", () => {
   it("applies committed submit result atomically (commit insert + draft cleanup)", async () => {
     const store = createInMemoryClientStore();
 
-    await store.insertDraft({
-      id: "evt-1",
-      clientId: "C1",
-      partitions: ["P1"],
-      event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
-      createdAt: 100,
-    });
+    await store.insertDraft(makeDraft({ id: "evt-1" }));
 
     await store.applySubmitResult({
       result: {
         id: "evt-1",
         status: "committed",
-        committed_id: 10,
-        status_updated_at: 111,
+        committedId: 10,
+        created: 111,
       },
-      fallbackClientId: "C1",
     });
 
     const drafts = store._debug.getDrafts();
@@ -53,30 +64,24 @@ describe("src createInMemoryClientStore", () => {
     expect(committed).toHaveLength(1);
     expect(committed[0]).toMatchObject({
       id: "evt-1",
-      committed_id: 10,
-      client_id: "C1",
+      committedId: 10,
+      meta: { clientId: "C1", clientTs: 100 },
+      created: 111,
     });
   });
 
   it("applies rejected submit result by removing draft only", async () => {
     const store = createInMemoryClientStore();
 
-    await store.insertDraft({
-      id: "evt-r",
-      clientId: "C1",
-      partitions: ["P1"],
-      event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
-      createdAt: 100,
-    });
+    await store.insertDraft(makeDraft({ id: "evt-r" }));
 
     await store.applySubmitResult({
       result: {
         id: "evt-r",
         status: "rejected",
         reason: "validation_failed",
-        status_updated_at: 111,
+        created: 111,
       },
-      fallbackClientId: "C1",
     });
 
     expect(store._debug.getDrafts()).toHaveLength(0);
@@ -86,31 +91,17 @@ describe("src createInMemoryClientStore", () => {
   it("applies committed batches idempotently and updates cursor", async () => {
     const store = createInMemoryClientStore();
 
-    await store.insertDraft({
-      id: "evt-1",
-      clientId: "C1",
-      partitions: ["P1"],
-      event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
-      createdAt: 100,
-    });
+    await store.insertDraft(makeDraft({ id: "evt-1" }));
 
     const events = [
-      {
-        id: "evt-1",
-        client_id: "C1",
-        partitions: ["P1"],
-        committed_id: 1,
-        event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
-        status_updated_at: 10,
-      },
-      {
+      makeCommitted({ id: "evt-1", committedId: 1, payload: { n: 1 }, created: 10 }),
+      makeCommitted({
         id: "evt-2",
-        client_id: "C2",
-        partitions: ["P1"],
-        committed_id: 2,
-        event: { type: "event", payload: { schema: "x", data: { n: 2 } } },
-        status_updated_at: 11,
-      },
+        committedId: 2,
+        payload: { n: 2 },
+        meta: { clientId: "C2", clientTs: 11 },
+        created: 11,
+      }),
     ];
 
     await store.applyCommittedBatch({ events, nextCursor: 2 });
@@ -138,31 +129,13 @@ describe("src createInMemoryClientStore", () => {
     const store = createInMemoryClientStore();
 
     await store.applyCommittedBatch({
-      events: [
-        {
-          id: "evt-1",
-          client_id: "C1",
-          partitions: ["P1"],
-          committed_id: 1,
-          event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
-          status_updated_at: 10,
-        },
-      ],
+      events: [makeCommitted({ id: "evt-1", committedId: 1, payload: { n: 1 } })],
       nextCursor: 1,
     });
 
     await expect(
       store.applyCommittedBatch({
-        events: [
-          {
-            id: "evt-1",
-            client_id: "C1",
-            partitions: ["P1"],
-            committed_id: 2,
-            event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
-            status_updated_at: 11,
-          },
-        ],
+        events: [makeCommitted({ id: "evt-1", committedId: 2, payload: { n: 1 }, created: 11 })],
         nextCursor: 2,
       }),
     ).rejects.toThrow("committed event invariant violation");
@@ -170,60 +143,54 @@ describe("src createInMemoryClientStore", () => {
 
   it("maintains materialized views per partition across commit paths", async () => {
     const store = createInMemoryClientStore({
-      materializedViews: [
-        {
-          name: "counter",
-          initialState: () => ({ count: 0 }),
-          reduce: ({ state, event }) => ({
-            count: state.count + (event.event.type === "increment" ? 1 : 0),
-          }),
-        },
-      ],
+      materializedViews: [counterView],
     });
 
-    await store.insertDraft({
-      id: "evt-1",
-      clientId: "C1",
-      partitions: ["P1"],
-      event: { type: "increment", payload: {} },
-      createdAt: 1,
-    });
+    await store.insertDraft(
+      makeDraft({
+        id: "evt-1",
+        type: "increment",
+        payload: {},
+        meta: { clientId: "C1", clientTs: 1 },
+        createdAt: 1,
+      }),
+    );
 
     await store.applySubmitResult({
       result: {
         id: "evt-1",
         status: "committed",
-        committed_id: 1,
-        status_updated_at: 10,
+        committedId: 1,
+        created: 10,
       },
-      fallbackClientId: "C1",
     });
 
     await store.applyCommittedBatch({
       events: [
-        {
+        makeCommitted({
           id: "evt-2",
-          client_id: "C2",
           partitions: ["P1", "P2"],
-          committed_id: 2,
-          event: { type: "increment", payload: {} },
-          status_updated_at: 11,
-        },
+          committedId: 2,
+          type: "increment",
+          payload: {},
+          meta: { clientId: "C2", clientTs: 11 },
+          created: 11,
+        }),
       ],
       nextCursor: 2,
     });
 
-    // Duplicate batch item should not re-apply reducer state.
     await store.applyCommittedBatch({
       events: [
-        {
+        makeCommitted({
           id: "evt-2",
-          client_id: "C2",
           partitions: ["P1", "P2"],
-          committed_id: 2,
-          event: { type: "increment", payload: {} },
-          status_updated_at: 12,
-        },
+          committedId: 2,
+          type: "increment",
+          payload: {},
+          meta: { clientId: "C2", clientTs: 11 },
+          created: 12,
+        }),
       ],
       nextCursor: 2,
     });
@@ -250,36 +217,26 @@ describe("src createInMemoryClientStore", () => {
 
   it("supports batch loads, eviction, and invalidation for materialized views", async () => {
     const store = createInMemoryClientStore({
-      materializedViews: [
-        {
-          name: "counter",
-          checkpoint: { mode: "manual" },
-          initialState: () => ({ count: 0 }),
-          reduce: ({ state, event }) => ({
-            count: state.count + (event.event.type === "increment" ? 1 : 0),
-          }),
-        },
-      ],
+      materializedViews: [counterView],
     });
 
     await store.applyCommittedBatch({
       events: [
-        {
+        makeCommitted({
           id: "evt-1",
-          client_id: "C1",
-          partitions: ["P1"],
-          committed_id: 1,
-          event: { type: "increment", payload: {} },
-          status_updated_at: 10,
-        },
-        {
+          committedId: 1,
+          type: "increment",
+          payload: {},
+          created: 10,
+        }),
+        makeCommitted({
           id: "evt-2",
-          client_id: "C1",
           partitions: ["P1", "P2"],
-          committed_id: 2,
-          event: { type: "increment", payload: {} },
-          status_updated_at: 11,
-        },
+          committedId: 2,
+          type: "increment",
+          payload: {},
+          created: 11,
+        }),
       ],
       nextCursor: 2,
     });

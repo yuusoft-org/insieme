@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 import { createReducer } from "../../../src/index.js";
 
 describe("src reducer", () => {
-  it("applies schemaHandlers for type=event payloads", () => {
+  it("applies handlers for top-level committed-event type/payload", () => {
     const reducer = createReducer({
       schemaHandlers: {
-        "counter.increment": ({ state, data }) => {
-          state.count = (state.count || 0) + data.amount;
+        "counter.increment": ({ state, payload }) => {
+          state.count = (state.count || 0) + payload.amount;
         },
       },
     });
@@ -14,12 +14,9 @@ describe("src reducer", () => {
     const state = reducer({
       state: { count: 1 },
       event: {
-        event: {
-          type: "event",
-          payload: {
-            schema: "counter.increment",
-            data: { amount: 2 },
-          },
+        type: "counter.increment",
+        payload: {
+          amount: 2,
         },
       },
       partition: "P1",
@@ -28,12 +25,12 @@ describe("src reducer", () => {
     expect(state).toEqual({ count: 3 });
   });
 
-  it("supports returning replacement state from schema handlers", () => {
+  it("supports returning replacement state from handlers", () => {
     const reducer = createReducer({
       schemaHandlers: {
-        "counter.increment": ({ state, data }) => ({
+        "counter.increment": ({ state, payload }) => ({
           ...state,
-          count: (state?.count || 0) + data.amount,
+          count: (state?.count || 0) + payload.amount,
         }),
       },
     });
@@ -41,12 +38,9 @@ describe("src reducer", () => {
     const state = reducer({
       state: { count: 1 },
       event: {
-        event: {
-          type: "event",
-          payload: {
-            schema: "counter.increment",
-            data: { amount: 2 },
-          },
+        type: "counter.increment",
+        payload: {
+          amount: 2,
         },
       },
       partition: "P1",
@@ -62,38 +56,12 @@ describe("src reducer", () => {
       reducer({
         state: {},
         event: {
-          event: {
-            type: "unknown-type",
-            payload: { x: 1 },
-          },
+          type: "unknown-type",
+          payload: { x: 1 },
         },
         partition: "P1",
       }),
-    ).toThrow("unsupported committed event type");
-  });
-
-  it("throws by default when schema handler is missing", () => {
-    const reducer = createReducer({
-      schemaHandlers: {
-        "known.schema": ({ state }) => state,
-      },
-    });
-
-    expect(() =>
-      reducer({
-        state: {},
-        event: {
-          event: {
-            type: "event",
-            payload: {
-              schema: "unknown.schema",
-              data: {},
-            },
-          },
-        },
-        partition: "P1",
-      }),
-    ).toThrow("no schema handler registered");
+    ).toThrow("no handler registered");
   });
 
   it("falls back for missing and unknown event types", () => {
@@ -108,9 +76,7 @@ describe("src reducer", () => {
     const missingType = fallbackReducer({
       state: undefined,
       event: {
-        event: {
-          payload: { foo: "bar" },
-        },
+        payload: { foo: "bar" },
       },
       partition: "P1",
     });
@@ -123,10 +89,8 @@ describe("src reducer", () => {
     const unknownType = fallbackReducer({
       state: missingType,
       event: {
-        event: {
-          type: "unknown-type",
-          payload: { x: 1 },
-        },
+        type: "unknown-type",
+        payload: { x: 1 },
       },
       partition: "P1",
     });
@@ -134,7 +98,7 @@ describe("src reducer", () => {
     expect(unknownType.fallbackCount).toBe(2);
   });
 
-  it("falls back for event payload when schema handler is missing", () => {
+  it("falls back when handler is missing", () => {
     const reducer = createReducer({
       schemaHandlers: {
         "known.schema": ({ state }) => state,
@@ -148,13 +112,8 @@ describe("src reducer", () => {
     const state = reducer({
       state: {},
       event: {
-        event: {
-          type: "event",
-          payload: {
-            schema: "unknown.schema",
-            data: {},
-          },
-        },
+        type: "unknown.schema",
+        payload: {},
       },
       partition: "P1",
     });
@@ -165,8 +124,8 @@ describe("src reducer", () => {
   it("normalizes non-object roots before handlers execute", () => {
     const reducer = createReducer({
       schemaHandlers: {
-        "counter.increment": ({ state, data }) => {
-          state.count = (state.count || 0) + data.amount;
+        "counter.increment": ({ state, payload }) => {
+          state.count = (state.count || 0) + payload.amount;
         },
       },
     });
@@ -174,12 +133,9 @@ describe("src reducer", () => {
     const state = reducer({
       state: null,
       event: {
-        event: {
-          type: "event",
-          payload: {
-            schema: "counter.increment",
-            data: { amount: 1 },
-          },
+        type: "counter.increment",
+        payload: {
+          amount: 1,
         },
       },
       partition: "P1",

@@ -24,6 +24,41 @@ afterEach(() => {
 });
 
 const describeSqlite = hasNodeSqlite ? describe : describe.skip;
+const makeDraft = ({
+  id = "evt-1",
+  partitions = ["P1"],
+  type = "x",
+  payload = { n: 1 },
+  clientId = "C1",
+  clientTs = 100,
+  createdAt = 100,
+} = {}) => ({
+  id,
+  partitions,
+  type,
+  payload,
+  meta: { clientId, clientTs },
+  createdAt,
+});
+
+const makeCommitted = ({
+  id = "evt-1",
+  partitions = ["P1"],
+  committedId = 1,
+  type = "x",
+  payload = { n: 1 },
+  clientId = "C1",
+  clientTs = 10,
+  created = 10,
+} = {}) => ({
+  id,
+  partitions,
+  committedId,
+  type,
+  payload,
+  meta: { clientId, clientTs },
+  created,
+});
 
 describeSqlite("src createSqliteClientStore", () => {
   it("runs migrations and sets schema version", async () => {
@@ -33,7 +68,7 @@ describeSqlite("src createSqliteClientStore", () => {
     await store.init();
 
     const row = db._raw.prepare("PRAGMA user_version").get();
-    expect(row.user_version).toBe(3);
+    expect(row.user_version).toBe(1);
 
     db.close();
   });
@@ -46,22 +81,15 @@ describeSqlite("src createSqliteClientStore", () => {
       const store = createSqliteClientStore(db);
       await store.init();
 
-      await store.insertDraft({
-        id: "evt-1",
-        clientId: "C1",
-        partitions: ["P1"],
-        event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
-        createdAt: 100,
-      });
+      await store.insertDraft(makeDraft());
 
       await store.applySubmitResult({
         result: {
           id: "evt-1",
           status: "committed",
-          committed_id: 5,
-          status_updated_at: 500,
+          committedId: 5,
+          created: 500,
         },
-        fallbackClientId: "C1",
       });
 
       await store.applyCommittedBatch({ events: [], nextCursor: 5 });
@@ -100,31 +128,13 @@ describeSqlite("src createSqliteClientStore", () => {
     await store.init();
 
     await store.applyCommittedBatch({
-      events: [
-        {
-          id: "evt-1",
-          client_id: "C1",
-          partitions: ["P1"],
-          committed_id: 1,
-          event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
-          status_updated_at: 10,
-        },
-      ],
+      events: [makeCommitted()],
       nextCursor: 1,
     });
 
     await expect(
       store.applyCommittedBatch({
-        events: [
-          {
-            id: "evt-1",
-            client_id: "C1",
-            partitions: ["P1"],
-            committed_id: 9,
-            event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
-            status_updated_at: 11,
-          },
-        ],
+        events: [makeCommitted({ committedId: 9, created: 11, clientTs: 11 })],
       }),
     ).rejects.toThrow("committed event invariant violation");
 
@@ -137,30 +147,19 @@ describeSqlite("src createSqliteClientStore", () => {
     await store.init();
 
     await store.applyCommittedBatch({
-      events: [
-        {
-          id: "evt-1",
-          client_id: "C1",
-          partitions: ["P1"],
-          committed_id: 1,
-          event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
-          status_updated_at: 10,
-        },
-      ],
+      events: [makeCommitted()],
       nextCursor: 1,
     });
 
     await expect(
       store.applyCommittedBatch({
         events: [
-          {
+          makeCommitted({
             id: "evt-2",
-            client_id: "C1",
-            partitions: ["P1"],
-            committed_id: 1,
-            event: { type: "event", payload: { schema: "x", data: { n: 2 } } },
-            status_updated_at: 11,
-          },
+            payload: { n: 2 },
+            created: 11,
+            clientTs: 11,
+          }),
         ],
       }),
     ).rejects.toThrow("committed event invariant violation");
@@ -190,22 +189,16 @@ describeSqlite("src createSqliteClientStore", () => {
 
       await store.applyCommittedBatch({
         events: [
-          {
-            id: "evt-1",
-            client_id: "C1",
-            partitions: ["P1"],
-            committed_id: 1,
-            event: { type: "increment", payload: {} },
-            status_updated_at: 10,
-          },
-          {
+          makeCommitted({ type: "increment", payload: {}, created: 10, clientTs: 10 }),
+          makeCommitted({
             id: "evt-2",
-            client_id: "C1",
             partitions: ["P1", "P2"],
-            committed_id: 2,
-            event: { type: "increment", payload: {} },
-            status_updated_at: 11,
-          },
+            committedId: 2,
+            type: "increment",
+            payload: {},
+            created: 11,
+            clientTs: 11,
+          }),
         ],
         nextCursor: 2,
       });
@@ -222,7 +215,7 @@ describeSqlite("src createSqliteClientStore", () => {
             version: "1",
             initialState: () => ({ count: 0 }),
             reduce: ({ state, event }) => ({
-              count: state.count + (event.event.type === "increment" ? 1 : 0),
+              count: state.count + (event.type === "increment" ? 1 : 0),
             }),
           },
         ],
@@ -261,7 +254,7 @@ describeSqlite("src createSqliteClientStore", () => {
           checkpoint: { mode: "manual" },
           initialState: () => ({ count: 0 }),
           reduce: ({ state, event }) => ({
-            count: state.count + (event.event.type === "increment" ? 1 : 0),
+            count: state.count + (event.type === "increment" ? 1 : 0),
           }),
         },
       ],
@@ -270,14 +263,7 @@ describeSqlite("src createSqliteClientStore", () => {
 
     await store.applyCommittedBatch({
       events: [
-        {
-          id: "evt-1",
-          client_id: "C1",
-          partitions: ["P1"],
-          committed_id: 1,
-          event: { type: "increment", payload: {} },
-          status_updated_at: 10,
-        },
+        makeCommitted({ type: "increment", payload: {}, created: 10, clientTs: 10 }),
       ],
       nextCursor: 1,
     });
@@ -341,7 +327,7 @@ describeSqlite("src createSqliteClientStore", () => {
           checkpoint: { mode: "manual" },
           initialState: () => ({ count: 0 }),
           reduce: ({ state, event }) => ({
-            count: state.count + (event.event.type === "increment" ? 1 : 0),
+            count: state.count + (event.type === "increment" ? 1 : 0),
           }),
         },
       ],
@@ -350,14 +336,7 @@ describeSqlite("src createSqliteClientStore", () => {
 
     await store.applyCommittedBatch({
       events: [
-        {
-          id: "evt-1",
-          client_id: "C1",
-          partitions: ["P1"],
-          committed_id: 1,
-          event: { type: "increment", payload: {} },
-          status_updated_at: 10,
-        },
+        makeCommitted({ type: "increment", payload: {}, created: 10, clientTs: 10 }),
       ],
       nextCursor: 1,
     });
@@ -389,7 +368,7 @@ describeSqlite("src createSqliteClientStore", () => {
             checkpoint: { mode: "manual" },
             initialState: () => ({ count: 0 }),
             reduce: ({ state, event }) => ({
-              count: state.count + (event.event.type === "increment" ? 1 : 0),
+              count: state.count + (event.type === "increment" ? 1 : 0),
             }),
           },
         ],
@@ -398,22 +377,16 @@ describeSqlite("src createSqliteClientStore", () => {
 
       await store.applyCommittedBatch({
         events: [
-          {
-            id: "evt-1",
-            client_id: "C1",
-            partitions: ["P1"],
-            committed_id: 1,
-            event: { type: "increment", payload: {} },
-            status_updated_at: 10,
-          },
-          {
+          makeCommitted({ type: "increment", payload: {}, created: 10, clientTs: 10 }),
+          makeCommitted({
             id: "evt-2",
-            client_id: "C1",
             partitions: ["P1", "P2"],
-            committed_id: 2,
-            event: { type: "increment", payload: {} },
-            status_updated_at: 11,
-          },
+            committedId: 2,
+            type: "increment",
+            payload: {},
+            created: 11,
+            clientTs: 11,
+          }),
         ],
         nextCursor: 2,
       });
@@ -436,7 +409,7 @@ describeSqlite("src createSqliteClientStore", () => {
             checkpoint: { mode: "manual" },
             initialState: () => ({ count: 0 }),
             reduce: ({ state, event }) => ({
-              count: state.count + (event.event.type === "increment" ? 1 : 0),
+              count: state.count + (event.type === "increment" ? 1 : 0),
             }),
           },
         ],
@@ -469,7 +442,7 @@ describeSqlite("src createSqliteClientStore", () => {
             checkpoint: { mode: "manual" },
             initialState: () => ({ count: 0 }),
             reduce: ({ state, event }) => ({
-              count: state.count + (event.event.type === "increment" ? 1 : 0),
+              count: state.count + (event.type === "increment" ? 1 : 0),
             }),
           },
         ],
@@ -478,14 +451,14 @@ describeSqlite("src createSqliteClientStore", () => {
 
       await store.applyCommittedBatch({
         events: [
-          {
+          makeCommitted({
             id: `evt-${cycle}`,
-            client_id: "C1",
-            partitions: ["P1"],
-            committed_id: cycle,
-            event: { type: "increment", payload: {} },
-            status_updated_at: cycle,
-          },
+            committedId: cycle,
+            type: "increment",
+            payload: {},
+            created: cycle,
+            clientTs: cycle,
+          }),
         ],
         nextCursor: cycle,
       });
@@ -507,7 +480,7 @@ describeSqlite("src createSqliteClientStore", () => {
           checkpoint: { mode: "manual" },
           initialState: () => ({ count: 0 }),
           reduce: ({ state, event }) => ({
-            count: state.count + (event.event.type === "increment" ? 1 : 0),
+            count: state.count + (event.type === "increment" ? 1 : 0),
           }),
         },
       ],

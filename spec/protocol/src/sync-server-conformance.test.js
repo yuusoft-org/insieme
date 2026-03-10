@@ -44,8 +44,8 @@ const createServer = ({
 const connectSession = async ({ session, clientId = "C1", token = "jwt" }) => {
   await session.receive({
     type: "connect",
-    protocol_version: "1.0",
-    payload: { token, client_id: clientId },
+    protocolVersion: "1.0",
+    payload: { token, clientId: clientId },
   });
 };
 
@@ -57,8 +57,8 @@ const syncSession = async ({
 }) => {
   await session.receive({
     type: "sync",
-    protocol_version: "1.0",
-    payload: { partitions, since_committed_id: since, limit },
+    protocolVersion: "1.0",
+    payload: { partitions, sinceCommittedId: since, limit },
   });
 };
 
@@ -66,17 +66,22 @@ const submitSession = async ({
   session,
   id,
   partitions = ["P1"],
-  event = { type: "event", payload: { schema: "x", data: {} } },
+  clientId = "C1",
+  type = "x",
+  payload = {},
+  meta,
 }) => {
   await session.receive({
     type: "submit_events",
-    protocol_version: "1.0",
+    protocolVersion: "1.0",
     payload: {
       events: [
         {
           id,
           partitions,
-          event,
+          type,
+          payload,
+          meta: meta ?? { clientId, clientTs: 1000 },
         },
       ],
     },
@@ -98,20 +103,20 @@ describe("src createSyncServer conformance", () => {
     expect(c1.closed).toBe(false);
   });
 
-  it("rejects unsupported protocol_version and closes [SC-18]", async () => {
+  it("rejects unsupported protocolVersion and closes [SC-18]", async () => {
     const { server } = createServer();
     const c1 = createConnectionTransport("c1");
     const s1 = server.attachConnection(c1);
 
     await s1.receive({
       type: "connect",
-      protocol_version: "9.9",
-      payload: { token: "jwt", client_id: "C1" },
+      protocolVersion: "9.9",
+      payload: { token: "jwt", clientId: "C1" },
     });
 
     expect(c1.sent[0]).toMatchObject({
       type: "error",
-      payload: { code: "protocol_version_unsupported" },
+      payload: { code: "protocolVersion_unsupported" },
     });
     expect(c1.closed).toBe(true);
   });
@@ -134,7 +139,7 @@ describe("src createSyncServer conformance", () => {
     expect(c1.closed).toBe(true);
   });
 
-  it("closes when authenticated client identity mismatches connect client_id [SC-18]", async () => {
+  it("closes when authenticated client identity mismatches connect clientId [SC-18]", async () => {
     const { server } = createServer({
       verifyToken: async () => ({ clientId: "C-OTHER", claims: {} }),
     });
@@ -199,12 +204,14 @@ describe("src createSyncServer conformance", () => {
     await submitSession({
       session: s1,
       id: "evt-1",
-      event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
+      type: "x",
+      payload: { n: 1 },
     });
     await submitSession({
       session: s1,
       id: "evt-1",
-      event: { type: "event", payload: { schema: "x", data: { n: 2 } } },
+      type: "x",
+      payload: { n: 2 },
     });
 
     const results = c1.sent.filter(
@@ -215,7 +222,7 @@ describe("src createSyncServer conformance", () => {
     expect(results[0].payload.results[0]).toMatchObject({
       id: "evt-1",
       status: "committed",
-      committed_id: 1,
+      committedId: 1,
     });
 
     expect(results[1].payload.results[0]).toMatchObject({
@@ -248,13 +255,13 @@ describe("src createSyncServer conformance", () => {
     const firstSyncPage = c2.sent.find(
       (message) =>
         message.type === "sync_response" &&
-        message.payload.next_since_committed_id === 1,
+        message.payload.nextSinceCommittedId === 1,
     );
     expect(firstSyncPage).toBeTruthy();
     expect(firstSyncPage.payload.events.map((event) => event.id)).toEqual([
       "evt-1",
     ]);
-    expect(firstSyncPage.payload.has_more).toBe(true);
+    expect(firstSyncPage.payload.hasMore).toBe(true);
 
     await submitSession({ session: s1, id: "evt-3", partitions: ["P1"] });
 
@@ -272,8 +279,8 @@ describe("src createSyncServer conformance", () => {
     expect(syncResponses[1].payload.events.map((event) => event.id)).toEqual([
       "evt-2",
     ]);
-    expect(syncResponses[1].payload.has_more).toBe(false);
-    expect(syncResponses[1].payload.next_since_committed_id).toBe(2);
+    expect(syncResponses[1].payload.hasMore).toBe(false);
+    expect(syncResponses[1].payload.nextSinceCommittedId).toBe(2);
 
     await syncSession({ session: s2, partitions: ["P1"], since: 2, limit: 10 });
 
@@ -281,8 +288,8 @@ describe("src createSyncServer conformance", () => {
     expect(finalSync).toMatchObject({
       type: "sync_response",
       payload: {
-        next_since_committed_id: 3,
-        has_more: false,
+        nextSinceCommittedId: 3,
+        hasMore: false,
       },
     });
     expect(finalSync.payload.events.map((event) => event.id)).toEqual([
@@ -316,6 +323,7 @@ describe("src createSyncServer conformance", () => {
       session: s1,
       id: "evt-100",
       partitions: ["P1", "P2"],
+      clientId: "JWT-C1",
     });
 
     const c2Broadcasts = c2.sent.filter(

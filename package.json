@@ -46,7 +46,7 @@
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "test": "vitest --run",
-    "test:conformance": "vitest --run spec/protocol/src/**/*.test.js",
+    "test:conformance": "vitest --run spec/protocol",
     "test:reliability": "vitest --run spec/protocol/src/reliability-integration.test.js spec/protocol/src/trace-logging.test.js",
     "test:reliability:stress": "for i in 1 2 3; do vitest --run spec/protocol/src/reliability-integration.test.js spec/protocol/src/sqlite-locking-chaos.test.js spec/protocol/src/sqlite-process-crash.test.js; done",
     "test:coverage": "vitest --run --coverage",

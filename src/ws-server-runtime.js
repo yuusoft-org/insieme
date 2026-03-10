@@ -49,17 +49,17 @@ export const createWsServerRuntime = ({
     bridges.set(bridge.connectionId, bridge);
     activeConnections += 1;
     log("connected", {
-      connection_id: bridge.connectionId,
-      active_connections: activeConnections,
-      remote_address: request?.socket?.remoteAddress || null,
+      connectionId: bridge.connectionId,
+      activeConnections,
+      remoteAddress: request?.socket?.remoteAddress || null,
     });
 
     ws.on("close", () => {
       bridges.delete(bridge.connectionId);
       activeConnections = Math.max(0, activeConnections - 1);
       log("disconnected", {
-        connection_id: bridge.connectionId,
-        active_connections: activeConnections,
+        connectionId: bridge.connectionId,
+        activeConnections,
       });
     });
   };

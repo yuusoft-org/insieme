@@ -12,66 +12,49 @@ const runWithImmer = ({ state, handler, context }) =>
     return undefined;
   });
 
-const defaultFallback = ({ event, payload }) => {
-  const type = event?.event?.type;
+const resolveEventEnvelope = (eventRecord) => {
+  if (isObject(eventRecord?.event)) {
+    return eventRecord.event;
+  }
+  return eventRecord;
+};
+
+const defaultFallback = ({ type }) => {
   if (typeof type !== "string" || type.length === 0) {
-    throw new Error("committed event is missing event.type");
+    throw new Error("committed event is missing type");
   }
 
-  if (type !== "event") {
-    throw new Error(`unsupported committed event type '${type}'`);
-  }
-
-  if (!isObject(payload) || typeof payload.schema !== "string") {
-    throw new Error("event payload must include a string schema");
-  }
-
-  throw new Error(`no schema handler registered for '${payload.schema}'`);
+  throw new Error(`no handler registered for '${type}'`);
 };
 
 /**
  * Reducer factory for committed events.
  *
- * `schemaHandlers` are keyed by `event.payload.schema` when
- * `event.type === "event"`.
- * Handler args: `{ state, event, payload, partition, schema?, data? }`
+ * Handlers are keyed by committed-event `type`.
+ * Handler args: `{ state, event, payload, partition, type }`
  */
 export const createReducer = ({
   schemaHandlers = {},
   fallback = defaultFallback,
 } = {}) => {
   return ({ state, event, partition }) => {
-    const type = event?.event?.type;
-    const payload = event?.event?.payload;
+    const envelope = resolveEventEnvelope(event);
+    const type = envelope?.type;
+    const payload = envelope?.payload;
     const baseContext = {
       event,
       payload,
       partition,
+      type,
     };
 
-    if (typeof type !== "string" || type.length === 0) {
-      return runWithImmer({
-        state,
-        handler: fallback,
-        context: baseContext,
-      });
-    }
-
-    if (
-      type === "event" &&
-      isObject(payload) &&
-      typeof payload.schema === "string"
-    ) {
-      const schemaHandler = schemaHandlers[payload.schema];
+    if (typeof type === "string" && type.length > 0) {
+      const schemaHandler = schemaHandlers[type];
       if (typeof schemaHandler === "function") {
         return runWithImmer({
           state,
           handler: schemaHandler,
-          context: {
-            ...baseContext,
-            schema: payload.schema,
-            data: payload.data,
-          },
+          context: baseContext,
         });
       }
     }

@@ -101,7 +101,7 @@ describe("src createBrowserWebSocketTransport", () => {
 
     await transport.send({
       type: "sync",
-      payload: { since_committed_id: 0 },
+      payload: { sinceCommittedId: 0 },
     });
     expect(socket.sent).toHaveLength(1);
     expect(JSON.parse(socket.sent[0])).toMatchObject({
@@ -110,13 +110,13 @@ describe("src createBrowserWebSocketTransport", () => {
 
     socket.emitMessage({
       type: "connected",
-      payload: { client_id: "C1" },
+      payload: { clientId: "C1" },
     });
     await tick();
     expect(events).toEqual([
       {
         type: "connected",
-        payload: { client_id: "C1" },
+        payload: { clientId: "C1" },
       },
     ]);
   });

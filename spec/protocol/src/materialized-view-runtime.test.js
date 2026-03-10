@@ -46,7 +46,7 @@ describe("src materialized-view-runtime", () => {
       getLatestCommittedId: async () => 1,
       listCommittedAfter: async () => [
         {
-          committed_id: 1,
+          committedId: 1,
           partitions: ["P1"],
           event: { type: "increment", payload: {} },
           status_updated_at: 10,
@@ -102,19 +102,19 @@ describe("src materialized-view-runtime", () => {
     });
 
     await runtime.onCommittedEvent({
-      committed_id: 1,
+      committedId: 1,
       partitions: ["P1"],
       event: { type: "increment", payload: {} },
       status_updated_at: 10,
     });
     await runtime.onCommittedEvent({
-      committed_id: 2,
+      committedId: 2,
       partitions: ["P1"],
       event: { type: "increment", payload: {} },
       status_updated_at: 11,
     });
     await runtime.onCommittedEvent({
-      committed_id: 3,
+      committedId: 3,
       partitions: ["P1"],
       event: { type: "increment", payload: {} },
       status_updated_at: 12,
@@ -136,19 +136,19 @@ describe("src materialized-view-runtime", () => {
   it("supports chunked multi-partition replay for batch reads", async () => {
     const committedEvents = [
       {
-        committed_id: 1,
+        committedId: 1,
         partitions: ["P1"],
         event: { type: "increment", payload: {} },
         status_updated_at: 10,
       },
       {
-        committed_id: 2,
+        committedId: 2,
         partitions: ["P1", "P2"],
         event: { type: "increment", payload: {} },
         status_updated_at: 11,
       },
       {
-        committed_id: 3,
+        committedId: 3,
         partitions: ["P2"],
         event: { type: "increment", payload: {} },
         status_updated_at: 12,
@@ -160,7 +160,7 @@ describe("src materialized-view-runtime", () => {
       getLatestCommittedId: async () => 3,
       listCommittedAfter: async ({ sinceCommittedId, limit }) =>
         committedEvents
-          .filter((event) => event.committed_id > sinceCommittedId)
+          .filter((event) => event.committedId > sinceCommittedId)
           .slice(0, limit),
     });
 
@@ -200,7 +200,7 @@ describe("src materialized-view-runtime", () => {
     });
 
     await runtime.onCommittedEvent({
-      committed_id: 1,
+      committedId: 1,
       partitions: ["P1"],
       event: { type: "increment", payload: {} },
       status_updated_at: 10,
@@ -208,7 +208,7 @@ describe("src materialized-view-runtime", () => {
     expect(checkpointWrites).toHaveLength(0);
 
     await runtime.onCommittedEvent({
-      committed_id: 2,
+      committedId: 2,
       partitions: ["P1"],
       event: { type: "increment", payload: {} },
       status_updated_at: 11,
@@ -248,7 +248,7 @@ describe("src materialized-view-runtime", () => {
     });
 
     await runtime.onCommittedEvent({
-      committed_id: 1,
+      committedId: 1,
       partitions: ["P1"],
       event: { type: "increment", payload: {} },
       status_updated_at: 10,
@@ -278,7 +278,7 @@ describe("src materialized-view-runtime", () => {
           await hydrateGate.promise;
           return [
             {
-              committed_id: 1,
+              committedId: 1,
               partitions: ["P1"],
               event: { type: "increment", payload: {} },
               status_updated_at: 10,
@@ -297,7 +297,7 @@ describe("src materialized-view-runtime", () => {
     await Promise.resolve();
     latestCommittedId = 2;
     const commitDuringRead = runtime.onCommittedEvent({
-      committed_id: 2,
+      committedId: 2,
       partitions: ["P1"],
       event: { type: "increment", payload: {} },
       status_updated_at: 11,
@@ -350,7 +350,7 @@ describe("src materialized-view-runtime", () => {
     });
 
     await runtime.onCommittedEvent({
-      committed_id: 1,
+      committedId: 1,
       partitions: ["P1"],
       event: { type: "increment", payload: {} },
       status_updated_at: 10,
@@ -389,7 +389,7 @@ describe("src materialized-view-runtime", () => {
       partition: "P1",
     });
     await runtime.onCommittedEvent({
-      committed_id: 1,
+      committedId: 1,
       partitions: ["P1"],
       event: { type: "increment", payload: {} },
       status_updated_at: 10,
@@ -415,7 +415,7 @@ describe("src materialized-view-runtime", () => {
   it("rehydrates exact state after evicting a dirty hot partition", async () => {
     const committedEvents = [
       {
-        committed_id: 1,
+        committedId: 1,
         partitions: ["P1"],
         event: { type: "increment", payload: {} },
         status_updated_at: 10,
@@ -426,7 +426,7 @@ describe("src materialized-view-runtime", () => {
       getLatestCommittedId: async () => 1,
       listCommittedAfter: async ({ sinceCommittedId, limit }) =>
         committedEvents
-          .filter((event) => event.committed_id > sinceCommittedId)
+          .filter((event) => event.committedId > sinceCommittedId)
           .slice(0, limit),
     });
 
@@ -435,7 +435,7 @@ describe("src materialized-view-runtime", () => {
       partition: "P1",
     });
     await runtime.onCommittedEvent({
-      committed_id: 1,
+      committedId: 1,
       partitions: ["P1"],
       event: { type: "increment", payload: {} },
       status_updated_at: 10,
@@ -457,19 +457,19 @@ describe("src materialized-view-runtime", () => {
   it("keeps batch reads consistent while partitions are replayed in chunks", async () => {
     const committedEvents = [
       {
-        committed_id: 1,
+        committedId: 1,
         partitions: ["P1"],
         event: { type: "increment", payload: {} },
         status_updated_at: 10,
       },
       {
-        committed_id: 2,
+        committedId: 2,
         partitions: ["P2"],
         event: { type: "increment", payload: {} },
         status_updated_at: 11,
       },
       {
-        committed_id: 3,
+        committedId: 3,
         partitions: ["P1", "P2"],
         event: { type: "increment", payload: {} },
         status_updated_at: 12,
@@ -481,7 +481,7 @@ describe("src materialized-view-runtime", () => {
       getLatestCommittedId: async () => 3,
       listCommittedAfter: async ({ sinceCommittedId, limit }) =>
         committedEvents
-          .filter((event) => event.committed_id > sinceCommittedId)
+          .filter((event) => event.committedId > sinceCommittedId)
           .slice(0, limit),
     });
 
@@ -519,7 +519,7 @@ describe("src materialized-view-runtime", () => {
 
     await runtime.onCommittedEvent();
     await runtime.onCommittedEvent({
-      committed_id: 1,
+      committedId: 1,
       partitions: [],
       event: { type: "increment", payload: {} },
       status_updated_at: 10,

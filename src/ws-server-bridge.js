@@ -40,7 +40,7 @@ export const attachWsConnection = ({
 
   const log = (event, details = {}) => {
     try {
-      logger({ component: "ws_server_bridge", event, connection_id: connectionId, ...details });
+      logger({ component: "ws_server_bridge", event, connectionId, ...details });
     } catch {
       // logging must not affect bridge behavior
     }
@@ -51,7 +51,7 @@ export const attachWsConnection = ({
     send: async (message) => {
       if (ws.readyState !== ws.OPEN) return;
       ws.send(JSON.stringify(message));
-      log("message_sent", { message_type: message?.type || null });
+      log("message_sent", { messageType: message?.type || null });
     },
     close: async (reason = "server_close") => {
       if (closed) return;
@@ -102,7 +102,7 @@ export const attachWsConnection = ({
             ? raw.toString("utf8")
             : String(raw);
       const parsed = JSON.parse(text);
-      log("message_received", { message_type: parsed?.type || null });
+      log("message_received", { messageType: parsed?.type || null });
       await session.receive(parsed);
     } catch (error) {
       log("invalid_message", {

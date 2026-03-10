@@ -3,33 +3,48 @@ import {
   intersectsPartitions,
   normalizePartitionSet,
 } from "./canonicalize.js";
+import { normalizeMeta } from "./event-record.js";
 
 /**
  * @param {number} [startCommittedId]
  */
 export const createInMemorySyncStore = (startCommittedId = 0) => {
-  /** @type {Map<string, { canonical: string, committedEvent: { id: string, client_id: string, partitions: string[], committed_id: number, event: object, status_updated_at: number } }>} */
+  /** @type {Map<string, { comparisonKey: string, committedEvent: { id: string, projectId?: string, userId?: string, partitions: string[], committedId: number, type: string, payload: object, meta: object, created: number } }>} */
   const byId = new Map();
 
-  /** @type {{ id: string, client_id: string, partitions: string[], committed_id: number, event: object, status_updated_at: number }[]} */
+  /** @type {{ id: string, projectId?: string, userId?: string, partitions: string[], committedId: number, type: string, payload: object, meta: object, created: number }[]} */
   const committed = [];
 
   let nextCommittedId = startCommittedId + 1;
 
   return {
     /**
-     * @param {{ id: string, clientId: string, partitions: string[], event: object, now: number }} input
+     * @param {{ id: string, partitions: string[], projectId?: string, userId?: string, type: string, payload: object, meta: object, now: number }} input
      */
-    commitOrGetExisting: async ({ id, clientId, partitions, event, now }) => {
+    commitOrGetExisting: async ({
+      id,
+      partitions,
+      projectId,
+      userId,
+      type,
+      payload,
+      meta,
+      now,
+    }) => {
       const normalizedPartitions = normalizePartitionSet(partitions);
-      const canonical = canonicalizeSubmitItem({
+      const normalizedMeta = normalizeMeta(meta);
+      const comparisonKey = canonicalizeSubmitItem({
         partitions: normalizedPartitions,
-        event,
+        projectId,
+        userId,
+        type,
+        payload,
+        meta: normalizedMeta,
       });
 
       const existing = byId.get(id);
       if (existing) {
-        if (existing.canonical !== canonical) {
+        if (existing.comparisonKey !== comparisonKey) {
           const error = new Error("same id submitted with different payload");
           // @ts-ignore
           error.code = "validation_failed";
@@ -44,15 +59,18 @@ export const createInMemorySyncStore = (startCommittedId = 0) => {
 
       const committedEvent = {
         id,
-        client_id: clientId,
+        projectId,
+        userId,
         partitions: normalizedPartitions,
-        committed_id: nextCommittedId,
-        event,
-        status_updated_at: now,
+        committedId: nextCommittedId,
+        type,
+        payload: structuredClone(payload),
+        meta: normalizedMeta,
+        created: now,
       };
       nextCommittedId += 1;
 
-      byId.set(id, { canonical, committedEvent });
+      byId.set(id, { comparisonKey, committedEvent });
       committed.push(committedEvent);
 
       return {
@@ -78,8 +96,8 @@ export const createInMemorySyncStore = (startCommittedId = 0) => {
 
       const filtered = committed.filter(
         (event) =>
-          event.committed_id > sinceCommittedId &&
-          event.committed_id <= upperBound &&
+          event.committedId > sinceCommittedId &&
+          event.committedId <= upperBound &&
           intersectsPartitions(normalizedPartitions, event.partitions),
       );
 
@@ -87,7 +105,7 @@ export const createInMemorySyncStore = (startCommittedId = 0) => {
       const hasMore = filtered.length > events.length;
       const nextSinceCommittedId =
         events.length > 0
-          ? events[events.length - 1].committed_id
+          ? events[events.length - 1].committedId
           : sinceCommittedId;
 
       return {
@@ -99,7 +117,7 @@ export const createInMemorySyncStore = (startCommittedId = 0) => {
 
     getMaxCommittedId: async () => {
       if (committed.length === 0) return 0;
-      return committed[committed.length - 1].committed_id;
+      return committed[committed.length - 1].committedId;
     },
 
     /**
@@ -112,8 +130,8 @@ export const createInMemorySyncStore = (startCommittedId = 0) => {
         if (!intersectsPartitions(normalizedPartitions, event.partitions)) {
           continue;
         }
-        if (event.committed_id > maxCommittedId) {
-          maxCommittedId = event.committed_id;
+        if (event.committedId > maxCommittedId) {
+          maxCommittedId = event.committedId;
         }
       }
       return maxCommittedId;

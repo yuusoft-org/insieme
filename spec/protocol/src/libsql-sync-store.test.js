@@ -21,6 +21,18 @@ afterEach(() => {
 });
 
 const describeLibsql = hasNodeLibsqlShim ? describe : describe.skip;
+const makeSubmit = (overrides = {}) => ({
+  id: "evt-1",
+  partitions: ["P1"],
+  type: "x",
+  payload: { n: 1 },
+  meta: {
+    clientId: "C1",
+    clientTs: 1,
+  },
+  now: 100,
+  ...overrides,
+});
 
 describeLibsql("src createLibsqlSyncStore", () => {
   it("runs migrations and dedupes with canonical equality", async () => {
@@ -28,26 +40,26 @@ describeLibsql("src createLibsqlSyncStore", () => {
     const store = createLibsqlSyncStore(db);
     await store.init();
 
-    const first = await store.commitOrGetExisting({
-      id: "evt-1",
-      clientId: "C1",
-      partitions: ["P2", "P1"],
-      event: { type: "event", payload: { schema: "x", data: { a: 1, b: 2 } } },
-      now: 100,
-    });
+    const first = await store.commitOrGetExisting(
+      makeSubmit({
+        partitions: ["P2", "P1"],
+        payload: { a: 1, b: 2 },
+        now: 100,
+      }),
+    );
 
-    const second = await store.commitOrGetExisting({
-      id: "evt-1",
-      clientId: "C1",
-      partitions: ["P1", "P2"],
-      event: { type: "event", payload: { data: { b: 2, a: 1 }, schema: "x" } },
-      now: 101,
-    });
+    const second = await store.commitOrGetExisting(
+      makeSubmit({
+        partitions: ["P1", "P2"],
+        payload: { b: 2, a: 1 },
+        now: 101,
+      }),
+    );
 
     expect(first.deduped).toBe(false);
-    expect(first.committedEvent.committed_id).toBe(1);
+    expect(first.committedEvent.committedId).toBe(1);
     expect(second.deduped).toBe(true);
-    expect(second.committedEvent.committed_id).toBe(1);
+    expect(second.committedEvent.committedId).toBe(1);
 
     const schema = db._raw.prepare("PRAGMA user_version").get();
     expect(schema.user_version).toBe(1);
@@ -75,13 +87,14 @@ describeLibsql("src createLibsqlSyncStore", () => {
       };
 
       await expect(
-        crashyCommit({
-          id: "evt-crash",
-          clientId: "C1",
-          partitions: ["P1"],
-          event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
-          now: 100,
-        }),
+        crashyCommit(
+          makeSubmit({
+            id: "evt-crash",
+            partitions: ["P1"],
+            payload: { n: 1 },
+            now: 100,
+          }),
+        ),
       ).rejects.toThrow("crash-after-persist");
 
       db.close();
@@ -92,16 +105,17 @@ describeLibsql("src createLibsqlSyncStore", () => {
       const store = createLibsqlSyncStore(db);
       await store.init();
 
-      const retried = await store.commitOrGetExisting({
-        id: "evt-crash",
-        clientId: "C1",
-        partitions: ["P1"],
-        event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
-        now: 200,
-      });
+      const retried = await store.commitOrGetExisting(
+        makeSubmit({
+          id: "evt-crash",
+          partitions: ["P1"],
+          payload: { n: 1 },
+          now: 200,
+        }),
+      );
 
       expect(retried.deduped).toBe(true);
-      expect(retried.committedEvent.committed_id).toBe(1);
+      expect(retried.committedEvent.committedId).toBe(1);
 
       db.close();
     }
@@ -112,27 +126,15 @@ describeLibsql("src createLibsqlSyncStore", () => {
     const store = createLibsqlSyncStore(db);
     await store.init();
 
-    await store.commitOrGetExisting({
-      id: "evt-p1-1",
-      clientId: "C1",
-      partitions: ["P1"],
-      event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
-      now: 1,
-    });
-    await store.commitOrGetExisting({
-      id: "evt-p2-1",
-      clientId: "C1",
-      partitions: ["P2"],
-      event: { type: "event", payload: { schema: "x", data: { n: 2 } } },
-      now: 2,
-    });
-    await store.commitOrGetExisting({
-      id: "evt-p1-2",
-      clientId: "C1",
-      partitions: ["P1"],
-      event: { type: "event", payload: { schema: "x", data: { n: 3 } } },
-      now: 3,
-    });
+    await store.commitOrGetExisting(
+      makeSubmit({ id: "evt-p1-1", partitions: ["P1"], payload: { n: 1 }, now: 1 }),
+    );
+    await store.commitOrGetExisting(
+      makeSubmit({ id: "evt-p2-1", partitions: ["P2"], payload: { n: 2 }, now: 2 }),
+    );
+    await store.commitOrGetExisting(
+      makeSubmit({ id: "evt-p1-2", partitions: ["P1"], payload: { n: 3 }, now: 3 }),
+    );
 
     const first = await store.listCommittedSince({
       partitions: ["P1"],

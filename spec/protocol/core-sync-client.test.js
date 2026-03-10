@@ -72,18 +72,18 @@ describe("core sync client scenario mapping", () => {
 
     expect(transport.sent[0]).toMatchObject({
       type: "connect",
-      payload: { token: "jwt", client_id: "C1" },
+      payload: { token: "jwt", clientId: "C1" },
     });
 
     transport.emit({
       type: "connected",
-      payload: { client_id: "C1", global_last_committed_id: 0 },
+      payload: { clientId: "C1", globalLastCommittedId: 0 },
     });
     await tick();
 
     expect(transport.sent[1]).toMatchObject({
       type: "sync",
-      payload: { partitions: ["P1"], since_committed_id: 0, limit: 500 },
+      payload: { partitions: ["P1"], sinceCommittedId: 0, limit: 500 },
     });
 
     transport.emit({
@@ -91,8 +91,8 @@ describe("core sync client scenario mapping", () => {
       payload: {
         partitions: ["P1"],
         events: [],
-        next_since_committed_id: 0,
-        has_more: false,
+        nextSinceCommittedId: 0,
+        hasMore: false,
       },
     });
     await tick();
@@ -108,7 +108,7 @@ describe("core sync client scenario mapping", () => {
 
     transport.emit({
       type: "connected",
-      payload: { client_id: "C1", global_last_committed_id: 0 },
+      payload: { clientId: "C1", globalLastCommittedId: 0 },
     });
     await tick();
 
@@ -117,15 +117,16 @@ describe("core sync client scenario mapping", () => {
       payload: {
         partitions: ["P1"],
         events: [],
-        next_since_committed_id: 0,
-        has_more: false,
+        nextSinceCommittedId: 0,
+        hasMore: false,
       },
     });
     await tick();
 
     const id = await client.submitEvent({
       partitions: ["P1"],
-      event: { type: "event", payload: { schema: "x", data: {} } },
+      type: "x",
+      payload: {},
     });
 
     expect(id).toBe("evt-local-1");
@@ -142,8 +143,8 @@ describe("core sync client scenario mapping", () => {
           {
             id: "evt-local-1",
             status: "committed",
-            committed_id: 10,
-            status_updated_at: 1111,
+            committedId: 10,
+            created: 1111,
           },
         ],
       },
@@ -154,9 +155,8 @@ describe("core sync client scenario mapping", () => {
       result: expect.objectContaining({
         id: "evt-local-1",
         status: "committed",
-        committed_id: 10,
+        committedId: 10,
       }),
-      fallbackClientId: "C1",
     });
   });
 
@@ -165,7 +165,7 @@ describe("core sync client scenario mapping", () => {
 
     transport.emit({
       type: "connected",
-      payload: { client_id: "C1", global_last_committed_id: 0 },
+      payload: { clientId: "C1", globalLastCommittedId: 0 },
     });
     await tick();
 
@@ -174,15 +174,16 @@ describe("core sync client scenario mapping", () => {
       payload: {
         partitions: ["P1"],
         events: [],
-        next_since_committed_id: 0,
-        has_more: false,
+        nextSinceCommittedId: 0,
+        hasMore: false,
       },
     });
     await tick();
 
     await client.submitEvent({
       partitions: ["P1"],
-      event: { type: "event", payload: { schema: "x", data: {} } },
+      type: "x",
+      payload: {},
     });
 
     transport.emit({
@@ -193,7 +194,7 @@ describe("core sync client scenario mapping", () => {
             id: "evt-local-1",
             status: "rejected",
             reason: "validation_failed",
-            status_updated_at: 1111,
+            created: 1111,
           },
         ],
       },
@@ -205,7 +206,6 @@ describe("core sync client scenario mapping", () => {
         id: "evt-local-1",
         status: "rejected",
       }),
-      fallbackClientId: "C1",
     });
   });
 
@@ -214,7 +214,7 @@ describe("core sync client scenario mapping", () => {
 
     transport.emit({
       type: "connected",
-      payload: { client_id: "C1", global_last_committed_id: 0 },
+      payload: { clientId: "C1", globalLastCommittedId: 0 },
     });
     await tick();
 
@@ -223,8 +223,8 @@ describe("core sync client scenario mapping", () => {
       payload: {
         partitions: ["P1"],
         events: [],
-        next_since_committed_id: 0,
-        has_more: false,
+        nextSinceCommittedId: 0,
+        hasMore: false,
       },
     });
     await tick();
@@ -233,7 +233,10 @@ describe("core sync client scenario mapping", () => {
       {
         id: "evt-retry-1",
         partitions: ["P1"],
-        event: { type: "event", payload: { schema: "x", data: { a: 1 } } },
+        type: "x",
+        payload: { a: 1 },
+        meta: { clientId: "C1", clientTs: 1000 },
+        createdAt: 1000,
       },
     ]);
 

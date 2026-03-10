@@ -60,7 +60,7 @@ export const createBrowserWebSocketTransport = ({
       if (!messageHandler) return;
       try {
         const message = parseIncoming(wsEvent.data);
-        log("message_received", { message_type: message?.type || null });
+        log("message_received", { messageType: message?.type || null });
         messageHandler(message);
       } catch (error) {
         log("message_parse_failed", {
@@ -146,7 +146,7 @@ export const createBrowserWebSocketTransport = ({
     send: async (message) => {
       ensureOpen();
       socket.send(JSON.stringify(message));
-      log("message_sent", { message_type: message?.type || null });
+      log("message_sent", { messageType: message?.type || null });
     },
 
     onMessage: (handler) => {

@@ -1,78 +1,71 @@
 import { describe, expect, it } from "vitest";
 import { createInMemorySyncStore } from "../../../src/index.js";
 
+const makeSubmit = (overrides = {}) => ({
+  id: "evt-1",
+  partitions: ["P1"],
+  projectId: "proj-1",
+  userId: "u1",
+  type: "x",
+  payload: { n: 1 },
+  meta: {
+    clientId: "C1",
+    clientTs: 1,
+  },
+  now: 100,
+  ...overrides,
+});
+
 describe("src createInMemorySyncStore", () => {
-  it("dedupes by id and canonical payload", async () => {
+  it("dedupes by id and normalized payload", async () => {
     const store = createInMemorySyncStore();
 
-    const first = await store.commitOrGetExisting({
-      id: "evt-1",
-      clientId: "C1",
-      partitions: ["P2", "P1"],
-      event: { type: "event", payload: { schema: "x", data: { a: 1, b: 2 } } },
-      now: 100,
-    });
+    const first = await store.commitOrGetExisting(
+      makeSubmit({
+        partitions: ["P2", "P1"],
+        payload: { a: 1, b: 2 },
+      }),
+    );
 
-    const second = await store.commitOrGetExisting({
-      id: "evt-1",
-      clientId: "C1",
-      partitions: ["P1", "P2"],
-      event: { type: "event", payload: { data: { b: 2, a: 1 }, schema: "x" } },
-      now: 200,
-    });
+    const second = await store.commitOrGetExisting(
+      makeSubmit({
+        partitions: ["P1", "P2"],
+        payload: { b: 2, a: 1 },
+        now: 200,
+      }),
+    );
 
     expect(first.deduped).toBe(false);
-    expect(first.committedEvent.committed_id).toBe(1);
+    expect(first.committedEvent.committedId).toBe(1);
     expect(second.deduped).toBe(true);
-    expect(second.committedEvent.committed_id).toBe(1);
+    expect(second.committedEvent.committedId).toBe(1);
   });
 
-  it("rejects same id with different canonical payload", async () => {
+  it("rejects same id with different normalized payload", async () => {
     const store = createInMemorySyncStore();
 
-    await store.commitOrGetExisting({
-      id: "evt-1",
-      clientId: "C1",
-      partitions: ["P1"],
-      event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
-      now: 100,
-    });
+    await store.commitOrGetExisting(makeSubmit());
 
     await expect(
-      store.commitOrGetExisting({
-        id: "evt-1",
-        clientId: "C1",
-        partitions: ["P1"],
-        event: { type: "event", payload: { schema: "x", data: { n: 2 } } },
-        now: 101,
-      }),
+      store.commitOrGetExisting(
+        makeSubmit({
+          payload: { n: 2 },
+          now: 101,
+        }),
+      ),
     ).rejects.toMatchObject({ code: "validation_failed" });
   });
 
   it("pages committed events with fixed upper bound", async () => {
     const store = createInMemorySyncStore();
 
-    await store.commitOrGetExisting({
-      id: "evt-1",
-      clientId: "C1",
-      partitions: ["P1"],
-      event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
-      now: 100,
-    });
-    await store.commitOrGetExisting({
-      id: "evt-2",
-      clientId: "C1",
-      partitions: ["P1"],
-      event: { type: "event", payload: { schema: "x", data: { n: 2 } } },
-      now: 101,
-    });
-    await store.commitOrGetExisting({
-      id: "evt-3",
-      clientId: "C1",
-      partitions: ["P1"],
-      event: { type: "event", payload: { schema: "x", data: { n: 3 } } },
-      now: 102,
-    });
+    await store.commitOrGetExisting(makeSubmit({ id: "evt-1", payload: { n: 1 } }));
+    await store.commitOrGetExisting(
+      makeSubmit({ id: "evt-2", payload: { n: 2 }, now: 101 }),
+    );
+    await store.commitOrGetExisting(
+      makeSubmit({ id: "evt-3", payload: { n: 3 }, now: 102 }),
+    );
 
     const first = await store.listCommittedSince({
       partitions: ["P1"],
@@ -99,27 +92,15 @@ describe("src createInMemorySyncStore", () => {
   it("returns partition-scoped max committed id", async () => {
     const store = createInMemorySyncStore();
 
-    await store.commitOrGetExisting({
-      id: "evt-p1-1",
-      clientId: "C1",
-      partitions: ["P1"],
-      event: { type: "legacy.action", payload: { n: 1 } },
-      now: 1,
-    });
-    await store.commitOrGetExisting({
-      id: "evt-p2-1",
-      clientId: "C1",
-      partitions: ["P2"],
-      event: { type: "legacy.action", payload: { n: 2 } },
-      now: 2,
-    });
-    await store.commitOrGetExisting({
-      id: "evt-p1-2",
-      clientId: "C1",
-      partitions: ["P1"],
-      event: { type: "legacy.action", payload: { n: 3 } },
-      now: 3,
-    });
+    await store.commitOrGetExisting(
+      makeSubmit({ id: "evt-p1-1", partitions: ["P1"], payload: { n: 1 } }),
+    );
+    await store.commitOrGetExisting(
+      makeSubmit({ id: "evt-p2-1", partitions: ["P2"], payload: { n: 2 }, now: 2 }),
+    );
+    await store.commitOrGetExisting(
+      makeSubmit({ id: "evt-p1-2", partitions: ["P1"], payload: { n: 3 }, now: 3 }),
+    );
 
     await expect(
       store.getMaxCommittedIdForPartitions({ partitions: ["P1"] }),

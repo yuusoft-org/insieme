@@ -148,7 +148,7 @@ export const createOfflineTransport = (options = {}) => {
       if (!isObject(message) || typeof message.type !== "string") {
         emit({
           type: "error",
-          protocol_version: PROTOCOL_VERSION,
+          protocolVersion: PROTOCOL_VERSION,
           payload: {
             code: "bad_request",
             message: "Message must be an object with a string type",
@@ -159,17 +159,17 @@ export const createOfflineTransport = (options = {}) => {
       }
 
       const msgId =
-        typeof message.msg_id === "string" ? message.msg_id : undefined;
+        typeof message.msgId === "string" ? message.msgId : undefined;
 
       switch (message.type) {
         case "connect": {
           emit({
             type: "connected",
-            protocol_version: PROTOCOL_VERSION,
-            msg_id: msgId,
+            protocolVersion: PROTOCOL_VERSION,
+            msgId: msgId,
             payload: {
-              client_id: message.payload?.client_id,
-              global_last_committed_id: serverLastCommittedId,
+              clientId: message.payload?.clientId,
+              globalLastCommittedId: serverLastCommittedId,
             },
           });
           return;
@@ -177,7 +177,7 @@ export const createOfflineTransport = (options = {}) => {
 
         case "sync": {
           const nextSinceCommittedId = toNonNegativeNumberOr(
-            message.payload?.since_committed_id,
+            message.payload?.sinceCommittedId,
             serverLastCommittedId,
           );
           const partitions = Array.isArray(message.payload?.partitions)
@@ -185,14 +185,14 @@ export const createOfflineTransport = (options = {}) => {
             : [];
           emit({
             type: "sync_response",
-            protocol_version: PROTOCOL_VERSION,
-            msg_id: msgId,
+            protocolVersion: PROTOCOL_VERSION,
+            msgId: msgId,
             payload: {
               partitions,
               events: [],
-              next_since_committed_id: nextSinceCommittedId,
-              has_more: false,
-              sync_to_committed_id: nextSinceCommittedId,
+              nextSinceCommittedId,
+              hasMore: false,
+              syncToCommittedId: nextSinceCommittedId,
             },
           });
           return;
@@ -209,13 +209,13 @@ export const createOfflineTransport = (options = {}) => {
           } else {
             emit({
               type: "error",
-              protocol_version: PROTOCOL_VERSION,
-              msg_id: msgId,
+              protocolVersion: PROTOCOL_VERSION,
+              msgId: msgId,
               payload: {
                 code: "rate_limited",
                 message: "offline buffered submit capacity exceeded",
                 details: {
-                  max_buffered_submits: maxBufferedSubmits,
+                  maxBufferedSubmits,
                 },
               },
             });
@@ -226,8 +226,8 @@ export const createOfflineTransport = (options = {}) => {
         default: {
           emit({
             type: "error",
-            protocol_version: PROTOCOL_VERSION,
-            msg_id: msgId,
+            protocolVersion: PROTOCOL_VERSION,
+            msgId: msgId,
             payload: {
               code: "bad_request",
               message: `Unknown message type: ${message.type}`,
