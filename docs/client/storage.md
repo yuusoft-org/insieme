@@ -60,8 +60,7 @@ Optional only when product requirements need them:
 
 - `snapshots` for faster local startup,
 - `rejected_drafts` for UI/audit history.
-- `materialized_view_state` for partitioned derived state checkpoints
-  (legacy adapters may also keep `materialized_view_offsets`).
+- `materialized_view_state` for partitioned derived state checkpoints.
 
 ## Query Patterns
 
