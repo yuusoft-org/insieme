@@ -20,7 +20,9 @@ This document defines the minimal client-side draft lifecycle for offline-first 
 ### 2) Submit
 
 - Drain `local_drafts` ordered by `(draft_clock, id)`.
-- Send one `submit_events` request per draft (core mode).
+- Group consecutive drafts into one or more bounded `submit_events` batches.
+- Preserve `(draft_clock, id)` order inside each batch.
+- Keep at most one submit batch in flight per connection.
 
 ### 3) Commit result
 
@@ -38,7 +40,15 @@ On `submit_events_result` with `status=rejected`:
 - Optionally store rejected history in a separate app table.
 - Recompute effective view.
 
-### 5) Remote committed event
+### 5) Deferred batch item
+
+On `submit_events_result` with `status=not_processed`:
+
+- Keep the matching row in `local_drafts`.
+- Do not treat the item as committed or rejected.
+- Retry it later in normal `(draftClock, id)` queue order.
+
+### 6) Remote committed event
 
 On `event_broadcast` or `sync_response.events`:
 
@@ -57,6 +67,7 @@ On `event_broadcast` or `sync_response.events`:
 - Retries use the same event `id`.
 - Server dedupes by `id`.
 - Retry equality includes normalized `partitions`, `projectId`, `userId`, `type`, `payload`, and `meta`.
+- Batch retry still preserves the underlying draft order. If one item fails, later `not_processed` drafts stay queued for a later retry.
 - Client apply path must be idempotent:
   - repeated committed insert -> no duplicate,
   - repeated draft cleanup -> safe no-op.
@@ -65,4 +76,4 @@ On `event_broadcast` or `sync_response.events`:
 
 - Restore durable committed cursor.
 - Run `sync` until `hasMore=false`.
-- Retry remaining local drafts in `(draftClock, id)` order.
+- Retry remaining local drafts in `(draftClock, id)` order, in one or more bounded submit batches.

@@ -28,14 +28,38 @@ const createMockTransport = () => {
   };
 };
 
-const createMockStore = () => ({
-  init: vi.fn(async () => {}),
-  loadCursor: vi.fn(async () => 0),
-  insertDraft: vi.fn(async () => {}),
-  loadDraftsOrdered: vi.fn(async () => []),
-  applySubmitResult: vi.fn(async () => {}),
-  applyCommittedBatch: vi.fn(async () => {}),
-});
+const createMockStore = () => {
+  /** @type {object[]} */
+  const drafts = [];
+  let cursor = 0;
+  const clone = (value) => structuredClone(value);
+  const removeDraftById = (id) => {
+    const index = drafts.findIndex((draft) => draft.id === id);
+    if (index >= 0) drafts.splice(index, 1);
+  };
+
+  return {
+    init: vi.fn(async () => {}),
+    loadCursor: vi.fn(async () => cursor),
+    insertDraft: vi.fn(async (item) => {
+      drafts.push(clone(item));
+    }),
+    loadDraftsOrdered: vi.fn(async () => drafts.map(clone)),
+    applySubmitResult: vi.fn(async ({ result }) => {
+      if (result?.status === "committed" || result?.status === "rejected") {
+        removeDraftById(result.id);
+      }
+    }),
+    applyCommittedBatch: vi.fn(async ({ events, nextCursor }) => {
+      for (const event of events || []) {
+        removeDraftById(event.id);
+      }
+      if (typeof nextCursor === "number") {
+        cursor = nextCursor;
+      }
+    }),
+  };
+};
 
 const createStartedClient = async ({
   transport,
@@ -209,7 +233,7 @@ describe("core sync client scenario mapping", () => {
     });
   });
 
-  it("PT-SC-03: duplicate retry reuses same draft id", async () => {
+  it("PT-SC-03: only one submit batch stays in flight at a time", async () => {
     const client = await createStartedClient({ transport, store });
 
     transport.emit({
@@ -229,23 +253,19 @@ describe("core sync client scenario mapping", () => {
     });
     await tick();
 
-    store.loadDraftsOrdered.mockResolvedValue([
-      {
-        id: "evt-retry-1",
-        partitions: ["P1"],
-        type: "x",
-        payload: { a: 1 },
-        meta: { clientId: "C1", clientTs: 1000 },
-        createdAt: 1000,
-      },
-    ]);
+    await store.insertDraft({
+      id: "evt-retry-1",
+      partitions: ["P1"],
+      type: "x",
+      payload: { a: 1 },
+      meta: { clientId: "C1", clientTs: 1000 },
+      createdAt: 1000,
+    });
 
-    await client.flushDrafts();
     await client.flushDrafts();
 
     const submits = transport.sent.filter((m) => m.type === "submit_events");
-    expect(submits).toHaveLength(2);
+    expect(submits).toHaveLength(1);
     expect(submits[0].payload.events[0].id).toBe("evt-retry-1");
-    expect(submits[1].payload.events[0].id).toBe("evt-retry-1");
   });
 });

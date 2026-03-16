@@ -27,14 +27,38 @@ const createMockTransport = () => {
   };
 };
 
-const createMockStore = () => ({
-  init: vi.fn(async () => {}),
-  loadCursor: vi.fn(async () => 0),
-  insertDraft: vi.fn(async () => {}),
-  loadDraftsOrdered: vi.fn(async () => []),
-  applySubmitResult: vi.fn(async () => {}),
-  applyCommittedBatch: vi.fn(async () => {}),
-});
+const createMockStore = () => {
+  /** @type {object[]} */
+  const drafts = [];
+  let cursor = 0;
+  const clone = (value) => structuredClone(value);
+  const removeDraftById = (id) => {
+    const index = drafts.findIndex((draft) => draft.id === id);
+    if (index >= 0) drafts.splice(index, 1);
+  };
+
+  return {
+    init: vi.fn(async () => {}),
+    loadCursor: vi.fn(async () => cursor),
+    insertDraft: vi.fn(async (item) => {
+      drafts.push(clone(item));
+    }),
+    loadDraftsOrdered: vi.fn(async () => drafts.map(clone)),
+    applySubmitResult: vi.fn(async ({ result }) => {
+      if (result?.status === "committed" || result?.status === "rejected") {
+        removeDraftById(result.id);
+      }
+    }),
+    applyCommittedBatch: vi.fn(async ({ events, nextCursor }) => {
+      for (const event of events || []) {
+        removeDraftById(event.id);
+      }
+      if (typeof nextCursor === "number") {
+        cursor = nextCursor;
+      }
+    }),
+  };
+};
 
 describe("src createCommandSyncSession", () => {
   let transport;
@@ -113,7 +137,7 @@ describe("src createCommandSyncSession", () => {
     });
   });
 
-  it("submits command via sync client with command id as submit id", async () => {
+  it("submits a single command through the batch API with command id as submit id", async () => {
     const session = createCommandSyncSession({
       token: "t1",
       actor: {
@@ -142,22 +166,24 @@ describe("src createCommandSyncSession", () => {
     });
     await tick();
 
-    const commandId = await session.submitCommand({
-      id: "cmd-local-1",
-      type: "scene.create",
-      payload: { sceneId: "s1" },
-      meta: {
-        foo: "bar",
-        clientId: "user-provided-client",
-        clientTs: 1,
+    const commandIds = await session.submitCommands([
+      {
+        id: "cmd-local-1",
+        type: "scene.create",
+        payload: { sceneId: "s1" },
+        meta: {
+          foo: "bar",
+          clientId: "user-provided-client",
+          clientTs: 1,
+        },
+        actor: { userId: "u1", clientId: "c1" },
+        projectId: "p1",
+        clientTs: 5,
+        partitions: ["project:p1:story"],
       },
-      actor: { userId: "u1", clientId: "c1" },
-      projectId: "p1",
-      clientTs: 5,
-      partitions: ["project:p1:story"],
-    });
+    ]);
 
-    expect(commandId).toBe("cmd-local-1");
+    expect(commandIds).toEqual(["cmd-local-1"]);
     const submit = transport.sent.find((entry) => entry.type === "submit_events");
     expect(submit).toBeTruthy();
     expect(submit.payload.events[0]).toMatchObject({
@@ -168,6 +194,65 @@ describe("src createCommandSyncSession", () => {
       payload: { sceneId: "s1" },
       meta: { foo: "bar", clientId: "c1", clientTs: 5 },
     });
+  });
+
+  it("submits multiple commands in one ordered batch", async () => {
+    const session = createCommandSyncSession({
+      token: "t1",
+      actor: {
+        userId: "u1",
+        clientId: "c1",
+      },
+      partitions: ["project:p1:story"],
+      transport,
+      store,
+    });
+
+    await session.start();
+    transport.emit({
+      type: "connected",
+      payload: { clientId: "c1", globalLastCommittedId: 0 },
+    });
+    await tick();
+    transport.emit({
+      type: "sync_response",
+      payload: {
+        partitions: ["project:p1:story"],
+        events: [],
+        nextSinceCommittedId: 0,
+        hasMore: false,
+      },
+    });
+    await tick();
+
+    const submittedIds = await session.submitCommands([
+      {
+        id: "cmd-batch-1",
+        type: "scene.create",
+        payload: { sceneId: "s1" },
+        actor: { userId: "u1", clientId: "c1" },
+        projectId: "p1",
+        clientTs: 5,
+        partitions: ["project:p1:story"],
+      },
+      {
+        id: "cmd-batch-2",
+        type: "scene.rename",
+        payload: { sceneId: "s1", title: "Intro" },
+        actor: { userId: "u1", clientId: "c1" },
+        projectId: "p1",
+        clientTs: 6,
+        partitions: ["project:p1:story"],
+      },
+    ]);
+
+    expect(submittedIds).toEqual(["cmd-batch-1", "cmd-batch-2"]);
+    const submit = transport.sent.find((entry) => entry.type === "submit_events");
+    expect(submit).toBeTruthy();
+    expect(submit.payload.events.map((event) => event.id)).toEqual([
+      "cmd-batch-1",
+      "cmd-batch-2",
+    ]);
   });
 
   it("exposes session helpers and clears local lastError state", async () => {

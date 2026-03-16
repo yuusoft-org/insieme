@@ -169,6 +169,12 @@ export const createCommandSyncSession = ({
             message: "Server rejected command",
             payload: entry.payload,
           };
+        } else if (entry?.type === "not_processed") {
+          lastError = {
+            code: entry?.payload?.reason || "prior_item_failed",
+            message: "Server did not process command",
+            payload: entry.payload,
+          };
         } else if (entry?.type === "error") {
           lastError = entry.payload || {
             code: "unknown_error",
@@ -181,6 +187,41 @@ export const createCommandSyncSession = ({
     },
   });
 
+  const submitCommands = async (commands) => {
+    if (!Array.isArray(commands) || commands.length === 0) {
+      throw new Error("submitCommands requires at least one command");
+    }
+
+    const submitItems = commands.map((command) => {
+      const partitionsForCommand = commandPartitions(command);
+      if (partitionsForCommand.length === 0) {
+        throw new Error("Command must include at least one partition");
+      }
+
+      boundedRemember(command?.id);
+      const syncEvent = mapCommandToSyncEvent(command);
+      return {
+        id: command.id,
+        partitions: partitionsForCommand,
+        ...syncEvent,
+      };
+    });
+
+    try {
+      const submittedIds = await syncClient.submitEvents(submitItems);
+      return submittedIds;
+    } catch (error) {
+      if (!swallowTransportDisconnect || !isTransportDisconnectedError(error)) {
+        throw error;
+      }
+      lastError = {
+        code: "transport_disconnected",
+        message: error?.message || "transport disconnected",
+      };
+      return submitItems.map((item) => item.id);
+    }
+  };
+
   return {
     start: async () => {
       await syncClient.start();
@@ -190,32 +231,14 @@ export const createCommandSyncSession = ({
       await syncClient.stop();
     },
 
-    submitCommand: async (command) => {
-      const partitionsForCommand = commandPartitions(command);
-      if (partitionsForCommand.length === 0) {
-        throw new Error("Command must include at least one partition");
-      }
+    submitCommands,
 
-      boundedRemember(command?.id);
-      const syncEvent = mapCommandToSyncEvent(command);
-
-      try {
-        await syncClient.submitEvent({
-          id: command.id,
-          partitions: partitionsForCommand,
-          ...syncEvent,
-        });
-      } catch (error) {
-        if (!swallowTransportDisconnect || !isTransportDisconnectedError(error)) {
-          throw error;
-        }
-        lastError = {
-          code: "transport_disconnected",
-          message: error?.message || "transport disconnected",
-        };
-      }
-
-      return command.id;
+    submitEvents: async (inputs) => {
+      return syncClient.submitEvents(
+        inputs.map((input) => ({
+          ...input,
+        })),
+      );
     },
 
     submitEvent: async (input) => {

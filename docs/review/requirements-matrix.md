@@ -13,9 +13,9 @@ Status values:
 | PR-003 | `docs/protocol/messages.md:23` | Missing envelope fields -> `bad_request`. | must | `SC-18` | server protocol handler | implemented |
 | PR-004 | `docs/protocol/messages.md:24` | Unsupported protocol version -> `protocol_version_unsupported` and close. | must | `SC-18` | server connection lifecycle | implemented |
 | PR-005 | `docs/protocol/messages.md:25` | Unknown extra fields ignored. | must | `SC-18` | server validation boundary | implemented |
-| PR-006 | `docs/protocol/messages.md:59` | `submit_events.payload.events` contains exactly one item in core mode. | must | `SC-01`, `SC-02`, `SC-18` | server submit handler | implemented |
-| PR-007 | `docs/protocol/messages.md:125` | Exactly one `submit_events_result` per `submit_events` request. | must | `SC-01`, `SC-02`, `SC-03` | server submit handler | implemented |
-| PR-008 | `docs/protocol/messages.md:126` | `submit_events_result.results` has one entry in core mode. | must | `SC-01`, `SC-02` | server submit handler | implemented |
+| PR-006 | `docs/protocol/messages.md:submit_events` | `submit_events.payload.events` contains one or more items in core mode. | must | `SC-01`, `SC-02`, `SC-16`, `SC-18` | server submit handler | implemented |
+| PR-007 | `docs/protocol/messages.md:submit_events_result` | Exactly one `submit_events_result` is returned per `submit_events` request. | must | `SC-01`, `SC-02`, `SC-03`, `SC-16` | server submit handler | implemented |
+| PR-008 | `docs/protocol/messages.md:submit_events_result` | `submit_events_result.results` contains one entry per submitted item in request order; later items after a failure are `not_processed`. | must | `SC-01`, `SC-02`, `SC-16` | server submit handler + client draft apply path | implemented |
 | PR-009 | `docs/protocol/messages.md:150` | No self-broadcast to submitting connection. | must | `SC-10` | server broadcast fanout | implemented |
 | PR-010 | `docs/protocol/messages.md:177` | If `has_more=true`, client re-syncs with `next_since_committed_id`. | must | `SC-05` | client sync engine | implemented |
 | PR-011 | `docs/protocol/messages.md:179` | `sync_response.payload.partitions` present and normalized to active scope. | must | `SC-12` | server sync response builder | implemented |

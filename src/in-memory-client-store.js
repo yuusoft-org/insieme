@@ -89,6 +89,39 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
 
     loadCursor: async () => cursor,
 
+    insertDrafts: async (items) => {
+      const seenIds = new Set();
+      const nextDrafts = items.map(
+        ({ id, partitions, projectId, userId, type, payload, meta, createdAt }) => {
+          if (seenIds.has(id)) {
+            throw new Error(`draft with id ${id} already exists`);
+          }
+          seenIds.add(id);
+          const existing = drafts.find((entry) => entry.id === id);
+          if (existing) {
+            throw new Error(`draft with id ${id} already exists`);
+          }
+
+          return {
+            draftClock: nextDraftClock,
+            id,
+            partitions: [...partitions],
+            projectId,
+            userId,
+            type,
+            payload: structuredClone(payload),
+            meta: normalizeMeta(meta),
+            createdAt,
+          };
+        },
+      );
+
+      for (const draft of nextDrafts) {
+        drafts.push(draft);
+        nextDraftClock += 1;
+      }
+    },
+
     insertDraft: async ({
       id,
       partitions,
@@ -133,9 +166,13 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
             await materializedViewRuntime.onCommittedEvent(committedEvent);
           }
         }
+        removeDraftById(result.id);
+        return;
       }
 
-      removeDraftById(result.id);
+      if (result.status === "rejected") {
+        removeDraftById(result.id);
+      }
     },
 
     applyCommittedBatch: async ({ events, nextCursor }) => {
