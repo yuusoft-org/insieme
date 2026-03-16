@@ -231,12 +231,6 @@ export const createCommandSyncSession = ({
       await syncClient.stop();
     },
 
-    submitCommand: async (command) => {
-      const [submittedId] = await submitCommands([command]);
-      const commandId = typeof submittedId === "string" ? submittedId : command.id;
-      return commandId;
-    },
-
     submitCommands,
 
     submitEvents: async (inputs) => {

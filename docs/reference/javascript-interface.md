@@ -177,7 +177,6 @@ Client runtime events:
  * @property {() => Promise<void>} start
  * @property {() => Promise<void>} stop
  * @property {(commands: object[]) => Promise<string[]>} submitCommands
- * @property {(command: object) => Promise<string>} submitCommand
  * @property {(items: object[]) => Promise<string[]>} submitEvents
  * @property {(item: object) => Promise<string>} submitEvent
  * @property {(options?: { sinceCommittedId?: number }) => Promise<void>} syncNow
@@ -260,7 +259,8 @@ export function createSyncServer(deps) {}
 
 - Client submit path may send one or more items in one `submit_events` request.
 - Client runtime drains drafts in ordered batches and keeps one submit batch in flight at a time.
-- `submitEvent()` and `submitCommand()` are thin wrappers over `submitEvents()` and `submitCommands()`.
+- Command session callers should use `submitCommands()` for both one-command and multi-command submits.
+- `submitEvent()` remains a thin wrapper over `submitEvents()`.
 - Client store methods that mutate committed/draft/cursor state should use single DB transactions when available, or equivalent idempotent/monotonic SQL semantics when transactional APIs are not available.
 - All behavior must match `docs/protocol/*.md`.
 - Client-generated `msgId` values should be stable per outbound message for traceability.

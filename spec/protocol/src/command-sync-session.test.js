@@ -137,7 +137,7 @@ describe("src createCommandSyncSession", () => {
     });
   });
 
-  it("submits command via sync client with command id as submit id", async () => {
+  it("submits a single command through the batch API with command id as submit id", async () => {
     const session = createCommandSyncSession({
       token: "t1",
       actor: {
@@ -166,22 +166,24 @@ describe("src createCommandSyncSession", () => {
     });
     await tick();
 
-    const commandId = await session.submitCommand({
-      id: "cmd-local-1",
-      type: "scene.create",
-      payload: { sceneId: "s1" },
-      meta: {
-        foo: "bar",
-        clientId: "user-provided-client",
-        clientTs: 1,
+    const commandIds = await session.submitCommands([
+      {
+        id: "cmd-local-1",
+        type: "scene.create",
+        payload: { sceneId: "s1" },
+        meta: {
+          foo: "bar",
+          clientId: "user-provided-client",
+          clientTs: 1,
+        },
+        actor: { userId: "u1", clientId: "c1" },
+        projectId: "p1",
+        clientTs: 5,
+        partitions: ["project:p1:story"],
       },
-      actor: { userId: "u1", clientId: "c1" },
-      projectId: "p1",
-      clientTs: 5,
-      partitions: ["project:p1:story"],
-    });
+    ]);
 
-    expect(commandId).toBe("cmd-local-1");
+    expect(commandIds).toEqual(["cmd-local-1"]);
     const submit = transport.sent.find((entry) => entry.type === "submit_events");
     expect(submit).toBeTruthy();
     expect(submit.payload.events[0]).toMatchObject({
