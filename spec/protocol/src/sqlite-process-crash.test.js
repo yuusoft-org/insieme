@@ -48,6 +48,7 @@ describeSqlite("src sqlite process crash safety", () => {
       id: "evt-proc-1",
       partitions: ["P1"],
       type: "x",
+      schemaVersion: 1,
       payload: { n: 1 },
       meta: { clientId: "C1", clientTs: 100 },
       now: 200,

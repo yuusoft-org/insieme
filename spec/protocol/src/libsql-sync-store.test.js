@@ -25,6 +25,7 @@ const makeSubmit = (overrides = {}) => ({
   id: "evt-1",
   partitions: ["P1"],
   type: "x",
+  schemaVersion: 1,
   payload: { n: 1 },
   meta: {
     clientId: "C1",
@@ -62,7 +63,7 @@ describeLibsql("src createLibsqlSyncStore", () => {
     expect(second.committedEvent.committedId).toBe(1);
 
     const schema = db._raw.prepare("PRAGMA user_version").get();
-    expect(schema.user_version).toBe(1);
+    expect(schema.user_version).toBe(2);
 
     db.close();
   });

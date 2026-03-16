@@ -51,6 +51,7 @@ payload:
       projectId: workspace-1
       userId: user-123
       type: explorer.folderCreated
+      schemaVersion: 1
       payload: { id: A, name: Folder A }
       meta:
         clientId: client-123
@@ -63,6 +64,7 @@ Rules:
 - Each `payload.events[n].id` **MUST** be present.
 - Each `payload.events[n].partitions` **MUST** follow `partitions.md`.
 - Each `payload.events[n].type` **MUST** be present.
+- Each `payload.events[n].schemaVersion` **MUST** be a positive integer.
 - Each `payload.events[n].payload` **MUST** be an object.
 - Each `payload.events[n].meta.clientId` **MUST** match the authenticated connection client.
 - Each `payload.events[n].meta.clientTs` **MUST** be a finite number.
@@ -146,6 +148,7 @@ Rules:
 - Server **MUST** send exactly one `submit_events_result` per `submit_events` request.
 - `results` **MUST** contain exactly one entry per submitted item, in request order.
 - Result `status` values are `committed`, `rejected`, or `not_processed`.
+- `results[n]` **MUST NOT** echo event fields such as `schemaVersion`; clients correlate outcomes by submitted `id`.
 - If one item is rejected, later submitted items in the same batch that were not attempted **MUST** be returned as `not_processed`.
 - Origin submit outcome is authoritative from this message.
 
@@ -164,6 +167,7 @@ payload:
   projectId: workspace-1
   userId: user-123
   type: explorer.folderCreated
+  schemaVersion: 1
   payload: { id: A, name: Folder A }
   meta:
     clientId: client-123
@@ -172,6 +176,7 @@ payload:
 ```
 
 Server **MUST NOT** send `event_broadcast` for an item to the same connection that submitted that item.
+Committed broadcast events **MUST** include a positive-integer `schemaVersion`.
 
 ### `sync_response`
 
@@ -188,6 +193,7 @@ payload:
       projectId: workspace-1
       userId: user-456
       type: explorer.folderCreated
+      schemaVersion: 1
       payload: { id: B, name: Folder B }
       meta:
         clientId: client-456
@@ -204,6 +210,7 @@ Cursor rule:
 - If `hasMore=false`, `nextSinceCommittedId` becomes the durable cursor.
 - `payload.partitions` **MUST** be present and reflect the normalized active sync scope used for this response page.
 - `payload.syncToCommittedId` **MUST** remain fixed for the full paging cycle.
+- Each `payload.events[n].schemaVersion` **MUST** be present and be a positive integer.
 
 ### `error`
 

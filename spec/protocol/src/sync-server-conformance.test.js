@@ -68,6 +68,7 @@ const submitSession = async ({
   partitions = ["P1"],
   clientId = "C1",
   type = "x",
+  schemaVersion = 1,
   payload = {},
   meta,
 }) => {
@@ -80,6 +81,7 @@ const submitSession = async ({
           id,
           partitions,
           type,
+          schemaVersion,
           payload,
           meta: meta ?? { clientId, clientTs: 1000 },
         },

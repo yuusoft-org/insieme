@@ -1,4 +1,8 @@
-import { isNonEmptyString, normalizeMeta } from "./event-record.js";
+import {
+  isNonEmptyString,
+  normalizeMeta,
+  toPositiveIntegerOrNull,
+} from "./event-record.js";
 
 /**
  * Deterministically sorts object keys and recursively normalizes values.
@@ -46,6 +50,7 @@ export const normalizePartitionSet = (partitions) => {
  *   projectId?: string,
  *   userId?: string,
  *   type?: string,
+ *   schemaVersion?: number,
  *   payload?: object,
  *   meta?: object,
  * }} input
@@ -56,6 +61,7 @@ export const canonicalizeSubmitItem = ({
   projectId,
   userId,
   type,
+  schemaVersion,
   payload,
   meta,
 }) => {
@@ -64,6 +70,7 @@ export const canonicalizeSubmitItem = ({
     projectId: isNonEmptyString(projectId) ? projectId : undefined,
     userId: isNonEmptyString(userId) ? userId : undefined,
     type: isNonEmptyString(type) ? type : undefined,
+    schemaVersion: toPositiveIntegerOrNull(schemaVersion) ?? undefined,
     payload: deepSortKeys(payload),
     meta: deepSortKeys(normalizeMeta(meta)),
   };

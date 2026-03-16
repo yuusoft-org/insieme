@@ -2,6 +2,7 @@ import {
   isNonEmptyString,
   isObject,
   normalizeSubmitEventInput,
+  toPositiveIntegerOrNull,
 } from "./event-record.js";
 
 /**
@@ -11,6 +12,7 @@ import {
  *   projectId?: string,
  *   userId?: string,
  *   type: string,
+ *   schemaVersion: number,
  *   payload: object,
  *   meta: object,
  *   createdAt: number,
@@ -186,6 +188,7 @@ export const createSyncClient = ({
     projectId: draft.projectId,
     userId: draft.userId,
     type: draft.type,
+    schemaVersion: draft.schemaVersion,
     payload: draft.payload,
     meta: draft.meta,
   });
@@ -828,6 +831,11 @@ export const createSyncClient = ({
       }
       if (!isNonEmptyString(draft.type)) {
         throw new Error("submitEvents requires type");
+      }
+      if (toPositiveIntegerOrNull(draft.schemaVersion) === null) {
+        throw new Error(
+          "submitEvents requires schemaVersion as a positive integer",
+        );
       }
       if (!isObject(draft.payload)) {
         throw new Error("submitEvents requires payload object");

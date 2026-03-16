@@ -4,6 +4,7 @@ import {
   isObject,
   normalizeMeta,
   toFiniteNumberOrNull,
+  toPositiveIntegerOrNull,
 } from "./event-record.js";
 import { extractScopeId } from "./partition-scope.js";
 
@@ -39,9 +40,14 @@ export const projectIdFromPartitions = (partitions = []) => {
  *   actor: { userId?: string, clientId: string },
  *   projectId?: string,
  *   clientTs: number,
+ *   schemaVersion?: number,
  * }} command
+ * @param {{ defaultSchemaVersion?: number }} [options]
  */
-export const commandToSyncEvent = (command) => {
+export const commandToSyncEvent = (
+  command,
+  { defaultSchemaVersion } = {},
+) => {
   const meta = cloneObject(command?.meta, {});
   if (command?.actor?.clientId !== undefined) {
     meta.clientId = command.actor.clientId;
@@ -54,6 +60,10 @@ export const commandToSyncEvent = (command) => {
     projectId: command.projectId,
     userId: command?.actor?.userId,
     type: command.type,
+    schemaVersion:
+      toPositiveIntegerOrNull(command?.schemaVersion) ??
+      toPositiveIntegerOrNull(defaultSchemaVersion) ??
+      undefined,
     payload: structuredClone(command.payload),
     meta: normalizeMeta(meta, {
       defaultClientId: command?.actor?.clientId,
@@ -71,20 +81,18 @@ export const commandToSyncEvent = (command) => {
  *   userId?: string,
  *   partitions?: string[],
  *   type?: string,
+ *   schemaVersion?: number,
  *   payload?: object,
  *   meta?: object,
  *   created?: number,
  * }} committedEvent
- * @param {{ defaultCommandVersion?: number }} [options]
  */
-export const committedSyncEventToCommand = (
-  committedEvent,
-  { defaultCommandVersion = 1 } = {},
-) => {
+export const committedSyncEventToCommand = (committedEvent) => {
   if (
     !isNonEmptyString(committedEvent?.id) ||
     !isNonEmptyString(committedEvent?.type) ||
-    !isObject(committedEvent?.payload)
+    !isObject(committedEvent?.payload) ||
+    toPositiveIntegerOrNull(committedEvent?.schemaVersion) === null
   ) {
     return null;
   }
@@ -103,9 +111,9 @@ export const committedSyncEventToCommand = (
     partition: partitions[0],
     partitions,
     type: committedEvent.type,
+    schemaVersion: committedEvent.schemaVersion,
     payload: structuredClone(committedEvent.payload),
     meta: structuredClone(meta),
-    commandVersion: defaultCommandVersion,
     actor: {
       userId: isNonEmptyString(committedEvent?.userId)
         ? committedEvent.userId
@@ -125,6 +133,7 @@ export const committedSyncEventToCommand = (
  *   projectId?: string,
  *   userId?: string,
  *   type?: string,
+ *   schemaVersion?: number,
  *   payload?: object,
  *   meta?: object,
  * }} item
@@ -147,6 +156,9 @@ export const validateCommandSubmitItem = (item) => {
   }
   if (!isNonEmptyString(item.type)) {
     failValidation("item.type is required");
+  }
+  if (toPositiveIntegerOrNull(item.schemaVersion) === null) {
+    failValidation("item.schemaVersion must be a positive integer");
   }
   if (!isObject(item.payload)) {
     failValidation("item.payload is required");
@@ -174,6 +186,7 @@ export const validateCommandSubmitItem = (item) => {
     projectId,
     userId: item.userId,
     partitions,
+    schemaVersion: item.schemaVersion,
     meta,
   };
 };

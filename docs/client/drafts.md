@@ -13,6 +13,7 @@ This document defines the minimal client-side draft lifecycle for offline-first 
   - `partitions`
   - `projectId` / `userId` when applicable
   - `type`
+  - `schemaVersion`
   - `payload`
   - `meta`
 - Apply draft immediately to local view (optimistic UI).
@@ -66,7 +67,7 @@ On `event_broadcast` or `sync_response.events`:
 
 - Retries use the same event `id`.
 - Server dedupes by `id`.
-- Retry equality includes normalized `partitions`, `projectId`, `userId`, `type`, `payload`, and `meta`.
+- Retry equality includes normalized `partitions`, `projectId`, `userId`, `type`, `schemaVersion`, `payload`, and `meta`.
 - Batch retry still preserves the underlying draft order. If one item fails, later `not_processed` drafts stay queued for a later retry.
 - Client apply path must be idempotent:
   - repeated committed insert -> no duplicate,

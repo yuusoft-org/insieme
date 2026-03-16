@@ -3,6 +3,7 @@ import {
   isNonEmptyString,
   normalizeMeta,
   toFiniteNumberOrNull,
+  toPositiveIntegerOrNull,
 } from "./event-record.js";
 
 const PROTOCOL_VERSION = "1.0";
@@ -176,7 +177,7 @@ const toErrorPayload = (reason, fallbackCode, fallbackMessage) => {
  *   authz: { authorizePartitions: (identity: object, partitions: string[]) => Promise<boolean> },
  *   validation: { validate: (item: object, ctx: object) => Promise<void> },
  *   store: {
- *     commitOrGetExisting: (input: { id: string, partitions: string[], projectId?: string, userId?: string, type: string, payload: object, meta: object, now: number }) => Promise<{ deduped: boolean, committedEvent: { id: string, partitions: string[], projectId?: string, userId?: string, type: string, payload: object, meta: object, committedId: number, created: number } }>,
+ *     commitOrGetExisting: (input: { id: string, partitions: string[], projectId?: string, userId?: string, type: string, schemaVersion: number, payload: object, meta: object, now: number }) => Promise<{ deduped: boolean, committedEvent: { id: string, partitions: string[], projectId?: string, userId?: string, type: string, schemaVersion: number, payload: object, meta: object, committedId: number, created: number } }>,
  *     listCommittedSince: (input: { partitions: string[], sinceCommittedId: number, limit: number, syncToCommittedId?: number }) => Promise<{ events: object[], hasMore: boolean, nextSinceCommittedId: number }>,
  *     getMaxCommittedIdForPartitions: (input: { partitions: string[] }) => Promise<number>,
  *     getMaxCommittedId: () => Promise<number>,
@@ -576,6 +577,14 @@ export const createSyncServer = ({
         );
         continue;
       }
+      if (toPositiveIntegerOrNull(item.schemaVersion) === null) {
+        pushRejected(
+          item.id,
+          "validation_failed",
+          `events[${index}].schemaVersion must be a positive integer`,
+        );
+        continue;
+      }
       if (!isObject(item.payload)) {
         pushRejected(
           item.id,
@@ -655,6 +664,7 @@ export const createSyncServer = ({
         projectId: isNonEmptyString(item.projectId) ? item.projectId : undefined,
         userId: isNonEmptyString(item.userId) ? item.userId : undefined,
         type: item.type,
+        schemaVersion: item.schemaVersion,
         payload: item.payload,
         meta: normalizedMeta,
       };

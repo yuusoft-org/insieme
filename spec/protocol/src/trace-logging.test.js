@@ -91,7 +91,11 @@ describe("src trace logging", () => {
 
     await client.submitEvent({
       partitions: ["P1"],
-      event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
+      event: {
+        type: "event",
+        schemaVersion: 1,
+        payload: { schema: "x", data: { n: 1 } },
+      },
     });
     await tick();
 
@@ -140,7 +144,11 @@ describe("src trace logging", () => {
 
     await client.submitEvent({
       partitions: ["P1"],
-      event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
+      event: {
+        type: "event",
+        schemaVersion: 1,
+        payload: { schema: "x", data: { n: 1 } },
+      },
     });
     await tick();
 
@@ -191,7 +199,11 @@ describe("src trace logging", () => {
     await tick();
     await client.submitEvent({
       partitions: ["P1"],
-      event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
+      event: {
+        type: "event",
+        schemaVersion: 1,
+        payload: { schema: "x", data: { n: 1 } },
+      },
     });
     await tick();
   });
@@ -232,7 +244,11 @@ describe("src trace logging", () => {
     await tick();
     await client.submitEvent({
       partitions: ["P1"],
-      event: { type: "event", payload: { schema: "x", data: { n: 1 } } },
+      event: {
+        type: "event",
+        schemaVersion: 1,
+        payload: { schema: "x", data: { n: 1 } },
+      },
     });
     await tick();
 

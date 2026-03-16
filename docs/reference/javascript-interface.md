@@ -16,6 +16,7 @@ This file defines a minimal JS API surface aligned with the simplified core prot
  * @property {string} [projectId]
  * @property {string} [userId]
  * @property {string} type
+ * @property {number} schemaVersion
  * @property {object} payload
  * @property {{ clientId: string, clientTs: number, [key: string]: any }} meta
  * @property {number} createdAt
@@ -29,6 +30,7 @@ This file defines a minimal JS API surface aligned with the simplified core prot
  * @property {string} [projectId]
  * @property {string} [userId]
  * @property {string} type
+ * @property {number} schemaVersion
  * @property {object} payload
  * @property {{ clientId: string, clientTs: number, [key: string]: any }} meta
  * @property {number} created
@@ -79,6 +81,7 @@ export function createOfflineTransport(options) {}
  *   init: () => Promise<void>,
  *   loadCursor: () => Promise<number>,
  *   insertDraft: (item: SubmitItem) => Promise<void>,
+ *   insertDrafts?: (items: SubmitItem[]) => Promise<void>,
  *   loadDraftsOrdered: () => Promise<SubmitItem[]>,
  *   applySubmitResult: (input: { result: object }) => Promise<void>,
  *   applyCommittedBatch: (input: { events: CommittedEvent[], nextCursor?: number }) => Promise<void>,
@@ -130,6 +133,7 @@ export function createSyncClient(deps) {}
  *   projectId?: string,
  *   userId?: string,
  *   type: string,
+ *   schemaVersion: number,
  *   payload: object,
  *   meta?: object,
  * }[]) => Promise<string[]>} submitEvents
@@ -139,6 +143,7 @@ export function createSyncClient(deps) {}
  *   projectId?: string,
  *   userId?: string,
  *   type: string,
+ *   schemaVersion: number,
  *   payload: object,
  *   meta?: object,
  * }) => Promise<string>} submitEvent
@@ -209,6 +214,7 @@ Client runtime events:
  *     projectId?: string,
  *     userId?: string,
  *     type: string,
+ *     schemaVersion: number,
  *     payload: object,
  *     meta: object,
  *     now: number
@@ -259,6 +265,9 @@ export function createSyncServer(deps) {}
 
 - Client submit path may send one or more items in one `submit_events` request.
 - Client runtime drains drafts in ordered batches and keeps one submit batch in flight at a time.
+- `schemaVersion` is a required top-level field on every submitted and committed event.
+- `submit_events_result` remains an outcome-only message; clients correlate results by `id` and do not expect echoed event fields.
+- `createCommandSyncSession()` should populate/pass through `schemaVersion` when mapping commands to sync events.
 - Command session callers should use `submitCommands()` for both one-command and multi-command submits.
 - `submitEvent()` remains a thin wrapper over `submitEvents()`.
 - Client store methods that mutate committed/draft/cursor state should use single DB transactions when available, or equivalent idempotent/monotonic SQL semantics when transactional APIs are not available.

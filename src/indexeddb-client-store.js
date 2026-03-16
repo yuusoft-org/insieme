@@ -3,7 +3,7 @@ import { buildCommittedEventFromDraft, normalizeMeta } from "./event-record.js";
 import { normalizeMaterializedViewDefinitions } from "./materialized-view.js";
 import { createMaterializedViewRuntime } from "./materialized-view-runtime.js";
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 const DEFAULT_DB_NAME = "insieme-client";
 const META_STORE = "meta";
 const DRAFT_STORE = "drafts";
@@ -153,6 +153,7 @@ const parseDraftRow = (row) => ({
   projectId: row.project_id || undefined,
   userId: row.user_id || undefined,
   type: row.type,
+  schemaVersion: parseIntSafe(row.schema_version, 0),
   payload: structuredClone(row.payload),
   meta: normalizeMeta(row.meta),
   createdAt: parseIntSafe(row.created_at, 0),
@@ -165,6 +166,7 @@ const serializeDraftRow = ({
   projectId,
   userId,
   type,
+  schemaVersion,
   payload,
   meta,
   createdAt,
@@ -175,6 +177,7 @@ const serializeDraftRow = ({
   project_id: projectId,
   user_id: userId,
   type,
+  schema_version: schemaVersion,
   payload: structuredClone(payload),
   meta: normalizeMeta(meta),
   created_at: createdAt,
@@ -187,6 +190,7 @@ const parseCommittedRow = (row) => ({
   userId: row.user_id || undefined,
   partitions: [...row.partitions],
   type: row.type,
+  schemaVersion: parseIntSafe(row.schema_version, 0),
   payload: structuredClone(row.payload),
   meta: normalizeMeta(row.meta),
   created: parseIntSafe(row.created, 0),
@@ -199,6 +203,7 @@ const serializeCommittedRow = ({
   userId,
   partitions,
   type,
+  schemaVersion,
   payload,
   meta,
   created,
@@ -209,6 +214,7 @@ const serializeCommittedRow = ({
   user_id: userId,
   partitions: [...partitions],
   type,
+  schema_version: schemaVersion,
   payload: structuredClone(payload),
   meta: normalizeMeta(meta),
   created,
@@ -220,6 +226,7 @@ const toComparisonKey = (event) =>
     projectId: event.projectId,
     userId: event.userId,
     type: event.type,
+    schemaVersion: event.schemaVersion,
     payload: event.payload,
     meta: event.meta,
   });
@@ -432,6 +439,7 @@ export const createIndexedDbClientStore = ({
               projectId: item.projectId,
               userId: item.userId,
               type: item.type,
+              schemaVersion: item.schemaVersion,
               payload: structuredClone(item.payload),
               meta: normalizeMeta(item.meta),
               createdAt: item.createdAt,
@@ -450,6 +458,7 @@ export const createIndexedDbClientStore = ({
       projectId,
       userId,
       type,
+      schemaVersion,
       payload,
       meta,
       createdAt,
@@ -473,6 +482,7 @@ export const createIndexedDbClientStore = ({
             projectId,
             userId,
             type,
+            schemaVersion,
             payload: structuredClone(payload),
             meta: normalizeMeta(meta),
             createdAt,

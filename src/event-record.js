@@ -10,6 +10,11 @@ export const toFiniteNumberOrNull = (value) => {
   return parsed;
 };
 
+export const toPositiveIntegerOrNull = (value) =>
+  typeof value === "number" && Number.isInteger(value) && value > 0
+    ? value
+    : null;
+
 export const cloneObject = (value, fallback = {}) =>
   isObject(value) ? structuredClone(value) : fallback;
 
@@ -58,6 +63,10 @@ export const normalizeSubmitEventInput = (
     : isNonEmptyString(domainEvent?.type)
       ? domainEvent.type
       : undefined;
+  const schemaVersion =
+    toPositiveIntegerOrNull(input?.schemaVersion) ??
+    toPositiveIntegerOrNull(domainEvent?.schemaVersion) ??
+    undefined;
 
   return {
     id: isNonEmptyString(input?.id)
@@ -69,6 +78,7 @@ export const normalizeSubmitEventInput = (
     projectId: isNonEmptyString(input?.projectId) ? input.projectId : undefined,
     userId: isNonEmptyString(input?.userId) ? input.userId : undefined,
     type,
+    schemaVersion,
     payload: payload === undefined ? undefined : structuredClone(payload),
     meta: normalizeMeta(input?.meta, {
       defaultClientId,
@@ -88,6 +98,7 @@ export const buildCommittedEventFromDraft = ({
   userId: draft.userId,
   partitions: [...draft.partitions],
   type: draft.type,
+  schemaVersion: draft.schemaVersion,
   payload: structuredClone(draft.payload),
   meta: normalizeMeta(draft.meta),
   created,

@@ -20,6 +20,7 @@ CREATE TABLE local_drafts (
   project_id TEXT,
   user_id TEXT,
   type TEXT NOT NULL,
+  schema_version INTEGER NOT NULL,
   payload TEXT NOT NULL,            -- JSON object
   meta TEXT NOT NULL,               -- JSON object
   created_at INTEGER NOT NULL
@@ -32,6 +33,7 @@ CREATE TABLE committed_events (
   user_id TEXT,
   partitions TEXT NOT NULL,
   type TEXT NOT NULL,
+  schema_version INTEGER NOT NULL,
   payload TEXT NOT NULL,            -- JSON object
   meta TEXT NOT NULL,               -- JSON object
   created INTEGER NOT NULL
@@ -47,10 +49,12 @@ Notes:
 
 - `id` is global event UUID and dedupe key.
 - `draft_clock` is local ordering only.
+- `schema_version` is required and mirrors public JS `schemaVersion`.
 - `meta` is open-ended JSON-safe metadata. The runtime reserves `meta.clientId` and `meta.clientTs`.
 - Public JS objects use camelCase; SQL adapters persist snake_case columns internally.
 - `draft_clock` and `committed_id` primary keys already provide ordered access paths in SQLite/LibSQL.
 - `partitions` should be stored as a normalized set representation.
+- This rollout is intentionally not backward compatible with rows that predate `schemaVersion`; adapters may require reset or explicit backfill before opening legacy data.
 - Reference adapters:
   - `src/sqlite-client-store.js` (`createSqliteClientStore`)
   - `src/libsql-client-store.js` (`createLibsqlClientStore`)

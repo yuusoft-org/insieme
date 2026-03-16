@@ -38,7 +38,7 @@ const isTransportDisconnectedError = (error) => {
  *   store?: object,
  *   logger?: (entry: object) => void,
  *   reconnect?: object,
- *   commandVersion?: number,
+ *   schemaVersion?: number,
  *   mapCommandToSyncEvent?: (command: object) => object,
  *   mapCommittedToCommand?: (committedEvent: object) => object | null,
  *   onCommittedCommand?: (payload: {
@@ -59,12 +59,13 @@ export const createCommandSyncSession = ({
   store,
   logger = () => {},
   reconnect = {},
-  commandVersion = 1,
-  mapCommandToSyncEvent = commandToSyncEvent,
-  mapCommittedToCommand = (committedEvent) =>
-    committedSyncEventToCommand(committedEvent, {
-      defaultCommandVersion: commandVersion,
+  schemaVersion = 1,
+  mapCommandToSyncEvent = (command) =>
+    commandToSyncEvent(command, {
+      defaultSchemaVersion: schemaVersion,
     }),
+  mapCommittedToCommand = (committedEvent) =>
+    committedSyncEventToCommand(committedEvent),
   onCommittedCommand = () => {},
   onEvent = () => {},
   swallowTransportDisconnect = true,

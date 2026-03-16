@@ -126,11 +126,13 @@ describeSqlite("src sqlite end-to-end reliability", () => {
     await client.submitEvent({
       partitions: ["P1"],
       type: "x",
+      schemaVersion: 1,
       payload: { n: 1 },
     });
     await client.submitEvent({
       partitions: ["P1"],
       type: "x",
+      schemaVersion: 1,
       payload: { n: 2 },
     });
     await client.flushDrafts();
@@ -148,6 +150,7 @@ describeSqlite("src sqlite end-to-end reliability", () => {
       id: "offline-3",
       partitions: ["P1"],
       type: "x",
+      schemaVersion: 1,
       payload: { n: 3 },
       meta: { clientId: "C1", clientTs: 3000 },
       createdAt: 3000,

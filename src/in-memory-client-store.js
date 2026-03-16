@@ -14,13 +14,13 @@ const sortDrafts = (left, right) => {
  * In-memory client store implementing the simplified client storage interface.
  */
 export const createInMemoryClientStore = ({ materializedViews } = {}) => {
-  /** @type {{ draftClock: number, id: string, partitions: string[], projectId?: string, userId?: string, type: string, payload: object, meta: object, createdAt: number }[]} */
+  /** @type {{ draftClock: number, id: string, partitions: string[], projectId?: string, userId?: string, type: string, schemaVersion: number, payload: object, meta: object, createdAt: number }[]} */
   const drafts = [];
 
-  /** @type {{ committedId: number, id: string, projectId?: string, userId?: string, partitions: string[], type: string, payload: object, meta: object, created: number }[]} */
+  /** @type {{ committedId: number, id: string, projectId?: string, userId?: string, partitions: string[], type: string, schemaVersion: number, payload: object, meta: object, created: number }[]} */
   const committed = [];
 
-  /** @type {Map<string, { comparisonKey: string, committedEvent: { committedId: number, id: string, projectId?: string, userId?: string, partitions: string[], type: string, payload: object, meta: object, created: number } }>} */
+  /** @type {Map<string, { comparisonKey: string, committedEvent: { committedId: number, id: string, projectId?: string, userId?: string, partitions: string[], type: string, schemaVersion: number, payload: object, meta: object, created: number } }>} */
   const committedById = new Map();
 
   const materializedViewDefinitions =
@@ -51,6 +51,7 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
       projectId: event.projectId,
       userId: event.userId,
       type: event.type,
+      schemaVersion: event.schemaVersion,
       payload: event.payload,
       meta: event.meta,
     });
@@ -92,7 +93,17 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
     insertDrafts: async (items) => {
       const seenIds = new Set();
       const nextDrafts = items.map(
-        ({ id, partitions, projectId, userId, type, payload, meta, createdAt }) => {
+        ({
+          id,
+          partitions,
+          projectId,
+          userId,
+          type,
+          schemaVersion,
+          payload,
+          meta,
+          createdAt,
+        }) => {
           if (seenIds.has(id)) {
             throw new Error(`draft with id ${id} already exists`);
           }
@@ -109,6 +120,7 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
             projectId,
             userId,
             type,
+            schemaVersion,
             payload: structuredClone(payload),
             meta: normalizeMeta(meta),
             createdAt,
@@ -128,6 +140,7 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
       projectId,
       userId,
       type,
+      schemaVersion,
       payload,
       meta,
       createdAt,
@@ -144,6 +157,7 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
         projectId,
         userId,
         type,
+        schemaVersion,
         payload: structuredClone(payload),
         meta: normalizeMeta(meta),
         createdAt,
