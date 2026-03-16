@@ -410,6 +410,40 @@ export const createIndexedDbClientStore = ({
         loadMetaInt(stores[META_STORE], CURSOR_KEY, 0),
       ),
 
+    insertDrafts: async (items) => {
+      await withTransaction(
+        [META_STORE, DRAFT_STORE],
+        "readwrite",
+        async (stores) => {
+          const metaStore = stores[META_STORE];
+          const draftStore = stores[DRAFT_STORE];
+          let draftClock = await loadMetaInt(metaStore, NEXT_DRAFT_CLOCK_KEY, 1);
+
+          for (const item of items) {
+            const existing = await requestToPromise(draftStore.get(item.id));
+            if (existing) {
+              throw new Error(`draft with id ${item.id} already exists`);
+            }
+
+            draftStore.add(serializeDraftRow({
+              id: item.id,
+              draftClock,
+              partitions: [...item.partitions],
+              projectId: item.projectId,
+              userId: item.userId,
+              type: item.type,
+              payload: structuredClone(item.payload),
+              meta: normalizeMeta(item.meta),
+              createdAt: item.createdAt,
+            }));
+            draftClock += 1;
+          }
+
+          await saveMetaInt(metaStore, NEXT_DRAFT_CLOCK_KEY, draftClock);
+        },
+      );
+    },
+
     insertDraft: async ({
       id,
       partitions,

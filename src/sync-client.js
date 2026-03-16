@@ -29,6 +29,7 @@ import {
  *     init: () => Promise<void>,
  *     loadCursor: () => Promise<number>,
  *     insertDraft: (item: SubmitItem) => Promise<void>,
+ *     insertDrafts?: (items: SubmitItem[]) => Promise<void>,
  *     loadDraftsOrdered: () => Promise<SubmitItem[]>,
  *     applySubmitResult: (input: { result: object }) => Promise<void>,
  *     applyCommittedBatch: (input: { events: object[], nextCursor?: number }) => Promise<void>,
@@ -148,8 +149,13 @@ export const createSyncClient = ({
   let unsubscribeTransport = null;
   /** @type {Promise<void>} */
   let inboundQueue = Promise.resolve();
+  /** @type {Promise<{ localRejections: { error: object, result: object }[] }>} */
+  let draftFlushQueue = Promise.resolve({ localRejections: [] });
   /** @type {Map<number, { resolve: () => void, reject: (reason?: unknown) => void }>} */
   const connectWaiters = new Map();
+  /** @type {Map<string, { seq: number, error: object, result: object }>} */
+  const localSubmitRejections = new Map();
+  let nextLocalSubmitRejectionSeq = 1;
   let connectWaiterId = 0;
 
   const emit = (type, payload) => onEvent({ type, payload });
@@ -213,6 +219,15 @@ export const createSyncClient = ({
       const exceedsBytes =
         getApproxSubmitEnvelopeBytes(nextEvents) > batching.maxBytes;
 
+      if (events.length === 0 && (exceedsCount || exceedsBytes)) {
+        return {
+          selectedDrafts: [],
+          events: [],
+          oversizedDraft: draft,
+          oversizedBytes: getApproxSubmitEnvelopeBytes([nextEvent]),
+        };
+      }
+
       if (events.length > 0 && (exceedsCount || exceedsBytes)) {
         break;
       }
@@ -224,7 +239,158 @@ export const createSyncClient = ({
     return {
       selectedDrafts,
       events,
+      oversizedDraft: null,
+      oversizedBytes: null,
     };
+  };
+
+  const createLocalRejectedResult = ({
+    id,
+    reason,
+    message,
+    created,
+  }) => ({
+    id,
+    status: "rejected",
+    reason,
+    errors: [{ message }],
+    created,
+  });
+
+  const createSubmitBatchTooLargeError = ({ id, actualBytes }) => {
+    const error = new Error(`Draft ${id} exceeds submitBatch.maxBytes`);
+    error.code = "submit_batch_too_large";
+    error.details = {
+      id,
+      maxBytes: batching.maxBytes,
+      actualBytes,
+    };
+    return error;
+  };
+
+  const rejectDraftLocally = async ({
+    draft,
+    code,
+    reason,
+    message,
+    details,
+  }) => {
+    const errorPayload = {
+      code,
+      message,
+      details,
+    };
+    const result = createLocalRejectedResult({
+      id: draft.id,
+      reason,
+      message,
+      created: now(),
+    });
+
+    await store.applySubmitResult({ result });
+    const seq = nextLocalSubmitRejectionSeq;
+    nextLocalSubmitRejectionSeq += 1;
+    localSubmitRejections.set(draft.id, {
+      seq,
+      error: errorPayload,
+      result,
+    });
+    while (localSubmitRejections.size > 100) {
+      const oldestKey = localSubmitRejections.keys().next().value;
+      if (!oldestKey) break;
+      localSubmitRejections.delete(oldestKey);
+    }
+    lastError = errorPayload;
+    log({
+      event: "submit_rejected_local",
+      id: draft.id,
+      code,
+      reason,
+    });
+    emit("error", errorPayload);
+    emit("rejected", result);
+    return {
+      error: errorPayload,
+      result,
+    };
+  };
+
+  const runFlushDraftQueue = async () => {
+    /** @type {{ error: object, result: object }[]} */
+    const localRejections = [];
+
+    while (connected && !syncInFlight && !stopped && !submitBatchInFlight) {
+      const drafts = await store.loadDraftsOrdered();
+      log({
+        event: "flush_drafts",
+        draftCount: drafts.length,
+      });
+      if (drafts.length === 0) break;
+
+      const {
+        selectedDrafts,
+        events,
+        oversizedDraft,
+        oversizedBytes,
+      } = buildDraftBatch(drafts);
+
+      if (oversizedDraft) {
+        const oversizedError = createSubmitBatchTooLargeError({
+          id: oversizedDraft.id,
+          actualBytes: oversizedBytes,
+        });
+        localRejections.push(
+          await rejectDraftLocally({
+            draft: oversizedDraft,
+            code: "submit_batch_too_large",
+            reason: "validation_failed",
+            message: oversizedError.message,
+            details: oversizedError.details,
+          }),
+        );
+        continue;
+      }
+
+      if (selectedDrafts.length === 0) break;
+
+      const outboundMsgId = msgId();
+      submitBatchInFlight = {
+        msgId: outboundMsgId,
+        draftIds: selectedDrafts.map((draft) => draft.id),
+      };
+
+      try {
+        await send(
+          "submit_events",
+          {
+            events,
+          },
+          { msgId: outboundMsgId },
+        );
+        log({
+          event: "submit_sent",
+          id: selectedDrafts.length === 1 ? selectedDrafts[0].id : undefined,
+          draftIds: selectedDrafts.map((draft) => draft.id),
+          batchSize: selectedDrafts.length,
+          msgId: outboundMsgId,
+        });
+      } catch (error) {
+        submitBatchInFlight = null;
+        const disconnected = isTransportDisconnectedError(error);
+        await handleTransportFailure({
+          code: disconnected
+            ? "transport_disconnected"
+            : "transport_send_failed",
+          message:
+            error instanceof Error ? error.message : "Transport send failed",
+          reconnectAllowed: reconnectPolicy.enabled,
+          emitError: true,
+        });
+      }
+      break;
+    }
+
+    return { localRejections };
   };
 
   const waitForConnected = (timeoutMs) => {
@@ -391,52 +557,10 @@ export const createSyncClient = ({
   };
 
   const flushDraftQueue = async () => {
-    if (!connected || syncInFlight || stopped || submitBatchInFlight) return;
-
-    const drafts = await store.loadDraftsOrdered();
-    log({
-      event: "flush_drafts",
-      draftCount: drafts.length,
-    });
-    if (drafts.length === 0) return;
-
-    const { selectedDrafts, events } = buildDraftBatch(drafts);
-    if (selectedDrafts.length === 0) return;
-
-    const outboundMsgId = msgId();
-    submitBatchInFlight = {
-      msgId: outboundMsgId,
-      draftIds: selectedDrafts.map((draft) => draft.id),
-    };
-
-    try {
-      await send(
-        "submit_events",
-        {
-          events,
-        },
-        { msgId: outboundMsgId },
-      );
-      log({
-        event: "submit_sent",
-        id: selectedDrafts.length === 1 ? selectedDrafts[0].id : undefined,
-        draftIds: selectedDrafts.map((draft) => draft.id),
-        batchSize: selectedDrafts.length,
-        msgId: outboundMsgId,
-      });
-    } catch (error) {
-      submitBatchInFlight = null;
-      const disconnected = isTransportDisconnectedError(error);
-      await handleTransportFailure({
-        code: disconnected
-          ? "transport_disconnected"
-          : "transport_send_failed",
-        message:
-          error instanceof Error ? error.message : "Transport send failed",
-        reconnectAllowed: reconnectPolicy.enabled,
-        emitError: true,
-      });
-    }
+    draftFlushQueue = draftFlushQueue
+      .catch(() => ({ localRejections: [] }))
+      .then(() => runFlushDraftQueue());
+    return draftFlushQueue;
   };
 
   const syncFromCursor = async (sinceOverride) => {
@@ -709,10 +833,59 @@ export const createSyncClient = ({
         throw new Error("submitEvents requires payload object");
       }
       validateLocalEvent(draft);
+      const singleEventBytes = getApproxSubmitEnvelopeBytes([
+        toSubmitEnvelopeItem(draft),
+      ]);
+      if (singleEventBytes > batching.maxBytes) {
+        throw createSubmitBatchTooLargeError({
+          id: draft.id,
+          actualBytes: singleEventBytes,
+        });
+      }
+    }
+
+    const localRejectionSeqBeforeInsert = nextLocalSubmitRejectionSeq - 1;
+
+    if (typeof store.insertDrafts === "function") {
+      await store.insertDrafts(drafts);
+    } else {
+      /** @type {SubmitItem[]} */
+      const insertedDrafts = [];
+      try {
+        for (const draft of drafts) {
+          await store.insertDraft(draft);
+          insertedDrafts.push(draft);
+        }
+      } catch (error) {
+        try {
+          for (let index = insertedDrafts.length - 1; index >= 0; index -= 1) {
+            const insertedDraft = insertedDrafts[index];
+            await store.applySubmitResult({
+              result: createLocalRejectedResult({
+                id: insertedDraft.id,
+                reason: "validation_failed",
+                message: "Rolled back failed submitEvents batch insert",
+                created: now(),
+              }),
+            });
+            log({
+              event: "draft_insert_rolled_back",
+              id: insertedDraft.id,
+            });
+          }
+        } catch (rollbackError) {
+          const rollbackFailure = new Error(
+            "submitEvents failed after partial insert and rollback failed",
+          );
+          rollbackFailure.cause = error;
+          rollbackFailure.rollbackError = rollbackError;
+          throw rollbackFailure;
+        }
+        throw error;
+      }
     }
 
     for (const draft of drafts) {
-      await store.insertDraft(draft);
       log({
         event: "draft_inserted",
         id: draft.id,
@@ -720,6 +893,18 @@ export const createSyncClient = ({
     }
 
     await flushDraftQueue();
+    const localRejection = drafts
+      .map((draft) => localSubmitRejections.get(draft.id))
+      .find((entry) => entry && entry.seq > localRejectionSeqBeforeInsert);
+    for (const draft of drafts) {
+      localSubmitRejections.delete(draft.id);
+    }
+    if (localRejection) {
+      const error = new Error(localRejection.error.message);
+      error.code = localRejection.error.code;
+      error.details = localRejection.error.details;
+      throw error;
+    }
     return drafts.map((draft) => draft.id);
   };
 

@@ -94,6 +94,8 @@ export const createSqliteClientStore = (
   let applySubmitResultTxn = null;
   /** @type {null|((arg: { events: object[], nextCursor?: number }) => object[])} */
   let applyCommittedBatchTxn = null;
+  /** @type {null|((arg: { items: object[] }) => void)} */
+  let insertDraftsTxn = null;
   let materializedViewRuntime;
 
   const runPragmas = () => {
@@ -363,6 +365,21 @@ export const createSqliteClientStore = (
       WHERE view_name = @view_name AND partition = @partition
     `);
 
+    insertDraftsTxn = createTransaction(db, ({ items }) => {
+      for (const item of items) {
+        insertDraftStmt.run({
+          id: item.id,
+          partitions: JSON.stringify(item.partitions),
+          project_id: item.projectId ?? null,
+          user_id: item.userId ?? null,
+          type: item.type,
+          payload: JSON.stringify(item.payload),
+          meta: JSON.stringify(normalizeMeta(item.meta)),
+          created_at: item.createdAt,
+        });
+      }
+    });
+
     applySubmitResultTxn = createTransaction(db, ({ result }) => {
       let committedEvent;
 
@@ -511,6 +528,11 @@ export const createSqliteClientStore = (
       ensureInitialized();
       const row = loadCursorStmt.get();
       return row ? parseIntSafe(row.value) : 0;
+    },
+
+    insertDrafts: async (items) => {
+      ensureInitialized();
+      insertDraftsTxn({ items });
     },
 
     insertDraft: async ({

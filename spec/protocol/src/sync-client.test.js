@@ -297,6 +297,61 @@ describe("src createSyncClient", () => {
     expect(submits[0].payload.events[0].id).toBe("evt-retry-1");
   });
 
+  it("serializes concurrent flush calls before loading drafts", async () => {
+    const client = await createStartedClient({ transport, store });
+
+    transport.emit({
+      type: "connected",
+      payload: { clientId: "C1", globalLastCommittedId: 0 },
+    });
+    await tick();
+
+    transport.emit({
+      type: "sync_response",
+      payload: {
+        partitions: ["P1"],
+        events: [],
+        nextSinceCommittedId: 0,
+        hasMore: false,
+      },
+    });
+    await tick();
+
+    store.loadDraftsOrdered.mockClear();
+    await store.insertDraft({
+      id: "evt-serial-1",
+      partitions: ["P1"],
+      type: "x",
+      payload: { n: 1 },
+      meta: { clientId: "C1", clientTs: 1000 },
+      createdAt: 1000,
+    });
+
+    let releaseLoadDrafts;
+    const loadDraftsGate = new Promise((resolve) => {
+      releaseLoadDrafts = resolve;
+    });
+    store.loadDraftsOrdered.mockImplementation(async () => {
+      await loadDraftsGate;
+      return store._debug.getDrafts();
+    });
+
+    const firstFlush = client.flushDrafts();
+    const secondFlush = client.flushDrafts();
+    await tick();
+
+    expect(store.loadDraftsOrdered).toHaveBeenCalledTimes(1);
+
+    releaseLoadDrafts();
+    await Promise.all([firstFlush, secondFlush]);
+
+    const submits = transport.sent.filter((message) => message.type === "submit_events");
+    expect(submits).toHaveLength(1);
+    expect(submits[0].payload.events.map((event) => event.id)).toEqual([
+      "evt-serial-1",
+    ]);
+  });
+
   it("batches ordered drafts and sends the next batch only after the prior result", async () => {
     const client = await createStartedClient({
       transport,
@@ -437,6 +492,70 @@ describe("src createSyncClient", () => {
     ]);
   });
 
+  it("rejects an oversized queued draft locally without sending it", async () => {
+    const events = [];
+    const client = await createStartedClient({
+      transport,
+      store,
+      clientOverrides: {
+        onEvent: (event) => events.push(event),
+        submitBatch: {
+          maxBytes: 80,
+        },
+      },
+    });
+
+    transport.emit({
+      type: "connected",
+      payload: { clientId: "C1", globalLastCommittedId: 0 },
+    });
+    await tick();
+
+    transport.emit({
+      type: "sync_response",
+      payload: {
+        partitions: ["P1"],
+        events: [],
+        nextSinceCommittedId: 0,
+        hasMore: false,
+      },
+    });
+    await tick();
+
+    await store.insertDraft({
+      id: "evt-too-large-1",
+      partitions: ["P1"],
+      type: "x",
+      payload: { text: "x".repeat(512) },
+      meta: { clientId: "C1", clientTs: 1000 },
+      createdAt: 1000,
+    });
+
+    await client.flushDrafts();
+
+    const submits = transport.sent.filter((message) => message.type === "submit_events");
+    expect(submits).toHaveLength(0);
+    expect(store._debug.getDrafts()).toHaveLength(0);
+
+    const errorEvent = events.find((entry) => entry.type === "error");
+    expect(errorEvent).toBeTruthy();
+    expect(errorEvent.payload).toMatchObject({
+      code: "submit_batch_too_large",
+      details: expect.objectContaining({
+        id: "evt-too-large-1",
+        maxBytes: 80,
+      }),
+    });
+
+    const rejectedEvent = events.find((entry) => entry.type === "rejected");
+    expect(rejectedEvent).toBeTruthy();
+    expect(rejectedEvent.payload).toMatchObject({
+      id: "evt-too-large-1",
+      status: "rejected",
+      reason: "validation_failed",
+    });
+  });
+
   it("keeps draft queued when submit send fails due disconnect", async () => {
     const events = [];
     const client = await createStartedClient({
@@ -483,6 +602,31 @@ describe("src createSyncClient", () => {
     const errorEvent = events.find((entry) => entry.type === "error");
     expect(errorEvent).toBeTruthy();
     expect(errorEvent.payload.code).toBe("transport_disconnected");
+  });
+
+  it("rolls back inserted drafts when fallback batch insert fails", async () => {
+    const client = await createStartedClient({ transport, store });
+    const originalInsertDraft = store.insertDraft;
+    let insertCount = 0;
+
+    store.insertDraft = vi.fn(async (item) => {
+      insertCount += 1;
+      if (insertCount === 2) {
+        throw new Error("store write failed");
+      }
+      return originalInsertDraft(item);
+    });
+
+    await expect(
+      client.submitEvents([
+        { id: "evt-rollback-1", partitions: ["P1"], type: "x", payload: { n: 1 } },
+        { id: "evt-rollback-2", partitions: ["P1"], type: "x", payload: { n: 2 } },
+      ]),
+    ).rejects.toThrow("store write failed");
+
+    expect(store._debug.getDrafts()).toHaveLength(0);
+    const submits = transport.sent.filter((message) => message.type === "submit_events");
+    expect(submits).toHaveLength(0);
   });
 
   it("continues sync paging until hasMore is false", async () => {

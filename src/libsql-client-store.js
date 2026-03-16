@@ -9,6 +9,22 @@ const DEFAULT_MATERIALIZED_BACKFILL_CHUNK_SIZE = 512;
 
 const toSerializedJson = (value) => JSON.stringify(value);
 
+const createTransaction = async (db, fn) => {
+  await db.execute("BEGIN IMMEDIATE");
+  try {
+    const result = await fn();
+    await db.execute("COMMIT");
+    return result;
+  } catch (error) {
+    try {
+      await db.execute("ROLLBACK");
+    } catch {
+      // best-effort rollback
+    }
+    throw error;
+  }
+};
+
 const parseDraft = (row) => ({
   draftClock: parseIntSafe(row.draft_clock, 0),
   id: row.id,
@@ -372,6 +388,39 @@ export const createLibsqlClientStore = (
           createdAt,
         ],
       );
+    },
+
+    insertDrafts: async (items) => {
+      await ensureInitialized();
+      await createTransaction(db, async () => {
+        for (const item of items) {
+          await db.execute(
+            `
+              INSERT INTO local_drafts(
+                id,
+                partitions,
+                project_id,
+                user_id,
+                type,
+                payload,
+                meta,
+                created_at
+              )
+              VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+            `,
+            [
+              item.id,
+              toSerializedJson(item.partitions),
+              item.projectId ?? null,
+              item.userId ?? null,
+              item.type,
+              toSerializedJson(item.payload),
+              toSerializedJson(normalizeMeta(item.meta)),
+              item.createdAt,
+            ],
+          );
+        }
+      });
     },
 
     loadDraftsOrdered: async () => {
