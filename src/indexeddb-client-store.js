@@ -488,7 +488,9 @@ export const createIndexedDbClientStore = ({
             }
           }
 
-          draftStore.delete(result.id);
+          if (result.status === "committed" || result.status === "rejected") {
+            draftStore.delete(result.id);
+          }
           return insertedEvent;
         },
       );

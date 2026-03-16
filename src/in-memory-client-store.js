@@ -133,9 +133,13 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
             await materializedViewRuntime.onCommittedEvent(committedEvent);
           }
         }
+        removeDraftById(result.id);
+        return;
       }
 
-      removeDraftById(result.id);
+      if (result.status === "rejected") {
+        removeDraftById(result.id);
+      }
     },
 
     applyCommittedBatch: async ({ events, nextCursor }) => {

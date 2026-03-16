@@ -39,7 +39,7 @@ payload:
 
 ### `submit_events`
 
-Core mode uses exactly one submitted event per request.
+Core mode allows one or more submitted events per request.
 
 ```yaml
 type: submit_events
@@ -59,14 +59,16 @@ payload:
 
 Rules:
 
-- `payload.events` **MUST** be an array with exactly 1 item.
-- `payload.events[0].id` **MUST** be present.
-- `payload.events[0].partitions` **MUST** follow `partitions.md`.
-- `payload.events[0].type` **MUST** be present.
-- `payload.events[0].payload` **MUST** be an object.
-- `payload.events[0].meta.clientId` **MUST** match the authenticated connection client.
-- `payload.events[0].meta.clientTs` **MUST** be a finite number.
-- `payload.events[0].meta` **MAY** include extra JSON-safe fields. Reserved keys may be overwritten by the runtime.
+- `payload.events` **MUST** be an array with at least 1 item.
+- Each `payload.events[n].id` **MUST** be present.
+- Each `payload.events[n].partitions` **MUST** follow `partitions.md`.
+- Each `payload.events[n].type` **MUST** be present.
+- Each `payload.events[n].payload` **MUST** be an object.
+- Each `payload.events[n].meta.clientId` **MUST** match the authenticated connection client.
+- Each `payload.events[n].meta.clientTs` **MUST** be a finite number.
+- Each `payload.events[n].meta` **MAY** include extra JSON-safe fields. Reserved keys may be overwritten by the runtime.
+- Server **MUST** process items in request order.
+- Server **MUST** stop attempting later items after the first rejected item in the same batch.
 
 ### `sync`
 
@@ -112,6 +114,10 @@ payload:
       status: committed
       committedId: 1201
       created: 1738451201500
+    - id: evt-uuid-2
+      status: committed
+      committedId: 1202
+      created: 1738451201501
 ```
 
 Rejected example:
@@ -128,12 +134,19 @@ payload:
         - field: payload.id
           message: duplicate id
       created: 1738451201600
+    - id: evt-uuid-2
+      status: not_processed
+      reason: prior_item_failed
+      blockedById: evt-uuid-1
+      created: 1738451201600
 ```
 
 Rules:
 
 - Server **MUST** send exactly one `submit_events_result` per `submit_events` request.
-- `results` **MUST** contain exactly one entry in core mode.
+- `results` **MUST** contain exactly one entry per submitted item, in request order.
+- Result `status` values are `committed`, `rejected`, or `not_processed`.
+- If one item is rejected, later submitted items in the same batch that were not attempted **MUST** be returned as `not_processed`.
 - Origin submit outcome is authoritative from this message.
 
 ### `event_broadcast`

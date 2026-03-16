@@ -438,9 +438,11 @@ export const createLibsqlClientStore = (
             committedEvent = nextCommittedEvent;
           }
         }
-      }
 
-      await db.execute(`DELETE FROM local_drafts WHERE id = ?`, [result.id]);
+        await db.execute(`DELETE FROM local_drafts WHERE id = ?`, [result.id]);
+      } else if (result.status === "rejected") {
+        await db.execute(`DELETE FROM local_drafts WHERE id = ?`, [result.id]);
+      }
 
       if (committedEvent) {
         await materializedViewRuntime.onCommittedEvent(committedEvent);

@@ -106,6 +106,10 @@ export function createOfflineTransport(options) {}
  *   maxAttempts?: number,
  *   handshakeTimeoutMs?: number
  * }} [deps.reconnect]
+ * @param {{
+ *   maxEvents?: number,
+ *   maxBytes?: number
+ * }} [deps.submitBatch]
  * @param {(ms: number) => Promise<void>} [deps.sleep]
  * @returns {SyncClient}
  */
@@ -120,6 +124,15 @@ export function createSyncClient(deps) {}
  * @property {() => Promise<void>} start
  * @property {() => Promise<void>} stop
  * @property {(partitions: string[], options?: { sinceCommittedId?: number }) => Promise<void>} setPartitions
+ * @property {(items: {
+ *   id?: string,
+ *   partitions: string[],
+ *   projectId?: string,
+ *   userId?: string,
+ *   type: string,
+ *   payload: object,
+ *   meta?: object,
+ * }[]) => Promise<string[]>} submitEvents
  * @property {(item: {
  *   id?: string,
  *   partitions: string[],
@@ -151,9 +164,31 @@ Client runtime events:
 - `sync_page`
 - `committed`
 - `rejected`
+- `not_processed`
 - `broadcast`
 - `error`
 - `reconnect_scheduled`
+
+## Command Session Interface
+
+```js
+/**
+ * @typedef {Object} CommandSyncSession
+ * @property {() => Promise<void>} start
+ * @property {() => Promise<void>} stop
+ * @property {(commands: object[]) => Promise<string[]>} submitCommands
+ * @property {(command: object) => Promise<string>} submitCommand
+ * @property {(items: object[]) => Promise<string[]>} submitEvents
+ * @property {(item: object) => Promise<string>} submitEvent
+ * @property {(options?: { sinceCommittedId?: number }) => Promise<void>} syncNow
+ * @property {() => Promise<void>} flushDrafts
+ * @property {(transport: object) => Promise<void>} setOnlineTransport
+ * @property {() => object} getActor
+ * @property {() => object} getStatus
+ * @property {() => object | null} getLastError
+ * @property {() => void} clearLastError
+ */
+```
 
 ## Backend Interface
 
@@ -223,8 +258,9 @@ export function createSyncServer(deps) {}
 
 ## Conformance Notes
 
-- Client submit path is single-item in core mode.
-- Server still receives `submit_events` wire message shape with one `events[0]` item.
+- Client submit path may send one or more items in one `submit_events` request.
+- Client runtime drains drafts in ordered batches and keeps one submit batch in flight at a time.
+- `submitEvent()` and `submitCommand()` are thin wrappers over `submitEvents()` and `submitCommands()`.
 - Client store methods that mutate committed/draft/cursor state should use single DB transactions when available, or equivalent idempotent/monotonic SQL semantics when transactional APIs are not available.
 - All behavior must match `docs/protocol/*.md`.
 - Client-generated `msgId` values should be stable per outbound message for traceability.

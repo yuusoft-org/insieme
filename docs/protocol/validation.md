@@ -10,23 +10,30 @@ Server is authoritative and **MUST** validate every submitted event before commi
 
 ## Required Validation
 
-For each `submit_events` request (core mode: one event):
+For each `submit_events` request:
 
 1. Envelope and request shape are valid.
-2. `payload.events` has exactly one item.
-3. `id` is present and well-formed for your UUID policy.
-4. `type` is a non-empty string and `payload` is an object.
-5. `partitions` are valid and authorized.
-6. `meta.clientId` and `meta.clientTs` are valid, and `meta.clientId` matches the authenticated client.
-7. If `userId` is present, validate it against the authenticated user when your auth layer exposes one.
-8. Event payload passes app/domain validation.
-9. Event `type` is recognized by the active application model.
+2. `payload.events` has at least one item.
+3. Server validates and processes items in request order.
+4. Each item `id` is present and well-formed for your UUID policy.
+5. Each item `type` is a non-empty string and `payload` is an object.
+6. Each item `partitions` is valid and authorized.
+7. Each item `meta.clientId` and `meta.clientTs` are valid, and `meta.clientId` matches the authenticated client.
+8. If an item `userId` is present, validate it against the authenticated user when your auth layer exposes one.
+9. Each event payload passes app/domain validation.
+10. Each event `type` is recognized by the active application model.
 
-If any check fails, server **MUST** reject with:
+Batch outcome rules:
+
+- Server **MUST** stop processing the batch after the first rejected item.
+- Later submitted items that were not attempted **MUST** be returned as `not_processed`.
+
+If any check fails, server **MUST** return outcomes using:
 
 - `bad_request` for malformed request shape,
 - `forbidden` for authorization failures,
-- `validation_failed` for metadata or domain validation failures.
+- `validation_failed` for metadata or domain validation failures,
+- `not_processed` for later items in the same batch that were not attempted because an earlier item failed.
 
 ## App-Level Validation Extensions
 

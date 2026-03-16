@@ -4,6 +4,8 @@ import {
   createSyncServer,
 } from "../../../src/index.js";
 
+const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
 const createConnectionTransport = (connectionId) => {
   const sent = [];
   let closed = false;
@@ -198,6 +200,139 @@ describe("src createSyncServer", () => {
     });
   });
 
+  it("commits ordered multi-item batches and broadcasts each committed item to peers", async () => {
+    const { server } = createServer({
+      verifyToken: async (token) => ({
+        clientId: token === "jwt-c2" ? "C2" : "C1",
+        claims: {},
+      }),
+    });
+
+    const c1 = createConnectionTransport("c1");
+    const c2 = createConnectionTransport("c2");
+    const s1 = server.attachConnection(c1);
+    const s2 = server.attachConnection(c2);
+
+    await connectSession({ session: s1, clientId: "C1", token: "jwt-c1" });
+    await connectSession({ session: s2, clientId: "C2", token: "jwt-c2" });
+    await syncSession({ session: s1, partitions: ["P1"] });
+    await syncSession({ session: s2, partitions: ["P1"] });
+
+    await s1.receive({
+      type: "submit_events",
+      protocolVersion: "1.0",
+      payload: {
+        events: [
+          toSubmitItem({
+            id: "evt-batch-1",
+            partitions: ["P1"],
+            event: { type: "x", payload: { n: 1 } },
+          }),
+          toSubmitItem({
+            id: "evt-batch-2",
+            partitions: ["P1"],
+            event: { type: "x", payload: { n: 2 } },
+          }),
+        ],
+      },
+    });
+
+    const submitResult = c1.sent.find((message) => message.type === "submit_events_result");
+    expect(submitResult).toBeTruthy();
+    expect(submitResult.payload.results).toEqual([
+      expect.objectContaining({
+        id: "evt-batch-1",
+        status: "committed",
+        committedId: 1,
+      }),
+      expect.objectContaining({
+        id: "evt-batch-2",
+        status: "committed",
+        committedId: 2,
+      }),
+    ]);
+
+    const c1Broadcasts = c1.sent.filter((message) => message.type === "event_broadcast");
+    const c2Broadcasts = c2.sent.filter((message) => message.type === "event_broadcast");
+    expect(c1Broadcasts).toHaveLength(0);
+    expect(c2Broadcasts).toHaveLength(2);
+    expect(c2Broadcasts.map((message) => message.payload.id)).toEqual([
+      "evt-batch-1",
+      "evt-batch-2",
+    ]);
+  });
+
+  it("stops batch processing on first failure and marks later items not_processed", async () => {
+    const { server, store } = createServer({
+      validate: async (item) => {
+        if (item.type === "bad") {
+          const error = new Error("invalid event");
+          // @ts-ignore
+          error.code = "validation_failed";
+          throw error;
+        }
+      },
+    });
+
+    const c1 = createConnectionTransport("c1");
+    const s1 = server.attachConnection(c1);
+
+    await connectSession({ session: s1 });
+    await syncSession({ session: s1, partitions: ["P1"] });
+
+    await s1.receive({
+      type: "submit_events",
+      protocolVersion: "1.0",
+      payload: {
+        events: [
+          toSubmitItem({
+            id: "evt-ok-1",
+            partitions: ["P1"],
+            event: { type: "x", payload: { n: 1 } },
+          }),
+          toSubmitItem({
+            id: "evt-bad-2",
+            partitions: ["P1"],
+            event: { type: "bad", payload: { n: 2 } },
+          }),
+          toSubmitItem({
+            id: "evt-later-3",
+            partitions: ["P1"],
+            event: { type: "x", payload: { n: 3 } },
+          }),
+        ],
+      },
+    });
+
+    const submitResult = c1.sent.find((message) => message.type === "submit_events_result");
+    expect(submitResult).toBeTruthy();
+    expect(submitResult.payload.results).toEqual([
+      expect.objectContaining({
+        id: "evt-ok-1",
+        status: "committed",
+        committedId: 1,
+      }),
+      expect.objectContaining({
+        id: "evt-bad-2",
+        status: "rejected",
+        reason: "validation_failed",
+      }),
+      expect.objectContaining({
+        id: "evt-later-3",
+        status: "not_processed",
+        reason: "prior_item_failed",
+        blockedById: "evt-bad-2",
+      }),
+    ]);
+
+    const committedPage = await store.listCommittedSince({
+      partitions: ["P1"],
+      sinceCommittedId: 0,
+      limit: 10,
+    });
+    expect(committedPage.events.map((event) => event.id)).toEqual(["evt-ok-1"]);
+  });
+
   it("accepts generic event objects and delegates domain semantics to app validation", async () => {
     const { server } = createServer();
     const c1 = createConnectionTransport("c1");
@@ -267,6 +402,60 @@ describe("src createSyncServer", () => {
 
     expect(firstCommittedId).toBe(1);
     expect(secondCommittedId).toBe(1);
+  });
+
+  it("rejects conflicting duplicate ids inside a single batch and blocks later items", async () => {
+    const { server } = createServer();
+    const c1 = createConnectionTransport("c1");
+    const s1 = server.attachConnection(c1);
+
+    await connectSession({ session: s1 });
+    await syncSession({ session: s1, partitions: ["P1"] });
+
+    await s1.receive({
+      type: "submit_events",
+      protocolVersion: "1.0",
+      payload: {
+        events: [
+          toSubmitItem({
+            id: "evt-dup-1",
+            partitions: ["P1"],
+            event: { type: "x", payload: { n: 1 } },
+          }),
+          toSubmitItem({
+            id: "evt-dup-1",
+            partitions: ["P1"],
+            event: { type: "x", payload: { n: 2 } },
+          }),
+          toSubmitItem({
+            id: "evt-after-2",
+            partitions: ["P1"],
+            event: { type: "x", payload: { n: 3 } },
+          }),
+        ],
+      },
+    });
+
+    const submitResult = c1.sent.find((message) => message.type === "submit_events_result");
+    expect(submitResult).toBeTruthy();
+    expect(submitResult.payload.results).toEqual([
+      expect.objectContaining({
+        id: "evt-dup-1",
+        status: "committed",
+        committedId: 1,
+      }),
+      expect.objectContaining({
+        id: "evt-dup-1",
+        status: "rejected",
+        reason: "validation_failed",
+      }),
+      expect.objectContaining({
+        id: "evt-after-2",
+        status: "not_processed",
+        reason: "prior_item_failed",
+        blockedById: "evt-dup-1",
+      }),
+    ]);
   });
 
   it("uses partition-scoped syncToCommittedId", async () => {
@@ -367,6 +556,74 @@ describe("src createSyncServer", () => {
       type: "error",
       msgId: "msg-err-1",
       payload: { code: "bad_request" },
+    });
+  });
+
+  it("serializes concurrent submit batches per connection", async () => {
+    let releaseFirstValidation;
+    const firstValidationGate = new Promise((resolve) => {
+      releaseFirstValidation = resolve;
+    });
+    const seenValidationIds = [];
+    const { server } = createServer({
+      validate: async (item) => {
+        seenValidationIds.push(item.id);
+        if (item.id === "evt-slow-1") {
+          await firstValidationGate;
+        }
+      },
+    });
+
+    const c1 = createConnectionTransport("c1");
+    const s1 = server.attachConnection(c1);
+
+    await connectSession({ session: s1 });
+    await syncSession({ session: s1, partitions: ["P1"] });
+
+    const firstReceive = s1.receive({
+      type: "submit_events",
+      protocolVersion: "1.0",
+      payload: {
+        events: [
+          toSubmitItem({
+            id: "evt-slow-1",
+            partitions: ["P1"],
+            event: { type: "x", payload: { n: 1 } },
+          }),
+        ],
+      },
+    });
+    const secondReceive = s1.receive({
+      type: "submit_events",
+      protocolVersion: "1.0",
+      payload: {
+        events: [
+          toSubmitItem({
+            id: "evt-fast-2",
+            partitions: ["P1"],
+            event: { type: "x", payload: { n: 2 } },
+          }),
+        ],
+      },
+    });
+
+    await tick();
+    expect(seenValidationIds).toEqual(["evt-slow-1"]);
+
+    releaseFirstValidation();
+    await Promise.all([firstReceive, secondReceive]);
+
+    const submitResults = c1.sent.filter((message) => message.type === "submit_events_result");
+    expect(submitResults).toHaveLength(2);
+    expect(submitResults[0].payload.results[0]).toMatchObject({
+      id: "evt-slow-1",
+      status: "committed",
+      committedId: 1,
+    });
+    expect(submitResults[1].payload.results[0]).toMatchObject({
+      id: "evt-fast-2",
+      status: "committed",
+      committedId: 2,
     });
   });
 

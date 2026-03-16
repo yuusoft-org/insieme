@@ -41,14 +41,18 @@ const toPositiveIntOr = (value, fallback) => {
 
 /**
  * @param {string[]} partitions
+ * @param {string} [path]
  * @returns {{ ok: true, value: string[] } | { ok: false, code: string, message: string }}
  */
-const validateEventPartitions = (partitions) => {
+const validateEventPartitions = (
+  partitions,
+  path = "payload.events[].partitions",
+) => {
   if (!isStringArray(partitions) || partitions.length === 0) {
     return {
       ok: false,
       code: "bad_request",
-      message: "payload.events[0].partitions must be a non-empty string array",
+      message: `${path} must be a non-empty string array`,
     };
   }
 
@@ -478,49 +482,59 @@ export const createSyncServer = ({
       return;
     }
 
-    if (payload.events.length !== 1) {
+    if (payload.events.length < 1) {
       await sendError(
         session.transport,
         "bad_request",
-        "payload.events must contain exactly one item in core mode",
+        "payload.events must contain at least one item",
         {},
         { msgId: context.msgId },
       );
       return;
     }
 
-    const item = payload.events[0];
-    if (!isObject(item)) {
-      await sendError(
-        session.transport,
-        "bad_request",
-        "events[0] must be an object",
-        {},
-        { msgId: context.msgId },
-      );
-      return;
+    for (let index = 0; index < payload.events.length; index += 1) {
+      const item = payload.events[index];
+      if (!isObject(item)) {
+        await sendError(
+          session.transport,
+          "bad_request",
+          `events[${index}] must be an object`,
+          {},
+          { msgId: context.msgId },
+        );
+        return;
+      }
+      if (!isNonEmptyString(item.id)) {
+        await sendError(
+          session.transport,
+          "bad_request",
+          `events[${index}].id is required`,
+          {},
+          { msgId: context.msgId },
+        );
+        return;
+      }
     }
 
-    const id = item.id;
-    const partitions = item.partitions;
+    const claimsUserId = isNonEmptyString(session.identity?.claims?.userId)
+      ? session.identity.claims.userId
+      : undefined;
+    /** @type {object[]} */
+    const results = [];
+    /** @type {object[]} */
+    const committedEvents = [];
+    let blockedById = null;
 
-    const rejectSubmit = async (reason, message) => {
-      await sendMessage(
-        session.transport,
-        "submit_events_result",
-        {
-          results: [
-            {
-              id,
-              status: "rejected",
-              reason,
-              errors: [{ message }],
-              created: clock.now(),
-            },
-          ],
-        },
-        { msgId: context.msgId },
-      );
+    const pushRejected = (id, reason, message) => {
+      results.push({
+        id,
+        status: "rejected",
+        reason,
+        errors: [{ message }],
+        created: clock.now(),
+      });
+      blockedById = id;
       log({
         event: "submit_rejected",
         connectionId: session.transport.connectionId,
@@ -530,181 +544,196 @@ export const createSyncServer = ({
       });
     };
 
-    if (typeof id !== "string" || id.length === 0) {
-      await sendError(
-        session.transport,
-        "bad_request",
-        "events[0].id is required",
-        {},
-        { msgId: context.msgId },
-      );
-      return;
-    }
-    if (!isNonEmptyString(item.type)) {
-      await sendError(
-        session.transport,
-        "bad_request",
-        "events[0].type must be a non-empty string",
-        {},
-        { msgId: context.msgId },
-      );
-      return;
-    }
-    if (!isObject(item.payload)) {
-      await sendError(
-        session.transport,
-        "bad_request",
-        "events[0].payload must be an object",
-        {},
-        { msgId: context.msgId },
-      );
-      return;
-    }
-
-    const partitionCheck = validateEventPartitions(partitions);
-    if (!partitionCheck.ok) {
-      await rejectSubmit(partitionCheck.code, partitionCheck.message);
-      return;
-    }
-
-    const normalizedPartitions = partitionCheck.value;
-    const normalizedMeta = normalizeMeta(item.meta, {
-      defaultClientId: session.identity.clientId,
-    });
-
-    if (!isNonEmptyString(normalizedMeta.clientId)) {
-      await rejectSubmit("validation_failed", "meta.clientId is required");
-      return;
-    }
-    if (normalizedMeta.clientId !== session.identity.clientId) {
-      await rejectSubmit(
-        "forbidden",
-        "meta.clientId must match authenticated client",
-      );
-      return;
-    }
-    if (toFiniteNumberOrNull(normalizedMeta.clientTs) === null) {
-      await rejectSubmit(
-        "validation_failed",
-        "meta.clientTs must be a finite number",
-      );
-      return;
-    }
-    if (item.userId !== undefined && !isNonEmptyString(item.userId)) {
-      await rejectSubmit(
-        "validation_failed",
-        "userId must be a non-empty string when provided",
-      );
-      return;
-    }
-
-    const claimsUserId = isNonEmptyString(session.identity?.claims?.userId)
-      ? session.identity.claims.userId
-      : undefined;
-    if (
-      claimsUserId &&
-      isNonEmptyString(item.userId) &&
-      item.userId !== claimsUserId
-    ) {
-      await rejectSubmit("forbidden", "userId must match authenticated user");
-      return;
-    }
-
-    const authorized = await authz.authorizePartitions(
-      session.identity,
-      normalizedPartitions,
-    );
-    if (!authorized) {
-      await rejectSubmit("forbidden", "partition access denied");
-      return;
-    }
-
-    const normalizedItem = {
-      id,
-      partitions: normalizedPartitions,
-      projectId: isNonEmptyString(item.projectId) ? item.projectId : undefined,
-      userId: isNonEmptyString(item.userId) ? item.userId : undefined,
-      type: item.type,
-      payload: item.payload,
-      meta: normalizedMeta,
-    };
-
-    try {
-      await validation.validate(normalizedItem, {
-        identity: session.identity,
-        now: clock.now(),
+    const pushNotProcessed = (id, blockerId) => {
+      results.push({
+        id,
+        status: "not_processed",
+        reason: "prior_item_failed",
+        blockedById: blockerId,
+        created: clock.now(),
       });
-    } catch (err) {
-      const payloadError = toErrorPayload(
-        err,
-        "validation_failed",
-        "submit validation failed",
-      );
-
-      if (payloadError.code === "bad_request") {
-        await sendError(
-          session.transport,
-          "bad_request",
-          payloadError.message,
-          {},
-          { msgId: context.msgId },
-        );
-        return;
-      }
-
-      await rejectSubmit(payloadError.code, payloadError.message);
-      return;
-    }
-
-    try {
-      const { deduped, committedEvent } = await store.commitOrGetExisting({
-        ...normalizedItem,
-        now: clock.now(),
-      });
-
-      await sendMessage(
-        session.transport,
-        "submit_events_result",
-        {
-          results: [
-            {
-              id: committedEvent.id,
-              status: "committed",
-              committedId: committedEvent.committedId,
-              created: committedEvent.created,
-            },
-          ],
-        },
-        { msgId: context.msgId },
-      );
       log({
-        event: "submit_committed",
+        event: "submit_not_processed",
         connectionId: session.transport.connectionId,
-        id: committedEvent.id,
-        committedId: committedEvent.committedId,
-        clientId: committedEvent.meta?.clientId,
-        deduped,
+        id,
+        blockedById: blockerId,
         msgId: context.msgId,
       });
+    };
 
-      await broadcastCommitted({
-        originConnectionId: session.transport.connectionId,
-        committedEvent,
+    for (let index = 0; index < payload.events.length; index += 1) {
+      const item = payload.events[index];
+      if (blockedById) {
+        pushNotProcessed(item.id, blockedById);
+        continue;
+      }
+
+      if (!isNonEmptyString(item.type)) {
+        pushRejected(
+          item.id,
+          "validation_failed",
+          `events[${index}].type must be a non-empty string`,
+        );
+        continue;
+      }
+      if (!isObject(item.payload)) {
+        pushRejected(
+          item.id,
+          "validation_failed",
+          `events[${index}].payload must be an object`,
+        );
+        continue;
+      }
+
+      const partitionCheck = validateEventPartitions(
+        item.partitions,
+        `events[${index}].partitions`,
+      );
+      if (!partitionCheck.ok) {
+        pushRejected(item.id, partitionCheck.code, partitionCheck.message);
+        continue;
+      }
+
+      const normalizedPartitions = partitionCheck.value;
+      const normalizedMeta = normalizeMeta(item.meta, {
+        defaultClientId: session.identity.clientId,
       });
-    } catch (err) {
-      const code =
-        isObject(err) && typeof err.code === "string" ? err.code : null;
-      if (code === "validation_failed" || code === "forbidden") {
+
+      if (!isNonEmptyString(normalizedMeta.clientId)) {
+        pushRejected(item.id, "validation_failed", "meta.clientId is required");
+        continue;
+      }
+      if (normalizedMeta.clientId !== session.identity.clientId) {
+        pushRejected(
+          item.id,
+          "forbidden",
+          "meta.clientId must match authenticated client",
+        );
+        continue;
+      }
+      if (toFiniteNumberOrNull(normalizedMeta.clientTs) === null) {
+        pushRejected(
+          item.id,
+          "validation_failed",
+          "meta.clientTs must be a finite number",
+        );
+        continue;
+      }
+      if (item.userId !== undefined && !isNonEmptyString(item.userId)) {
+        pushRejected(
+          item.id,
+          "validation_failed",
+          "userId must be a non-empty string when provided",
+        );
+        continue;
+      }
+      if (
+        claimsUserId &&
+        isNonEmptyString(item.userId) &&
+        item.userId !== claimsUserId
+      ) {
+        pushRejected(
+          item.id,
+          "forbidden",
+          "userId must match authenticated user",
+        );
+        continue;
+      }
+
+      const authorized = await authz.authorizePartitions(
+        session.identity,
+        normalizedPartitions,
+      );
+      if (!authorized) {
+        pushRejected(item.id, "forbidden", "partition access denied");
+        continue;
+      }
+
+      const normalizedItem = {
+        id: item.id,
+        partitions: normalizedPartitions,
+        projectId: isNonEmptyString(item.projectId) ? item.projectId : undefined,
+        userId: isNonEmptyString(item.userId) ? item.userId : undefined,
+        type: item.type,
+        payload: item.payload,
+        meta: normalizedMeta,
+      };
+
+      try {
+        await validation.validate(normalizedItem, {
+          identity: session.identity,
+          now: clock.now(),
+        });
+      } catch (err) {
         const payloadError = toErrorPayload(
           err,
           "validation_failed",
           "submit validation failed",
         );
-        await rejectSubmit(payloadError.code, payloadError.message);
-        return;
+        pushRejected(
+          item.id,
+          payloadError.code === "forbidden" ? "forbidden" : "validation_failed",
+          payloadError.message,
+        );
+        continue;
       }
 
-      throw err;
+      try {
+        const { deduped, committedEvent } = await store.commitOrGetExisting({
+          ...normalizedItem,
+          now: clock.now(),
+        });
+        results.push({
+          id: committedEvent.id,
+          status: "committed",
+          committedId: committedEvent.committedId,
+          created: committedEvent.created,
+        });
+        committedEvents.push(committedEvent);
+        log({
+          event: "submit_committed",
+          connectionId: session.transport.connectionId,
+          id: committedEvent.id,
+          committedId: committedEvent.committedId,
+          clientId: committedEvent.meta?.clientId,
+          deduped,
+          msgId: context.msgId,
+        });
+      } catch (err) {
+        const code =
+          isObject(err) && typeof err.code === "string" ? err.code : null;
+        if (code === "validation_failed" || code === "forbidden") {
+          const payloadError = toErrorPayload(
+            err,
+            "validation_failed",
+            "submit validation failed",
+          );
+          pushRejected(
+            item.id,
+            payloadError.code === "forbidden" ? "forbidden" : "validation_failed",
+            payloadError.message,
+          );
+          continue;
+        }
+
+        throw err;
+      }
+    }
+
+    await sendMessage(
+      session.transport,
+      "submit_events_result",
+      {
+        results,
+      },
+      { msgId: context.msgId },
+    );
+
+    for (const committedEvent of committedEvents) {
+      await broadcastCommitted({
+        originConnectionId: session.transport.connectionId,
+        committedEvent,
+      });
     }
   };
 
@@ -961,31 +990,38 @@ export const createSyncServer = ({
         rateWindowStartedAt: 0,
         rateWindowCount: 0,
       };
+      /** @type {Promise<void>} */
+      let receiveQueue = Promise.resolve();
       sessions.set(transport.connectionId, session);
 
       return {
         receive: async (message) => {
-          const inboundMsgId =
-            isObject(message) && typeof message.msgId === "string"
-              ? message.msgId
-              : undefined;
-          try {
-            await handleMessage(session, message);
-          } catch {
-            await sendError(
-              session.transport,
-              "server_error",
-              "Unexpected server error",
-              {},
-              { msgId: inboundMsgId },
-            );
-            log({
-              event: "server_error",
-              connectionId: session.transport.connectionId,
-              msgId: inboundMsgId,
+          receiveQueue = receiveQueue
+            .catch(() => {})
+            .then(async () => {
+              const inboundMsgId =
+                isObject(message) && typeof message.msgId === "string"
+                  ? message.msgId
+                  : undefined;
+              try {
+                await handleMessage(session, message);
+              } catch {
+                await sendError(
+                  session.transport,
+                  "server_error",
+                  "Unexpected server error",
+                  {},
+                  { msgId: inboundMsgId },
+                );
+                log({
+                  event: "server_error",
+                  connectionId: session.transport.connectionId,
+                  msgId: inboundMsgId,
+                });
+                await closeSession(session.transport.connectionId, "server_error");
+              }
             });
-            await closeSession(session.transport.connectionId, "server_error");
-          }
+          return receiveQueue;
         },
         close: async (reason = "closed") => {
           await closeSession(session.transport.connectionId, reason);

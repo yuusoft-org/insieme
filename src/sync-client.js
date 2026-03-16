@@ -51,6 +51,10 @@ import {
  *     maxAttempts?: number,
  *     handshakeTimeoutMs?: number,
  *   },
+ *   submitBatch?: {
+ *     maxEvents?: number,
+ *     maxBytes?: number,
+ *   },
  *   sleep?: (ms: number) => Promise<void>,
  * }} deps
  */
@@ -67,8 +71,20 @@ export const createSyncClient = ({
   onEvent = () => {},
   logger = () => {},
   reconnect = {},
+  submitBatch = {},
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 }) => {
+  const DEFAULT_MAX_BATCH_EVENTS = 50;
+  const DEFAULT_MAX_BATCH_BYTES = 64 * 1024;
+  const encoder = new TextEncoder();
+  const toPositiveIntOr = (value, fallback) =>
+    Number.isInteger(value) && value > 0 ? value : fallback;
+
+  const batching = {
+    maxEvents: toPositiveIntOr(submitBatch.maxEvents, DEFAULT_MAX_BATCH_EVENTS),
+    maxBytes: toPositiveIntOr(submitBatch.maxBytes, DEFAULT_MAX_BATCH_BYTES),
+  };
+
   const isTransportDisconnectedError = (error) => {
     const code = isObject(error) ? error.code : null;
     if (code === "transport_disconnected") return true;
@@ -126,6 +142,8 @@ export const createSyncClient = ({
   let reconnectInFlight = false;
   let reconnectAttempts = 0;
   let connectedServerLastCommittedId = null;
+  /** @type {null|{ msgId: string, draftIds: string[] }} */
+  let submitBatchInFlight = null;
   /** @type {null|(() => void)} */
   let unsubscribeTransport = null;
   /** @type {Promise<void>} */
@@ -154,6 +172,59 @@ export const createSyncClient = ({
       payload,
     });
     return outboundMsgId;
+  };
+
+  const toSubmitEnvelopeItem = (draft) => ({
+    id: draft.id,
+    partitions: draft.partitions,
+    projectId: draft.projectId,
+    userId: draft.userId,
+    type: draft.type,
+    payload: draft.payload,
+    meta: draft.meta,
+  });
+
+  const getApproxSubmitEnvelopeBytes = (events) => {
+    try {
+      return encoder.encode(
+        JSON.stringify({
+          type: "submit_events",
+          protocolVersion: "1.0",
+          msgId: "batch-preview",
+          timestamp: now(),
+          payload: { events },
+        }),
+      ).length;
+    } catch {
+      return Number.POSITIVE_INFINITY;
+    }
+  };
+
+  const buildDraftBatch = (drafts) => {
+    /** @type {SubmitItem[]} */
+    const selectedDrafts = [];
+    /** @type {object[]} */
+    const events = [];
+
+    for (const draft of drafts) {
+      const nextEvent = toSubmitEnvelopeItem(draft);
+      const nextEvents = [...events, nextEvent];
+      const exceedsCount = nextEvents.length > batching.maxEvents;
+      const exceedsBytes =
+        getApproxSubmitEnvelopeBytes(nextEvents) > batching.maxBytes;
+
+      if (events.length > 0 && (exceedsCount || exceedsBytes)) {
+        break;
+      }
+
+      selectedDrafts.push(draft);
+      events.push(nextEvent);
+    }
+
+    return {
+      selectedDrafts,
+      events,
+    };
   };
 
   const waitForConnected = (timeoutMs) => {
@@ -273,6 +344,7 @@ export const createSyncClient = ({
     syncInFlight = false;
     connected = false;
     connectedServerLastCommittedId = null;
+    submitBatchInFlight = null;
     settleConnectWaiters(false, new Error(message));
     try {
       await transport.disconnect();
@@ -319,46 +391,51 @@ export const createSyncClient = ({
   };
 
   const flushDraftQueue = async () => {
-    if (!connected || syncInFlight || stopped) return;
+    if (!connected || syncInFlight || stopped || submitBatchInFlight) return;
 
     const drafts = await store.loadDraftsOrdered();
     log({
       event: "flush_drafts",
       draftCount: drafts.length,
     });
-    for (const draft of drafts) {
-      try {
-        const outboundMsgId = await send("submit_events", {
-          events: [
-            {
-              id: draft.id,
-              partitions: draft.partitions,
-              projectId: draft.projectId,
-              userId: draft.userId,
-              type: draft.type,
-              payload: draft.payload,
-              meta: draft.meta,
-            },
-          ],
-        });
-        log({
-          event: "submit_sent",
-          id: draft.id,
-          msgId: outboundMsgId,
-        });
-      } catch (error) {
-        const disconnected = isTransportDisconnectedError(error);
-        await handleTransportFailure({
-          code: disconnected
-            ? "transport_disconnected"
-            : "transport_send_failed",
-          message:
-            error instanceof Error ? error.message : "Transport send failed",
-          reconnectAllowed: reconnectPolicy.enabled,
-          emitError: true,
-        });
-        return;
-      }
+    if (drafts.length === 0) return;
+
+    const { selectedDrafts, events } = buildDraftBatch(drafts);
+    if (selectedDrafts.length === 0) return;
+
+    const outboundMsgId = msgId();
+    submitBatchInFlight = {
+      msgId: outboundMsgId,
+      draftIds: selectedDrafts.map((draft) => draft.id),
+    };
+
+    try {
+      await send(
+        "submit_events",
+        {
+          events,
+        },
+        { msgId: outboundMsgId },
+      );
+      log({
+        event: "submit_sent",
+        id: selectedDrafts.length === 1 ? selectedDrafts[0].id : undefined,
+        draftIds: selectedDrafts.map((draft) => draft.id),
+        batchSize: selectedDrafts.length,
+        msgId: outboundMsgId,
+      });
+    } catch (error) {
+      submitBatchInFlight = null;
+      const disconnected = isTransportDisconnectedError(error);
+      await handleTransportFailure({
+        code: disconnected
+          ? "transport_disconnected"
+          : "transport_send_failed",
+        message:
+          error instanceof Error ? error.message : "Transport send failed",
+        reconnectAllowed: reconnectPolicy.enabled,
+        emitError: true,
+      });
     }
   };
 
@@ -409,6 +486,20 @@ export const createSyncClient = ({
   };
 
   const onSubmitResult = async (payload, messageContext = {}) => {
+    const pendingMsgId = submitBatchInFlight?.msgId;
+    if (
+      submitBatchInFlight &&
+      messageContext.msgId &&
+      pendingMsgId &&
+      messageContext.msgId !== pendingMsgId
+    ) {
+      log({
+        event: "submit_result_msgid_mismatch",
+        expectedMsgId: pendingMsgId,
+        actualMsgId: messageContext.msgId,
+      });
+    }
+
     for (const result of payload.results || []) {
       await store.applySubmitResult({ result });
 
@@ -420,7 +511,7 @@ export const createSyncClient = ({
           msgId: messageContext.msgId,
         });
         emit("committed", result);
-      } else {
+      } else if (result.status === "rejected") {
         log({
           event: "submit_rejected",
           id: result.id,
@@ -428,8 +519,20 @@ export const createSyncClient = ({
           msgId: messageContext.msgId,
         });
         emit("rejected", result);
+      } else if (result.status === "not_processed") {
+        log({
+          event: "submit_not_processed",
+          id: result.id,
+          reason: result.reason,
+          blockedById: result.blockedById,
+          msgId: messageContext.msgId,
+        });
+        emit("not_processed", result);
       }
     }
+
+    submitBatchInFlight = null;
+    await flushDraftQueue();
   };
 
   const onSyncResponse = async (payload, messageContext = {}) => {
@@ -573,6 +676,53 @@ export const createSyncClient = ({
     }
   };
 
+  const submitEvents = async (inputs) => {
+    if (!Array.isArray(inputs) || inputs.length === 0) {
+      throw new Error("submitEvents requires at least one item");
+    }
+
+    const seenIds = new Set();
+    const drafts = inputs.map((input) => ({
+      ...normalizeSubmitEventInput(input, {
+        defaultId: uuid(),
+        defaultClientId: clientId,
+        defaultClientTs: now(),
+      }),
+      createdAt: now(),
+    }));
+
+    for (const draft of drafts) {
+      if (!isNonEmptyString(draft.id)) {
+        throw new Error("submitEvents requires each item to have a non-empty id");
+      }
+      if (seenIds.has(draft.id)) {
+        throw new Error(`submitEvents duplicate id: ${draft.id}`);
+      }
+      seenIds.add(draft.id);
+      if (!Array.isArray(draft.partitions) || draft.partitions.length === 0) {
+        throw new Error("submitEvents requires partitions");
+      }
+      if (!isNonEmptyString(draft.type)) {
+        throw new Error("submitEvents requires type");
+      }
+      if (!isObject(draft.payload)) {
+        throw new Error("submitEvents requires payload object");
+      }
+      validateLocalEvent(draft);
+    }
+
+    for (const draft of drafts) {
+      await store.insertDraft(draft);
+      log({
+        event: "draft_inserted",
+        id: draft.id,
+      });
+    }
+
+    await flushDraftQueue();
+    return drafts.map((draft) => draft.id);
+  };
+
   return {
     start: async () => {
       if (started) return;
@@ -617,6 +767,7 @@ export const createSyncClient = ({
       await transport.disconnect();
       connected = false;
       connectedServerLastCommittedId = null;
+      submitBatchInFlight = null;
       syncInFlight = false;
       reconnectInFlight = false;
       reconnectAttempts = 0;
@@ -630,71 +781,11 @@ export const createSyncClient = ({
       await syncFromCursor(options.sinceCommittedId);
     },
 
+    submitEvents,
+
     submitEvent: async (input) => {
-      const draft = {
-        ...normalizeSubmitEventInput(input, {
-          defaultId: uuid(),
-          defaultClientId: clientId,
-          defaultClientTs: now(),
-        }),
-        createdAt: now(),
-      };
-
-      if (!isNonEmptyString(draft.id)) {
-        throw new Error("submitEvent requires a non-empty id");
-      }
-      if (!Array.isArray(draft.partitions) || draft.partitions.length === 0) {
-        throw new Error("submitEvent requires partitions");
-      }
-      if (!isNonEmptyString(draft.type)) {
-        throw new Error("submitEvent requires type");
-      }
-      if (!isObject(draft.payload)) {
-        throw new Error("submitEvent requires payload object");
-      }
-
-      validateLocalEvent(draft);
-      await store.insertDraft(draft);
-      log({
-        event: "draft_inserted",
-        id: draft.id,
-      });
-
-      if (connected && !syncInFlight) {
-        try {
-          const outboundMsgId = await send("submit_events", {
-            events: [
-              {
-                id: draft.id,
-                partitions: draft.partitions,
-                projectId: draft.projectId,
-                userId: draft.userId,
-                type: draft.type,
-                payload: draft.payload,
-                meta: draft.meta,
-              },
-            ],
-          });
-          log({
-            event: "submit_sent",
-            id: draft.id,
-            msgId: outboundMsgId,
-          });
-        } catch (error) {
-          const disconnected = isTransportDisconnectedError(error);
-          await handleTransportFailure({
-            code: disconnected
-              ? "transport_disconnected"
-              : "transport_send_failed",
-            message:
-              error instanceof Error ? error.message : "Transport send failed",
-            reconnectAllowed: reconnectPolicy.enabled,
-            emitError: true,
-          });
-        }
-      }
-
-      return draft.id;
+      const [draftId] = await submitEvents([input]);
+      return draftId;
     },
 
     syncNow: async (options = {}) => {

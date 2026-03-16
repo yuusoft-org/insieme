@@ -393,9 +393,14 @@ export const createSqliteClientStore = (
             committedEvent = nextCommittedEvent;
           }
         }
+
+        deleteDraftByIdStmt.run({ id: result.id });
+        return committedEvent;
       }
 
-      deleteDraftByIdStmt.run({ id: result.id });
+      if (result.status === "rejected") {
+        deleteDraftByIdStmt.run({ id: result.id });
+      }
       return committedEvent;
     });
 
