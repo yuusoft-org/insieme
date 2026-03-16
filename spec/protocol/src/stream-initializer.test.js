@@ -30,7 +30,12 @@ describe("src initializeStreamIfEmpty", () => {
 
     const result = await initializeStreamIfEmpty({
       syncClient,
-      seedEvents: [{ partitions: ["project:p1:story"], event: { type: "event", payload: {} } }],
+      seedEvents: [
+        {
+          partitions: ["project:p1:story"],
+          event: { type: "event", schemaVersion: 1, payload: {} },
+        },
+      ],
     });
 
     expect(result).toMatchObject({
@@ -50,7 +55,12 @@ describe("src initializeStreamIfEmpty", () => {
 
     const result = await initializeStreamIfEmpty({
       syncClient,
-      seedEvents: [{ partitions: ["project:p1:story"], event: { type: "event", payload: {} } }],
+      seedEvents: [
+        {
+          partitions: ["project:p1:story"],
+          event: { type: "event", schemaVersion: 1, payload: {} },
+        },
+      ],
     });
 
     expect(result).toEqual({
@@ -93,7 +103,10 @@ describe("src initializeStreamIfEmpty", () => {
     const result = await initializeStreamIfEmpty({
       syncClient,
       seedEvents: [
-        { partitions: ["project:p1:story"], event: { type: "event", payload: { a: 1 } } },
+        {
+          partitions: ["project:p1:story"],
+          event: { type: "event", schemaVersion: 1, payload: { a: 1 } },
+        },
       ],
     });
 
@@ -133,7 +146,7 @@ describe("src initializeStreamIfEmpty", () => {
       seedEvents: [
         {
           partitions: ["project:p1:story"],
-          event: { type: "event", payload: { a: 1 } },
+          event: { type: "event", schemaVersion: 1, payload: { a: 1 } },
         },
       ],
       logger,

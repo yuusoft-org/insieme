@@ -9,17 +9,17 @@ import { normalizeMeta } from "./event-record.js";
  * @param {number} [startCommittedId]
  */
 export const createInMemorySyncStore = (startCommittedId = 0) => {
-  /** @type {Map<string, { comparisonKey: string, committedEvent: { id: string, projectId?: string, userId?: string, partitions: string[], committedId: number, type: string, payload: object, meta: object, created: number } }>} */
+  /** @type {Map<string, { comparisonKey: string, committedEvent: { id: string, projectId?: string, userId?: string, partitions: string[], committedId: number, type: string, schemaVersion: number, payload: object, meta: object, created: number } }>} */
   const byId = new Map();
 
-  /** @type {{ id: string, projectId?: string, userId?: string, partitions: string[], committedId: number, type: string, payload: object, meta: object, created: number }[]} */
+  /** @type {{ id: string, projectId?: string, userId?: string, partitions: string[], committedId: number, type: string, schemaVersion: number, payload: object, meta: object, created: number }[]} */
   const committed = [];
 
   let nextCommittedId = startCommittedId + 1;
 
   return {
     /**
-     * @param {{ id: string, partitions: string[], projectId?: string, userId?: string, type: string, payload: object, meta: object, now: number }} input
+     * @param {{ id: string, partitions: string[], projectId?: string, userId?: string, type: string, schemaVersion: number, payload: object, meta: object, now: number }} input
      */
     commitOrGetExisting: async ({
       id,
@@ -27,6 +27,7 @@ export const createInMemorySyncStore = (startCommittedId = 0) => {
       projectId,
       userId,
       type,
+      schemaVersion,
       payload,
       meta,
       now,
@@ -38,6 +39,7 @@ export const createInMemorySyncStore = (startCommittedId = 0) => {
         projectId,
         userId,
         type,
+        schemaVersion,
         payload,
         meta: normalizedMeta,
       });
@@ -64,6 +66,7 @@ export const createInMemorySyncStore = (startCommittedId = 0) => {
         partitions: normalizedPartitions,
         committedId: nextCommittedId,
         type,
+        schemaVersion,
         payload: structuredClone(payload),
         meta: normalizedMeta,
         created: now,

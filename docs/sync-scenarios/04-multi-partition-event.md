@@ -30,6 +30,7 @@ payload:
       projectId: P1
       userId: U1
       type: explorer.folderCreated
+      schemaVersion: 1
       payload: { id: X, parentId: _root, index: 0 }
       meta:
         clientId: C1
@@ -44,4 +45,4 @@ payload:
 ## Assertions
 - C2 receives committed event in `P1` view.
 - C3 receives committed event in `P2` view.
-- Event identity (`id`, `committedId`) is identical across both partition views.
+- Event identity (`id`, `committedId`, `schemaVersion`) is identical across both partition views.

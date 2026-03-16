@@ -12,6 +12,7 @@ Ensure server rejects same `id` when canonical payload differs.
 ## Preconditions
 - Server already committed:
   - `id=evt-uuid-4`
+  - `schemaVersion=1`
   - payload A
   - `committedId=200`
 
@@ -30,6 +31,7 @@ payload:
       projectId: P1
       userId: U1
       type: explorer.folderCreated
+      schemaVersion: 1
       payload: { id: DIFFERENT, parentId: _root, index: 0 }
       meta:
         clientId: C1

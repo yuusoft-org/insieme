@@ -3,7 +3,7 @@
 Note: Envelope metadata (`msgId`, `timestamp`) is omitted when not central.
 
 ## Goal
-Ensure retry with same `id` and same payload is idempotent.
+Ensure retry with same `id`, same `schemaVersion`, and same payload is idempotent.
 
 ## Actors
 - C1
@@ -12,6 +12,7 @@ Ensure retry with same `id` and same payload is idempotent.
 ## Preconditions
 - Server already has committed event:
   - `id=evt-uuid-1`
+  - `schemaVersion=1`
   - `committedId=101`
 
 ## Steps
@@ -29,6 +30,7 @@ payload:
       projectId: P1
       userId: U1
       type: explorer.folderCreated
+      schemaVersion: 1
       payload: { id: A, parentId: _root, index: 0 }
       meta:
         clientId: C1

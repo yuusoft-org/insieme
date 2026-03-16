@@ -31,6 +31,7 @@ payload:
       projectId: P1
       userId: U1
       type: explorer.folderCreated
+      schemaVersion: 1
       payload: { id: A, parentId: _root, index: 0 }
       meta:
         clientId: C1
@@ -67,6 +68,7 @@ payload:
   projectId: P1
   userId: U1
   type: explorer.folderCreated
+  schemaVersion: 1
   payload: { id: A, parentId: _root, index: 0 }
   meta:
     clientId: C1

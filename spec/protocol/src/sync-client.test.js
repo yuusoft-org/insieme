@@ -178,6 +178,7 @@ describe("src createSyncClient", () => {
     const id = await client.submitEvent({
       partitions: ["P1"],
       type: "x",
+      schemaVersion: 1,
       payload: {},
     });
 
@@ -235,6 +236,7 @@ describe("src createSyncClient", () => {
     await client.submitEvent({
       partitions: ["P1"],
       type: "x",
+      schemaVersion: 1,
       payload: {},
     });
 
@@ -285,6 +287,7 @@ describe("src createSyncClient", () => {
       id: "evt-retry-1",
       partitions: ["P1"],
       type: "x",
+      schemaVersion: 1,
       payload: { a: 1 },
       meta: { clientId: "C1", clientTs: 1000 },
       createdAt: 1000,
@@ -322,6 +325,7 @@ describe("src createSyncClient", () => {
       id: "evt-serial-1",
       partitions: ["P1"],
       type: "x",
+      schemaVersion: 1,
       payload: { n: 1 },
       meta: { clientId: "C1", clientTs: 1000 },
       createdAt: 1000,
@@ -381,9 +385,9 @@ describe("src createSyncClient", () => {
     await tick();
 
     const ids = await client.submitEvents([
-      { id: "evt-b1", partitions: ["P1"], type: "x", payload: { n: 1 } },
-      { id: "evt-b2", partitions: ["P1"], type: "x", payload: { n: 2 } },
-      { id: "evt-b3", partitions: ["P1"], type: "x", payload: { n: 3 } },
+      { id: "evt-b1", partitions: ["P1"], type: "x", schemaVersion: 1, payload: { n: 1 } },
+      { id: "evt-b2", partitions: ["P1"], type: "x", schemaVersion: 1, payload: { n: 2 } },
+      { id: "evt-b3", partitions: ["P1"], type: "x", schemaVersion: 1, payload: { n: 3 } },
     ]);
 
     expect(ids).toEqual(["evt-b1", "evt-b2", "evt-b3"]);
@@ -438,9 +442,9 @@ describe("src createSyncClient", () => {
     await tick();
 
     await client.submitEvents([
-      { id: "evt-np-1", partitions: ["P1"], type: "x", payload: { n: 1 } },
-      { id: "evt-np-2", partitions: ["P1"], type: "x", payload: { n: 2 } },
-      { id: "evt-np-3", partitions: ["P1"], type: "x", payload: { n: 3 } },
+      { id: "evt-np-1", partitions: ["P1"], type: "x", schemaVersion: 1, payload: { n: 1 } },
+      { id: "evt-np-2", partitions: ["P1"], type: "x", schemaVersion: 1, payload: { n: 2 } },
+      { id: "evt-np-3", partitions: ["P1"], type: "x", schemaVersion: 1, payload: { n: 3 } },
     ]);
 
     let submits = transport.sent.filter((message) => message.type === "submit_events");
@@ -526,6 +530,7 @@ describe("src createSyncClient", () => {
       id: "evt-too-large-1",
       partitions: ["P1"],
       type: "x",
+      schemaVersion: 1,
       payload: { text: "x".repeat(512) },
       meta: { clientId: "C1", clientTs: 1000 },
       createdAt: 1000,
@@ -594,6 +599,7 @@ describe("src createSyncClient", () => {
       client.submitEvent({
         partitions: ["P1"],
         type: "legacy.action",
+        schemaVersion: 1,
         payload: { n: 1 },
       }),
     ).resolves.toBe("evt-local-1");
@@ -619,8 +625,20 @@ describe("src createSyncClient", () => {
 
     await expect(
       client.submitEvents([
-        { id: "evt-rollback-1", partitions: ["P1"], type: "x", payload: { n: 1 } },
-        { id: "evt-rollback-2", partitions: ["P1"], type: "x", payload: { n: 2 } },
+        {
+          id: "evt-rollback-1",
+          partitions: ["P1"],
+          type: "x",
+          schemaVersion: 1,
+          payload: { n: 1 },
+        },
+        {
+          id: "evt-rollback-2",
+          partitions: ["P1"],
+          type: "x",
+          schemaVersion: 1,
+          payload: { n: 2 },
+        },
       ]),
     ).rejects.toThrow("store write failed");
 
@@ -683,6 +701,7 @@ describe("src createSyncClient", () => {
     await client.submitEvent({
       partitions: ["P1"],
       type: "x",
+      schemaVersion: 1,
       payload: { n: 1 },
     });
 
@@ -696,6 +715,7 @@ describe("src createSyncClient", () => {
         id: "evt-local-1",
         partitions: ["P1"],
         type: "x",
+        schemaVersion: 1,
         payload: { n: 1 },
         meta: { clientId: "C1", clientTs: 1000 },
         createdAt: 1000,
@@ -839,6 +859,7 @@ describe("src createSyncClient", () => {
     await client.submitEvent({
       partitions: ["P1"],
       type: "x",
+      schemaVersion: 1,
       payload: { n: 1 },
     });
 
@@ -1022,6 +1043,7 @@ describe("src createSyncClient", () => {
     await client.submitEvent({
       partitions: ["P1"],
       type: "x",
+      schemaVersion: 1,
       payload: { n: 1 },
     });
 

@@ -28,6 +28,7 @@ const makeDraft = ({
   id = "evt-1",
   partitions = ["P1"],
   type = "x",
+  schemaVersion = 1,
   payload = { n: 1 },
   clientId = "C1",
   clientTs = 100,
@@ -36,6 +37,7 @@ const makeDraft = ({
   id,
   partitions,
   type,
+  schemaVersion,
   payload,
   meta: { clientId, clientTs },
   createdAt,
@@ -46,6 +48,7 @@ const makeCommitted = ({
   partitions = ["P1"],
   committedId = 1,
   type = "x",
+  schemaVersion = 1,
   payload = { n: 1 },
   clientId = "C1",
   clientTs = 10,
@@ -55,6 +58,7 @@ const makeCommitted = ({
   partitions,
   committedId,
   type,
+  schemaVersion,
   payload,
   meta: { clientId, clientTs },
   created,
@@ -68,7 +72,7 @@ describeSqlite("src createSqliteClientStore", () => {
     await store.init();
 
     const row = db._raw.prepare("PRAGMA user_version").get();
-    expect(row.user_version).toBe(1);
+    expect(row.user_version).toBe(2);
 
     db.close();
   });

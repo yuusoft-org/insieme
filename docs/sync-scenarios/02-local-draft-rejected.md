@@ -28,6 +28,7 @@ payload:
       projectId: P1
       userId: U1
       type: explorer.folderCreated
+      schemaVersion: 1
       payload: { id: A, parentId: does-not-exist, index: 0 }
       meta:
         clientId: C1

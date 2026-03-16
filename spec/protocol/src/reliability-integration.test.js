@@ -256,6 +256,7 @@ describe("src reliability integration", () => {
       node.client.submitEvent({
         partitions: ["P1"],
         type: "x",
+        schemaVersion: 1,
         payload: { ok: false },
       }),
     ).rejects.toThrow("local validation failed");
@@ -265,6 +266,7 @@ describe("src reliability integration", () => {
     await node.client.submitEvent({
       partitions: ["P1"],
       type: "x",
+      schemaVersion: 1,
       payload: { ok: true },
     });
     await tick();
@@ -281,6 +283,7 @@ describe("src reliability integration", () => {
       id: "evt-d1",
       partitions: ["P1"],
       type: "x",
+      schemaVersion: 1,
       payload: { n: 1 },
       meta: { clientId: "C1", clientTs: 1 },
       createdAt: 1,
@@ -289,6 +292,7 @@ describe("src reliability integration", () => {
       id: "evt-d2",
       partitions: ["P1"],
       type: "x",
+      schemaVersion: 1,
       payload: { n: 2 },
       meta: { clientId: "C1", clientTs: 2 },
       createdAt: 2,
@@ -297,6 +301,7 @@ describe("src reliability integration", () => {
       id: "evt-d3",
       partitions: ["P1"],
       type: "x",
+      schemaVersion: 1,
       payload: { n: 3 },
       meta: { clientId: "C1", clientTs: 3 },
       createdAt: 3,
@@ -341,6 +346,7 @@ describe("src reliability integration", () => {
       id: "evt-p2-1",
       partitions: ["P2"],
       type: "x",
+      schemaVersion: 1,
       payload: { n: 1 },
       meta: { clientId: "C2", clientTs: now() },
       now: now(),
@@ -349,6 +355,7 @@ describe("src reliability integration", () => {
       id: "evt-p1-1",
       partitions: ["P1"],
       type: "x",
+      schemaVersion: 1,
       payload: { n: 2 },
       meta: { clientId: "C2", clientTs: now() },
       now: now(),
@@ -357,6 +364,7 @@ describe("src reliability integration", () => {
       id: "evt-p2-2",
       partitions: ["P2"],
       type: "x",
+      schemaVersion: 1,
       payload: { n: 3 },
       meta: { clientId: "C2", clientTs: now() },
       now: now(),
@@ -433,6 +441,7 @@ describe("src reliability integration", () => {
     await node.client.submitEvent({
       partitions: ["P1"],
       type: "x",
+      schemaVersion: 1,
       payload: { n: 1 },
     });
     await tick();
@@ -465,6 +474,7 @@ describe("src reliability integration", () => {
     await node.client.submitEvent({
       partitions: ["P1"],
       type: "x",
+      schemaVersion: 1,
       payload: { n: 1 },
     });
     await tick();
@@ -501,11 +511,13 @@ describe("src reliability integration", () => {
         c1.client.submitEvent({
           partitions: ["P1"],
           type: "x",
+          schemaVersion: 1,
           payload: { v: "U1" },
         }),
         c2.client.submitEvent({
           partitions: ["P1"],
           type: "x",
+          schemaVersion: 1,
           payload: { v: "U2" },
         }),
       ]);
@@ -546,6 +558,7 @@ describe("src reliability integration", () => {
       id: "offline-1",
       partitions: ["P1"],
       type: "x",
+      schemaVersion: 1,
       payload: { n: 1 },
       meta: { clientId: "C1", clientTs: 1 },
       createdAt: 1,
@@ -554,6 +567,7 @@ describe("src reliability integration", () => {
       id: "offline-2",
       partitions: ["P1"],
       type: "x",
+      schemaVersion: 1,
       payload: { n: 2 },
       meta: { clientId: "C1", clientTs: 2 },
       createdAt: 2,
@@ -562,6 +576,7 @@ describe("src reliability integration", () => {
       id: "offline-3",
       partitions: ["P1"],
       type: "x",
+      schemaVersion: 1,
       payload: { n: 3 },
       meta: { clientId: "C1", clientTs: 3 },
       createdAt: 3,
@@ -636,6 +651,7 @@ describe("src reliability integration", () => {
             partitions: ["P1"],
             event: {
               type: "event",
+              schemaVersion: 1,
               payload: { schema: "storm", data: { seed, step, index } },
             },
           });

@@ -39,6 +39,7 @@ payload:
       id: evt-121
       partitions: [P1]
       type: explorer.folderCreated
+      schemaVersion: 1
       payload: { id: A }
       meta: { clientId: C2, clientTs: 1738451201000 }
       created: 1738451202000
@@ -46,6 +47,7 @@ payload:
       id: evt-122
       partitions: [P1]
       type: explorer.folderCreated
+      schemaVersion: 1
       payload: { id: B }
       meta: { clientId: C2, clientTs: 1738451203000 }
       created: 1738451204000

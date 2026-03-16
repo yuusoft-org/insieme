@@ -150,6 +150,7 @@ describe("core sync client scenario mapping", () => {
     const id = await client.submitEvent({
       partitions: ["P1"],
       type: "x",
+      schemaVersion: 1,
       payload: {},
     });
 
@@ -207,6 +208,7 @@ describe("core sync client scenario mapping", () => {
     await client.submitEvent({
       partitions: ["P1"],
       type: "x",
+      schemaVersion: 1,
       payload: {},
     });
 
@@ -257,6 +259,7 @@ describe("core sync client scenario mapping", () => {
       id: "evt-retry-1",
       partitions: ["P1"],
       type: "x",
+      schemaVersion: 1,
       payload: { a: 1 },
       meta: { clientId: "C1", clientTs: 1000 },
       createdAt: 1000,

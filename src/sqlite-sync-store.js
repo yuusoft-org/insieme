@@ -5,7 +5,7 @@ import {
 } from "./canonicalize.js";
 import { normalizeMeta } from "./event-record.js";
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 const DEFAULT_SCAN_CHUNK_SIZE = 512;
 
 const createTransaction = (db, fn) => {
@@ -33,6 +33,11 @@ const createTransaction = (db, fn) => {
 const parseIntSafe = (value, fallback = 0) => {
   const parsed = Number.parseInt(value, 10);
   return Number.isNaN(parsed) ? fallback : parsed;
+};
+
+const tableHasColumn = (db, tableName, columnName) => {
+  const rows = db.prepare(`PRAGMA table_info(${tableName})`).all();
+  return rows.some((row) => row.name === columnName);
 };
 
 export const createSqliteSyncStore = (
@@ -88,11 +93,19 @@ export const createSqliteSyncStore = (
           user_id TEXT,
           partitions TEXT NOT NULL,
           type TEXT NOT NULL,
+          schema_version INTEGER NOT NULL,
           payload TEXT NOT NULL,
           meta TEXT NOT NULL,
           created INTEGER NOT NULL
         );
       `);
+    },
+    () => {
+      if (!tableHasColumn(db, "committed_events", "schema_version")) {
+        throw new Error(
+          "Sync store schemaVersion rollout requires explicit backfill or reset for legacy data",
+        );
+      }
     },
   ];
 
@@ -126,6 +139,7 @@ export const createSqliteSyncStore = (
     partitions: JSON.parse(row.partitions),
     committedId: row.committed_id,
     type: row.type,
+    schemaVersion: parseIntSafe(row.schema_version, 0),
     payload: JSON.parse(row.payload),
     meta: normalizeMeta(JSON.parse(row.meta)),
     created: row.created,
@@ -137,6 +151,7 @@ export const createSqliteSyncStore = (
       projectId: event.projectId,
       userId: event.userId,
       type: event.type,
+      schemaVersion: event.schemaVersion,
       payload: event.payload,
       meta: event.meta,
     });
@@ -150,6 +165,7 @@ export const createSqliteSyncStore = (
         user_id,
         partitions,
         type,
+        schema_version,
         payload,
         meta,
         created
@@ -164,6 +180,7 @@ export const createSqliteSyncStore = (
         user_id,
         partitions,
         type,
+        schema_version,
         payload,
         meta,
         created
@@ -173,6 +190,7 @@ export const createSqliteSyncStore = (
         @user_id,
         @partitions,
         @type,
+        @schema_version,
         @payload,
         @meta,
         @created
@@ -187,6 +205,7 @@ export const createSqliteSyncStore = (
         user_id,
         partitions,
         type,
+        schema_version,
         payload,
         meta,
         created
@@ -221,6 +240,7 @@ export const createSqliteSyncStore = (
         projectId,
         userId,
         type,
+        schemaVersion,
         payload,
         meta,
         now,
@@ -232,6 +252,7 @@ export const createSqliteSyncStore = (
           projectId,
           userId,
           type,
+          schemaVersion,
           payload,
           meta: normalizedMeta,
         });
@@ -257,6 +278,7 @@ export const createSqliteSyncStore = (
           user_id: userId ?? null,
           partitions: JSON.stringify(partitions),
           type,
+          schema_version: schemaVersion,
           payload: JSON.stringify(payload),
           meta: JSON.stringify(normalizedMeta),
           created: now,
@@ -294,6 +316,7 @@ export const createSqliteSyncStore = (
       projectId,
       userId,
       type,
+      schemaVersion,
       payload,
       meta,
       now,
@@ -307,6 +330,7 @@ export const createSqliteSyncStore = (
         projectId,
         userId,
         type,
+        schemaVersion,
         payload,
         meta,
         now,

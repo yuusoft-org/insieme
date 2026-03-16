@@ -105,6 +105,7 @@ describe("src createCommandSyncSession", () => {
             partitions: ["project:p1:story"],
             committedId: 1,
             type: "scene.create",
+            schemaVersion: 1,
             payload: {
               sceneId: "s1",
             },
@@ -179,6 +180,7 @@ describe("src createCommandSyncSession", () => {
         actor: { userId: "u1", clientId: "c1" },
         projectId: "p1",
         clientTs: 5,
+        schemaVersion: 1,
         partitions: ["project:p1:story"],
       },
     ]);
@@ -192,6 +194,7 @@ describe("src createCommandSyncSession", () => {
       userId: "u1",
       type: "scene.create",
       payload: { sceneId: "s1" },
+      schemaVersion: 1,
       meta: { foo: "bar", clientId: "c1", clientTs: 5 },
     });
   });
@@ -233,6 +236,7 @@ describe("src createCommandSyncSession", () => {
         actor: { userId: "u1", clientId: "c1" },
         projectId: "p1",
         clientTs: 5,
+        schemaVersion: 1,
         partitions: ["project:p1:story"],
       },
       {
@@ -242,6 +246,7 @@ describe("src createCommandSyncSession", () => {
         actor: { userId: "u1", clientId: "c1" },
         projectId: "p1",
         clientTs: 6,
+        schemaVersion: 1,
         partitions: ["project:p1:story"],
       },
     ]);
@@ -310,6 +315,7 @@ describe("src createCommandSyncSession", () => {
       projectId: "p1",
       userId: "u1",
       type: "scene.create",
+      schemaVersion: 1,
       payload: { sceneId: "s2" },
       meta: { clientId: "c1", clientTs: 6 },
     });

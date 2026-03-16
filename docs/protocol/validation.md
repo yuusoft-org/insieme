@@ -16,7 +16,7 @@ For each `submit_events` request:
 2. `payload.events` has at least one item.
 3. Server validates and processes items in request order.
 4. Each item `id` is present and well-formed for your UUID policy.
-5. Each item `type` is a non-empty string and `payload` is an object.
+5. Each item `type` is a non-empty string, `schemaVersion` is a positive integer, and `payload` is an object.
 6. Each item `partitions` is valid and authorized.
 7. Each item `meta.clientId` and `meta.clientTs` are valid, and `meta.clientId` matches the authenticated client.
 8. If an item `userId` is present, validate it against the authenticated user when your auth layer exposes one.
@@ -40,5 +40,5 @@ If any check fails, server **MUST** return outcomes using:
 The following are intentionally outside protocol core and should live in app-specific docs/modules:
 
 - profile negotiation rules,
-- model-version contract details,
+- schema-version contract details,
 - custom semantic invariants beyond base protocol.

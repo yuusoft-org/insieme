@@ -6,7 +6,7 @@ import {
 import { normalizeMeta } from "./event-record.js";
 import { createLibsqlDriver, parseIntSafe } from "./libsql-driver.js";
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 const DEFAULT_SCAN_CHUNK_SIZE = 512;
 
 const parseCommittedRow = (row) => ({
@@ -16,6 +16,7 @@ const parseCommittedRow = (row) => ({
   partitions: JSON.parse(row.partitions),
   committedId: parseIntSafe(row.committed_id, 0),
   type: row.type,
+  schemaVersion: parseIntSafe(row.schema_version, 0),
   payload: JSON.parse(row.payload),
   meta: normalizeMeta(JSON.parse(row.meta)),
   created: parseIntSafe(row.created, 0),
@@ -27,9 +28,15 @@ const toComparisonKey = (event) =>
     projectId: event.projectId,
     userId: event.userId,
     type: event.type,
+    schemaVersion: event.schemaVersion,
     payload: event.payload,
     meta: event.meta,
   });
+
+const tableHasColumn = async (db, tableName, columnName) => {
+  const rows = await db.queryAll(`PRAGMA table_info(${tableName})`);
+  return rows.some((row) => row.name === columnName);
+};
 
 export const createLibsqlSyncStore = (
   client,
@@ -82,11 +89,18 @@ export const createLibsqlSyncStore = (
             user_id TEXT,
             partitions TEXT NOT NULL,
             type TEXT NOT NULL,
+            schema_version INTEGER NOT NULL,
             payload TEXT NOT NULL,
             meta TEXT NOT NULL,
             created INTEGER NOT NULL
           );
         `);
+      } else if (next === 2) {
+        if (!(await tableHasColumn(db, "committed_events", "schema_version"))) {
+          throw new Error(
+            "Sync store schemaVersion rollout requires explicit backfill or reset for legacy data",
+          );
+        }
       } else {
         throw new Error(`Missing migration for schema version ${next}`);
       }
@@ -105,6 +119,7 @@ export const createLibsqlSyncStore = (
           user_id,
           partitions,
           type,
+          schema_version,
           payload,
           meta,
           created
@@ -170,6 +185,7 @@ export const createLibsqlSyncStore = (
       projectId,
       userId,
       type,
+      schemaVersion,
       payload,
       meta,
       now,
@@ -182,6 +198,7 @@ export const createLibsqlSyncStore = (
         projectId,
         userId,
         type,
+        schemaVersion,
         payload,
         meta: normalizedMeta,
       });
@@ -194,10 +211,11 @@ export const createLibsqlSyncStore = (
             user_id,
             partitions,
             type,
+            schema_version,
             payload,
             meta,
             created
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO NOTHING
         `,
         [
@@ -206,6 +224,7 @@ export const createLibsqlSyncStore = (
           userId ?? null,
           JSON.stringify(normalizedPartitions),
           type,
+          schemaVersion,
           JSON.stringify(payload),
           JSON.stringify(normalizedMeta),
           now,
@@ -272,6 +291,7 @@ export const createLibsqlSyncStore = (
               user_id,
               partitions,
               type,
+              schema_version,
               payload,
               meta,
               created

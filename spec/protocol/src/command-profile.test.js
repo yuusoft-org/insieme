@@ -20,13 +20,14 @@ describe("src command-profile", () => {
       actor: { userId: "u1", clientId: "c1" },
       projectId: "proj-1",
       clientTs: 1000,
-      commandVersion: 2,
+      schemaVersion: 2,
     };
 
     expect(commandToSyncEvent(command)).toEqual({
       projectId: "proj-1",
       userId: "u1",
       type: "scene.create",
+      schemaVersion: 2,
       payload: { sceneId: "scene-1", name: "Intro" },
       meta: { foo: "bar", clientId: "c1", clientTs: 1000 },
     });
@@ -41,6 +42,7 @@ describe("src command-profile", () => {
         sceneId: "scene-1",
       },
       userId: "u1",
+      schemaVersion: 2,
       meta: {
         clientId: "c1",
         clientTs: 1234,
@@ -56,6 +58,7 @@ describe("src command-profile", () => {
       partition: "project:proj-1:story",
       partitions: ["project:proj-1:story", "project:proj-1:settings"],
       clientTs: 1234,
+      schemaVersion: 2,
       meta: {
         clientId: "c1",
         clientTs: 1234,
@@ -70,6 +73,7 @@ describe("src command-profile", () => {
       id: "cmd-2",
       partitions: ["project:proj-1:story"],
       type: "scene.update",
+      schemaVersion: 1,
       payload: { sceneId: "scene-1" },
       meta: {
         clientId: "c1",
@@ -96,6 +100,7 @@ describe("src command-profile", () => {
         "project:proj-1:story",
       ],
       type: "project.created",
+      schemaVersion: 1,
       payload: { state: { project: { id: "proj-1" } } },
       userId: "u1",
       meta: {
@@ -110,6 +115,7 @@ describe("src command-profile", () => {
       projectId: "proj-1",
       userId: "u1",
       partitions: ["project:proj-1:settings", "project:proj-1:story"],
+      schemaVersion: 1,
       meta: {
         clientId: "c1",
         clientTs: 1000,
@@ -122,6 +128,7 @@ describe("src command-profile", () => {
       validateCommandSubmitItem({
         partitions: ["project:proj-1:story"],
         type: "",
+        schemaVersion: 1,
         payload: {},
         meta: {
           clientId: "c1",

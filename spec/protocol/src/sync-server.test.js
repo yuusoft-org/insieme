@@ -66,6 +66,7 @@ const toSubmitItem = ({
   id,
   partitions = ["P1"],
   event = { type: "x", payload: {} },
+  schemaVersion = 1,
   projectId,
   userId,
   meta,
@@ -75,6 +76,7 @@ const toSubmitItem = ({
   projectId,
   userId,
   type: event.type,
+  schemaVersion,
   payload: event.payload,
   meta: {
     clientId: "C1",
