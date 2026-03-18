@@ -3,6 +3,10 @@ export { createOfflineTransport } from "./offline-transport.js";
 export { createBrowserWebSocketTransport } from "./browser-websocket-transport.js";
 export { createInMemoryClientStore } from "./in-memory-client-store.js";
 export {
+  createLibsqlClientStore,
+  createLibsqlStore,
+} from "./libsql-client-store.js";
+export {
   createIndexedDbClientStore,
   createIndexedDBClientStore,
 } from "./indexeddb-client-store.js";

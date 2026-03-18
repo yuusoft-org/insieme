@@ -7,6 +7,7 @@ import { createSyncServer } from "../../../src/sync-server.js";
 import { createReducer } from "../../../src/reducer.js";
 import { createMaterializedViewRuntime } from "../../../src/materialized-view-runtime.js";
 import { createIndexedDbClientStore } from "../../../src/indexeddb-client-store.js";
+import { createLibsqlClientStore } from "../../../src/libsql-client-store.js";
 
 describe("public entrypoints", () => {
   it("exports client helpers from the client entrypoint", () => {
@@ -16,6 +17,7 @@ describe("public entrypoints", () => {
       createMaterializedViewRuntime,
     );
     expect(client.createIndexedDbClientStore).toBe(createIndexedDbClientStore);
+    expect(client.createLibsqlClientStore).toBe(createLibsqlClientStore);
   });
 
   it("re-exports the client surface from the browser entrypoint", () => {
@@ -24,6 +26,7 @@ describe("public entrypoints", () => {
     expect(browser.createMaterializedViewRuntime).toBe(
       client.createMaterializedViewRuntime,
     );
+    expect(browser.createLibsqlClientStore).toBe(client.createLibsqlClientStore);
   });
 
   it("exports server and shared helpers from the server entrypoint", () => {
