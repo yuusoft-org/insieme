@@ -261,6 +261,33 @@ export function createSyncServer(deps) {}
  */
 ```
 
+### WebSocket Server Options
+
+When integrating with `ws`, the server entrypoint also exports
+`createWsServerOptions(options?)`.
+
+```js
+createWsServerOptions({
+  maxPayload: 256 * 1024,
+  perMessageDeflate: {
+    threshold: 512,
+  },
+});
+```
+
+Behavior:
+
+- defaults `noServer` to `true`
+- defaults `perMessageDeflate` to:
+  - `threshold: 256`
+  - `concurrencyLimit: 10`
+  - `zlibDeflateOptions.level: 3`
+  - `zlibDeflateOptions.memLevel: 7`
+  - `zlibInflateOptions.chunkSize: 10 * 1024`
+- deep-merges nested `zlibDeflateOptions` and `zlibInflateOptions`
+- supports `perMessageDeflate: false` to disable compression
+- supports `perMessageDeflate: true` to use raw `ws` defaults
+
 ## Conformance Notes
 
 - Client submit path may send one or more items in one `submit_events` request.

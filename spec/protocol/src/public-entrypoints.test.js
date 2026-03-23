@@ -8,6 +8,10 @@ import { createReducer } from "../../../src/reducer.js";
 import { createMaterializedViewRuntime } from "../../../src/materialized-view-runtime.js";
 import { createIndexedDbClientStore } from "../../../src/indexeddb-client-store.js";
 import { createLibsqlClientStore } from "../../../src/libsql-client-store.js";
+import {
+  DEFAULT_WS_SERVER_OPTIONS,
+  createWsServerOptions,
+} from "../../../src/ws-server-options.js";
 
 describe("public entrypoints", () => {
   it("exports client helpers from the client entrypoint", () => {
@@ -33,5 +37,7 @@ describe("public entrypoints", () => {
     expect(server.createSyncServer).toBe(createSyncServer);
     expect(server.createReducer).toBe(createReducer);
     expect(server.createIndexedDbClientStore).toBe(createIndexedDbClientStore);
+    expect(server.createWsServerOptions).toBe(createWsServerOptions);
+    expect(server.DEFAULT_WS_SERVER_OPTIONS).toBe(DEFAULT_WS_SERVER_OPTIONS);
   });
 });

@@ -5,6 +5,11 @@ export { createBrowserWebSocketTransport } from "./browser-websocket-transport.j
 export { attachWsConnection } from "./ws-server-bridge.js";
 export { createWsServerRuntime } from "./ws-server-runtime.js";
 export {
+  DEFAULT_WS_SERVER_OPTIONS,
+  DEFAULT_WS_SERVER_PER_MESSAGE_DEFLATE,
+  createWsServerOptions,
+} from "./ws-server-options.js";
+export {
   commandToSyncEvent,
   committedSyncEventToCommand,
   validateCommandSubmitItem,

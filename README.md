@@ -27,6 +27,8 @@ import {
 } from "insieme";
 ```
 
+Server-specific WebSocket helpers are exported from `insieme/server`.
+
 - `createSyncClient`: client runtime (`connect -> sync -> submit/flush`).
 - `createSyncServer`: server session/protocol runtime.
 - `createOfflineTransport`: local transport for fully offline mode, with optional later online attachment.
@@ -151,6 +153,39 @@ Operational guidance:
 
 Server runtime also supports optional inbound guardrails via `limits` (message rate and envelope size caps) for defense-in-depth reliability.
 For deployments that can re-check token/session validity on every active request, provide `auth.validateSession`.
+
+## WebSocket Server Options
+
+When you create the `ws` server yourself, import the server entrypoint and use
+`createWsServerOptions()` to get Insieme's default compression settings with
+app-level overrides.
+
+```js
+import { WebSocketServer } from "ws";
+import { createSyncServer, createWsServerOptions } from "insieme/server";
+
+const syncServer = createSyncServer(/* ... */);
+
+const wsServer = new WebSocketServer(
+  createWsServerOptions({
+    maxPayload: 256 * 1024,
+    perMessageDeflate: {
+      threshold: 512,
+    },
+  }),
+);
+```
+
+Default `perMessageDeflate` settings:
+
+- `threshold: 256`
+- `concurrencyLimit: 10`
+- `zlibDeflateOptions.level: 3`
+- `zlibDeflateOptions.memLevel: 7`
+- `zlibInflateOptions.chunkSize: 10 * 1024`
+
+Set `perMessageDeflate: false` to disable compression, or pass `true` to fall
+back to the raw `ws` defaults.
 
 ## Protocol Docs
 
