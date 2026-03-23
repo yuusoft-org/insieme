@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   commandToSyncEvent,
   committedSyncEventToCommand,
-  projectIdFromPartitions,
   validateCommandSubmitItem,
 } from "../../../src/index.js";
 
@@ -10,6 +9,7 @@ describe("src command-profile", () => {
   it("maps command envelope to normalized sync fields", () => {
     const command = {
       id: "cmd-1",
+      partition: "project:proj-1:story",
       type: "scene.create",
       payload: { sceneId: "scene-1", name: "Intro" },
       meta: {
@@ -24,6 +24,7 @@ describe("src command-profile", () => {
     };
 
     expect(commandToSyncEvent(command)).toEqual({
+      partition: "project:proj-1:story",
       projectId: "proj-1",
       userId: "u1",
       type: "scene.create",
@@ -33,10 +34,11 @@ describe("src command-profile", () => {
     });
   });
 
-  it("maps committed sync row to command envelope with partition project fallback", () => {
+  it("maps committed sync row to command envelope", () => {
     const command = committedSyncEventToCommand({
       id: "cmd-1",
-      partitions: ["project:proj-1:story", "project:proj-1:settings"],
+      projectId: "proj-1",
+      partition: "project:proj-1:story",
       type: "scene.create",
       payload: {
         sceneId: "scene-1",
@@ -48,7 +50,7 @@ describe("src command-profile", () => {
         clientTs: 1234,
         foo: "bar",
       },
-      created: 2000,
+      serverTs: 2000,
     });
 
     expect(command).toMatchObject({
@@ -56,7 +58,6 @@ describe("src command-profile", () => {
       projectId: "proj-1",
       type: "scene.create",
       partition: "project:proj-1:story",
-      partitions: ["project:proj-1:story", "project:proj-1:settings"],
       clientTs: 1234,
       schemaVersion: 2,
       meta: {
@@ -71,7 +72,8 @@ describe("src command-profile", () => {
   it("preserves arbitrary normalized meta on validation", () => {
     const result = validateCommandSubmitItem({
       id: "cmd-2",
-      partitions: ["project:proj-1:story"],
+      partition: "project:proj-1:story",
+      projectId: "proj-1",
       type: "scene.update",
       schemaVersion: 1,
       payload: { sceneId: "scene-1" },
@@ -94,11 +96,8 @@ describe("src command-profile", () => {
   it("validates command submit item and normalizes partitions", () => {
     const result = validateCommandSubmitItem({
       id: "cmd-1",
-      partitions: [
-        "project:proj-1:settings",
-        "project:proj-1:settings",
-        "project:proj-1:story",
-      ],
+      partition: "project:proj-1:story",
+      projectId: "proj-1",
       type: "project.created",
       schemaVersion: 1,
       payload: { state: { project: { id: "proj-1" } } },
@@ -114,7 +113,7 @@ describe("src command-profile", () => {
       type: "project.created",
       projectId: "proj-1",
       userId: "u1",
-      partitions: ["project:proj-1:settings", "project:proj-1:story"],
+      partition: "project:proj-1:story",
       schemaVersion: 1,
       meta: {
         clientId: "c1",
@@ -126,7 +125,8 @@ describe("src command-profile", () => {
   it("rejects missing required normalized fields during command validation", () => {
     expect(() =>
       validateCommandSubmitItem({
-        partitions: ["project:proj-1:story"],
+        partition: "project:proj-1:story",
+        projectId: "proj-1",
         type: "",
         schemaVersion: 1,
         payload: {},
@@ -136,12 +136,5 @@ describe("src command-profile", () => {
         },
       }),
     ).toThrow("item.id is required");
-  });
-
-  it("extracts project id from partition scope", () => {
-    expect(
-      projectIdFromPartitions(["project:proj-42:story", "project:proj-42:layouts"]),
-    ).toBe("proj-42");
-    expect(projectIdFromPartitions(["workspace:abc"])).toBe(null);
   });
 });

@@ -6,7 +6,7 @@ import { buildCommittedEventFromDraft, normalizeMeta } from "./event-record.js";
 import { normalizeMaterializedViewDefinitions } from "./materialized-view.js";
 import { createMaterializedViewRuntime } from "./materialized-view-runtime.js";
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const DEFAULT_MATERIALIZED_BACKFILL_CHUNK_SIZE = 512;
 
 const createTransaction = (db, fn) => {
@@ -38,7 +38,7 @@ const parseIntSafe = (value) => {
 
 const toComparisonKey = (event) =>
   canonicalizeSubmitItem({
-    partitions: event.partitions,
+    partition: event.partition,
     projectId: event.projectId,
     userId: event.userId,
     type: event.type,
@@ -128,13 +128,12 @@ export const createSqliteClientStore = (
         CREATE TABLE IF NOT EXISTS local_drafts (
           draft_clock INTEGER PRIMARY KEY AUTOINCREMENT,
           id TEXT NOT NULL UNIQUE,
-          partitions TEXT NOT NULL,
-          project_id TEXT,
-          user_id TEXT,
+          partition TEXT NOT NULL,
           type TEXT NOT NULL,
           schema_version INTEGER NOT NULL,
           payload TEXT NOT NULL,
-          meta TEXT NOT NULL,
+          payload_compression TEXT DEFAULT NULL,
+          client_ts INTEGER NOT NULL,
           created_at INTEGER NOT NULL
         );
 
@@ -143,12 +142,14 @@ export const createSqliteClientStore = (
           id TEXT NOT NULL UNIQUE,
           project_id TEXT,
           user_id TEXT,
-          partitions TEXT NOT NULL,
+          partition TEXT NOT NULL,
           type TEXT NOT NULL,
           schema_version INTEGER NOT NULL,
           payload TEXT NOT NULL,
-          meta TEXT NOT NULL,
-          created INTEGER NOT NULL
+          payload_compression TEXT DEFAULT NULL,
+          client_ts INTEGER NOT NULL,
+          server_ts INTEGER NOT NULL,
+          created_at INTEGER NOT NULL
         );
 
         CREATE TABLE IF NOT EXISTS app_state (
@@ -168,19 +169,48 @@ export const createSqliteClientStore = (
       `);
     },
     () => {
-      const hasDraftSchemaVersion = tableHasColumn(
-        db,
-        "local_drafts",
-        "schema_version",
-      );
-      const hasCommittedSchemaVersion = tableHasColumn(
+      const hasDraftPartition = tableHasColumn(db, "local_drafts", "partition");
+      const hasCommittedPartition = tableHasColumn(
         db,
         "committed_events",
-        "schema_version",
+        "partition",
       );
-      if (!hasDraftSchemaVersion || !hasCommittedSchemaVersion) {
+      const hasCommittedServerTs = tableHasColumn(
+        db,
+        "committed_events",
+        "server_ts",
+      );
+      if (!hasDraftPartition || !hasCommittedPartition || !hasCommittedServerTs) {
         throw new Error(
-          "Client store schemaVersion rollout requires reset or explicit backfill for legacy data",
+          "Client store requires reset for the singular-partition schema",
+        );
+      }
+    },
+    () => {
+      const hasLegacyDraftPartitions = tableHasColumn(
+        db,
+        "local_drafts",
+        "partitions",
+      );
+      const hasLegacyDraftMeta = tableHasColumn(db, "local_drafts", "meta");
+      const hasLegacyCommittedPartitions = tableHasColumn(
+        db,
+        "committed_events",
+        "partitions",
+      );
+      const hasLegacyCommittedMeta = tableHasColumn(
+        db,
+        "committed_events",
+        "meta",
+      );
+      if (
+        hasLegacyDraftPartitions ||
+        hasLegacyDraftMeta ||
+        hasLegacyCommittedPartitions ||
+        hasLegacyCommittedMeta
+      ) {
+        throw new Error(
+          "Client store legacy collab tables are incompatible; reset required",
         );
       }
     },
@@ -212,13 +242,14 @@ export const createSqliteClientStore = (
   const parseDraft = (row) => ({
     draftClock: row.draft_clock,
     id: row.id,
-    partitions: JSON.parse(row.partitions),
-    projectId: row.project_id || undefined,
-    userId: row.user_id || undefined,
+    partition: row.partition,
     type: row.type,
     schemaVersion: parseIntSafe(row.schema_version),
     payload: JSON.parse(row.payload),
-    meta: normalizeMeta(JSON.parse(row.meta)),
+    payloadCompression: row.payload_compression || undefined,
+    meta: normalizeMeta({
+      clientTs: parseIntSafe(row.client_ts),
+    }),
     createdAt: row.created_at,
   });
 
@@ -227,12 +258,16 @@ export const createSqliteClientStore = (
     id: row.id,
     projectId: row.project_id || undefined,
     userId: row.user_id || undefined,
-    partitions: JSON.parse(row.partitions),
+    partition: row.partition,
     type: row.type,
     schemaVersion: parseIntSafe(row.schema_version),
     payload: JSON.parse(row.payload),
-    meta: normalizeMeta(JSON.parse(row.meta)),
-    created: row.created,
+    payloadCompression: row.payload_compression || undefined,
+    meta: normalizeMeta({
+      clientTs: parseIntSafe(row.client_ts),
+    }),
+    serverTs: row.server_ts,
+    createdAt: row.created_at,
   });
 
   const encodeMaterializedValue = (value) =>
@@ -282,33 +317,31 @@ export const createSqliteClientStore = (
     insertDraftStmt = db.prepare(`
       INSERT INTO local_drafts(
         id,
-        partitions,
-        project_id,
-        user_id,
+        partition,
         type,
         schema_version,
         payload,
-        meta,
+        payload_compression,
+        client_ts,
         created_at
       ) VALUES(
         @id,
-        @partitions,
-        @project_id,
-        @user_id,
+        @partition,
         @type,
         @schema_version,
         @payload,
-        @meta,
+        @payload_compression,
+        @client_ts,
         @created_at
       )
     `);
     listDraftsStmt = db.prepare(`
-      SELECT draft_clock, id, partitions, project_id, user_id, type, schema_version, payload, meta, created_at
+      SELECT draft_clock, id, partition, type, schema_version, payload, payload_compression, client_ts, created_at
       FROM local_drafts
       ORDER BY draft_clock ASC, id ASC
     `);
     getDraftByIdStmt = db.prepare(`
-      SELECT draft_clock, id, partitions, project_id, user_id, type, schema_version, payload, meta, created_at
+      SELECT draft_clock, id, partition, type, schema_version, payload, payload_compression, client_ts, created_at
       FROM local_drafts
       WHERE id = @id
     `);
@@ -322,37 +355,41 @@ export const createSqliteClientStore = (
         id,
         project_id,
         user_id,
-        partitions,
+        partition,
         type,
         schema_version,
         payload,
-        meta,
-        created
+        payload_compression,
+        client_ts,
+        server_ts,
+        created_at
       ) VALUES (
         @committed_id,
         @id,
         @project_id,
         @user_id,
-        @partitions,
+        @partition,
         @type,
         @schema_version,
         @payload,
-        @meta,
-        @created
+        @payload_compression,
+        @client_ts,
+        @server_ts,
+        @created_at
       )
     `);
     getCommittedByIdStmt = db.prepare(`
-      SELECT committed_id, id, project_id, user_id, partitions, type, schema_version, payload, meta, created
+      SELECT committed_id, id, project_id, user_id, partition, type, schema_version, payload, payload_compression, client_ts, server_ts, created_at
       FROM committed_events
       WHERE id = @id
     `);
     getCommittedByCommittedIdStmt = db.prepare(`
-      SELECT committed_id, id, project_id, user_id, partitions, type, schema_version, payload, meta, created
+      SELECT committed_id, id, project_id, user_id, partition, type, schema_version, payload, payload_compression, client_ts, server_ts, created_at
       FROM committed_events
       WHERE committed_id = @committed_id
     `);
     listCommittedAfterStmt = db.prepare(`
-      SELECT committed_id, id, project_id, user_id, partitions, type, schema_version, payload, meta, created
+      SELECT committed_id, id, project_id, user_id, partition, type, schema_version, payload, payload_compression, client_ts, server_ts, created_at
       FROM committed_events
       WHERE committed_id > @since_committed_id
       ORDER BY committed_id ASC
@@ -400,13 +437,12 @@ export const createSqliteClientStore = (
       for (const item of items) {
         insertDraftStmt.run({
           id: item.id,
-          partitions: JSON.stringify(item.partitions),
-          project_id: item.projectId ?? null,
-          user_id: item.userId ?? null,
+          partition: item.partition,
           type: item.type,
           schema_version: item.schemaVersion,
           payload: JSON.stringify(item.payload),
-          meta: JSON.stringify(normalizeMeta(item.meta)),
+          payload_compression: item.payloadCompression ?? null,
+          client_ts: parseIntSafe(item.meta?.clientTs),
           created_at: item.createdAt,
         });
       }
@@ -423,19 +459,21 @@ export const createSqliteClientStore = (
           const nextCommittedEvent = buildCommittedEventFromDraft({
             draft: parsedDraft,
             committedId: result.committedId,
-            created: result.created,
+            serverTs: result.serverTs,
           });
           const insertResult = insertCommittedStmt.run({
             committed_id: nextCommittedEvent.committedId,
             id: nextCommittedEvent.id,
             project_id: nextCommittedEvent.projectId ?? null,
             user_id: nextCommittedEvent.userId ?? null,
-            partitions: JSON.stringify(nextCommittedEvent.partitions),
+            partition: nextCommittedEvent.partition,
             type: nextCommittedEvent.type,
             schema_version: nextCommittedEvent.schemaVersion,
             payload: JSON.stringify(nextCommittedEvent.payload),
-            meta: JSON.stringify(nextCommittedEvent.meta),
-            created: nextCommittedEvent.created,
+            payload_compression: nextCommittedEvent.payloadCompression ?? null,
+            client_ts: parseIntSafe(nextCommittedEvent.meta?.clientTs),
+            server_ts: nextCommittedEvent.serverTs,
+            created_at: Date.now(),
           });
           if (insertResult.changes === 0) {
             assertCommittedInvariant(nextCommittedEvent);
@@ -462,12 +500,14 @@ export const createSqliteClientStore = (
           id: event.id,
           project_id: event.projectId ?? null,
           user_id: event.userId ?? null,
-          partitions: JSON.stringify(event.partitions),
+          partition: event.partition,
           type: event.type,
           schema_version: event.schemaVersion,
           payload: JSON.stringify(event.payload),
-          meta: JSON.stringify(normalizeMeta(event.meta)),
-          created: event.created,
+          payload_compression: event.payloadCompression ?? null,
+          client_ts: parseIntSafe(event.meta?.clientTs),
+          server_ts: event.serverTs,
+          created_at: event.createdAt ?? Date.now(),
         });
 
         if (insertResult.changes === 0) {
@@ -571,25 +611,23 @@ export const createSqliteClientStore = (
 
     insertDraft: async ({
       id,
-      partitions,
-      projectId,
-      userId,
+      partition,
       type,
       schemaVersion,
       payload,
       meta,
+      payloadCompression,
       createdAt,
     }) => {
       ensureInitialized();
       insertDraftStmt.run({
         id,
-        partitions: JSON.stringify(partitions),
-        project_id: projectId ?? null,
-        user_id: userId ?? null,
+        partition,
         type,
         schema_version: schemaVersion,
         payload: JSON.stringify(payload),
-        meta: JSON.stringify(normalizeMeta(meta)),
+        payload_compression: payloadCompression ?? null,
+        client_ts: parseIntSafe(meta?.clientTs),
         created_at: createdAt,
       });
     },
@@ -620,14 +658,6 @@ export const createSqliteClientStore = (
       return materializedViewRuntime.loadMaterializedView({
         viewName,
         partition,
-      });
-    },
-
-    loadMaterializedViews: async ({ viewName, partitions }) => {
-      ensureInitialized();
-      return materializedViewRuntime.loadMaterializedViews({
-        viewName,
-        partitions,
       });
     },
 

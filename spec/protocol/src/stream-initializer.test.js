@@ -32,7 +32,7 @@ describe("src initializeStreamIfEmpty", () => {
       syncClient,
       seedEvents: [
         {
-          partitions: ["project:p1:story"],
+          partition: "project:p1:story",
           event: { type: "event", schemaVersion: 1, payload: {} },
         },
       ],
@@ -57,7 +57,7 @@ describe("src initializeStreamIfEmpty", () => {
       syncClient,
       seedEvents: [
         {
-          partitions: ["project:p1:story"],
+          partition: "project:p1:story",
           event: { type: "event", schemaVersion: 1, payload: {} },
         },
       ],
@@ -104,7 +104,7 @@ describe("src initializeStreamIfEmpty", () => {
       syncClient,
       seedEvents: [
         {
-          partitions: ["project:p1:story"],
+          partition: "project:p1:story",
           event: { type: "event", schemaVersion: 1, payload: { a: 1 } },
         },
       ],
@@ -132,10 +132,10 @@ describe("src initializeStreamIfEmpty", () => {
           ...syncClient,
           getStatus: () => ({ connectedServerLastCommittedId: 0 }),
         },
-        seedEvents: [{ partitions: ["project:p1:story"] }],
+        seedEvents: [{ partition: "project:p1:story" }],
       }),
     ).rejects.toThrow(
-      "initializeStreamIfEmpty: each seed event needs partitions and event",
+      "initializeStreamIfEmpty: each seed event needs partition and event",
     );
 
     const result = await initializeStreamIfEmpty({
@@ -145,7 +145,7 @@ describe("src initializeStreamIfEmpty", () => {
       },
       seedEvents: [
         {
-          partitions: ["project:p1:story"],
+          partition: "project:p1:story",
           event: { type: "event", schemaVersion: 1, payload: { a: 1 } },
         },
       ],

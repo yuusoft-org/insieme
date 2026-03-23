@@ -8,8 +8,8 @@ import {
 /**
  * @typedef {{
  *   id: string,
- *   partitions: string[],
- *   projectId?: string,
+ *   partition: string,
+ *   projectId: string,
  *   userId?: string,
  *   type: string,
  *   schemaVersion: number,
@@ -38,7 +38,7 @@ import {
  *   },
  *   token: string,
  *   clientId: string,
- *   partitions: string[],
+ *   projectId: string,
  *   now?: () => number,
  *   uuid?: () => string,
  *   msgId?: () => string,
@@ -66,7 +66,7 @@ export const createSyncClient = ({
   store,
   token,
   clientId,
-  partitions,
+  projectId,
   now = () => Date.now(),
   uuid = () => crypto.randomUUID(),
   msgId = () => crypto.randomUUID(),
@@ -140,7 +140,11 @@ export const createSyncClient = ({
   let connected = false;
   let syncInFlight = false;
   let stopped = false;
-  let activePartitions = [...partitions];
+  if (!isNonEmptyString(projectId)) {
+    throw new Error("createSyncClient requires projectId");
+  }
+
+  const activeProjectId = projectId;
   let lastError = null;
   let reconnectInFlight = false;
   let reconnectAttempts = 0;
@@ -184,13 +188,20 @@ export const createSyncClient = ({
 
   const toSubmitEnvelopeItem = (draft) => ({
     id: draft.id,
-    partitions: draft.partitions,
-    projectId: draft.projectId,
+    partition: draft.partition,
+    projectId: draft.projectId || activeProjectId,
     userId: draft.userId,
     type: draft.type,
     schemaVersion: draft.schemaVersion,
     payload: draft.payload,
-    meta: draft.meta,
+    meta: normalizeSubmitEventInput(
+      { meta: draft.meta },
+      {
+        defaultProjectId: activeProjectId,
+        defaultClientId: clientId,
+        defaultClientTs: draft.meta?.clientTs,
+      },
+    ).meta,
   });
 
   const getApproxSubmitEnvelopeBytes = (events) => {
@@ -447,6 +458,7 @@ export const createSyncClient = ({
     const outboundMsgId = await send("connect", {
       token,
       clientId: clientId,
+      projectId: activeProjectId,
     });
     log({ event: "connect_sent", msgId: outboundMsgId });
     await waitForConnected(reconnectPolicy.handshakeTimeoutMs);
@@ -576,13 +588,13 @@ export const createSyncClient = ({
         : await store.loadCursor();
     try {
       const outboundMsgId = await send("sync", {
-        partitions: activePartitions,
+        projectId: activeProjectId,
         sinceCommittedId: since,
         limit: 500,
       });
       log({
         event: "sync_requested",
-        partitions: activePartitions,
+        projectId: activeProjectId,
         sinceCommittedId: since,
         msgId: outboundMsgId,
       });
@@ -597,15 +609,16 @@ export const createSyncClient = ({
     reconnectAttempts = 0;
     lastError = null;
     connectedServerLastCommittedId = Number.isFinite(
-      Number(payload?.globalLastCommittedId),
+      Number(payload?.projectLastCommittedId),
     )
-      ? Math.max(0, Math.floor(Number(payload.globalLastCommittedId)))
+      ? Math.max(0, Math.floor(Number(payload.projectLastCommittedId)))
       : null;
     settleConnectWaiters(true);
     log({
       event: "connected",
       clientId: payload?.clientId,
-      globalLastCommittedId: payload?.globalLastCommittedId,
+      projectId: payload?.projectId,
+      projectLastCommittedId: payload?.projectLastCommittedId,
       msgId: messageContext.msgId,
     });
     emit("connected", payload);
@@ -681,13 +694,13 @@ export const createSyncClient = ({
     if (payload.hasMore) {
       try {
         const outboundMsgId = await send("sync", {
-          partitions: activePartitions,
+          projectId: activeProjectId,
           sinceCommittedId: payload.nextSinceCommittedId,
           limit: 500,
         });
         log({
           event: "sync_requested",
-          partitions: activePartitions,
+          projectId: activeProjectId,
           sinceCommittedId: payload.nextSinceCommittedId,
           msgId: outboundMsgId,
         });
@@ -812,6 +825,7 @@ export const createSyncClient = ({
     const drafts = inputs.map((input) => ({
       ...normalizeSubmitEventInput(input, {
         defaultId: uuid(),
+        defaultProjectId: activeProjectId,
         defaultClientId: clientId,
         defaultClientTs: now(),
       }),
@@ -826,8 +840,8 @@ export const createSyncClient = ({
         throw new Error(`submitEvents duplicate id: ${draft.id}`);
       }
       seenIds.add(draft.id);
-      if (!Array.isArray(draft.partitions) || draft.partitions.length === 0) {
-        throw new Error("submitEvents requires partitions");
+      if (!isNonEmptyString(draft.partition)) {
+        throw new Error("submitEvents requires partition");
       }
       if (!isNonEmptyString(draft.type)) {
         throw new Error("submitEvents requires type");
@@ -936,6 +950,7 @@ export const createSyncClient = ({
         const outboundMsgId = await send("connect", {
           token,
           clientId: clientId,
+          projectId: activeProjectId,
         });
         log({ event: "connect_sent", msgId: outboundMsgId });
       } catch (error) {
@@ -969,11 +984,6 @@ export const createSyncClient = ({
       log({ event: "stopped" });
     },
 
-    setPartitions: async (nextPartitions, options = {}) => {
-      activePartitions = [...nextPartitions];
-      await syncFromCursor(options.sinceCommittedId);
-    },
-
     submitEvents,
 
     submitEvent: async (input) => {
@@ -997,7 +1007,7 @@ export const createSyncClient = ({
       reconnectInFlight,
       reconnectAttempts,
       connectedServerLastCommittedId,
-      activePartitions: [...activePartitions],
+      activeProjectId,
       lastError: lastError ? { ...lastError } : null,
     }),
   };

@@ -169,7 +169,8 @@ export const createOfflineTransport = (options = {}) => {
             msgId: msgId,
             payload: {
               clientId: message.payload?.clientId,
-              globalLastCommittedId: serverLastCommittedId,
+              projectId: message.payload?.projectId,
+              projectLastCommittedId: serverLastCommittedId,
             },
           });
           return;
@@ -180,15 +181,12 @@ export const createOfflineTransport = (options = {}) => {
             message.payload?.sinceCommittedId,
             serverLastCommittedId,
           );
-          const partitions = Array.isArray(message.payload?.partitions)
-            ? [...message.payload.partitions]
-            : [];
           emit({
             type: "sync_response",
             protocolVersion: PROTOCOL_VERSION,
             msgId: msgId,
             payload: {
-              partitions,
+              projectId: message.payload?.projectId,
               events: [],
               nextSinceCommittedId,
               hasMore: false,

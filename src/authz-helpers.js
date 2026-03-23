@@ -1,9 +1,23 @@
-import { extractScopeIds } from "./partition-scope.js";
+import { extractScopeId } from "./partition-scope.js";
+
+export const authorizeProjectId = ({
+  identity,
+  projectId,
+  allowAll = false,
+  claimsField = "projectIds",
+}) => {
+  if (!identity?.claims) return false;
+  if (typeof projectId !== "string" || projectId.length === 0) return false;
+  if (allowAll) return true;
+  const allowed = identity.claims?.[claimsField];
+  if (!Array.isArray(allowed)) return false;
+  return allowed.includes(projectId);
+};
 
 /**
  * @param {{
  *   identity: { claims?: Record<string, unknown> } | null | undefined,
- *   partitions: string[],
+ *   partition: string,
  *   scope?: string,
  *   allowAll?: boolean,
  *   claimsField?: string,
@@ -11,16 +25,15 @@ import { extractScopeIds } from "./partition-scope.js";
  */
 export const authorizeSingleScopeId = ({
   identity,
-  partitions,
+  partition,
   scope = "project",
   allowAll = false,
   claimsField,
 }) => {
   if (!identity?.claims) return false;
-  if (!Array.isArray(partitions) || partitions.length === 0) return false;
-
-  const scopeIds = extractScopeIds(partitions, scope);
-  if (scopeIds.length !== 1) return false;
+  if (typeof partition !== "string" || partition.length === 0) return false;
+  const scopeId = extractScopeId(partition, scope);
+  if (!scopeId) return false;
   if (allowAll) return true;
 
   const resolvedClaimsField =
@@ -29,5 +42,5 @@ export const authorizeSingleScopeId = ({
       : `${scope}Ids`;
   const allowed = identity.claims?.[resolvedClaimsField];
   if (!Array.isArray(allowed)) return false;
-  return allowed.includes(scopeIds[0]);
+  return allowed.includes(scopeId);
 };

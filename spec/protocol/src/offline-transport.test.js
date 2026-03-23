@@ -16,13 +16,13 @@ describe("src createOfflineTransport", () => {
       type: "connect",
       protocolVersion: "1.0",
       msgId: "offline-connect-1",
-      payload: { token: "jwt", clientId: "C1" },
+      payload: { token: "jwt", clientId: "C1", projectId: "proj-1" },
     });
     await transport.send({
       type: "sync",
       protocolVersion: "1.0",
       msgId: "offline-sync-1",
-      payload: { partitions: ["P1"], sinceCommittedId: 4 },
+      payload: { projectId: "proj-1", sinceCommittedId: 4 },
     });
 
     expect(received[0]).toMatchObject({
@@ -30,14 +30,15 @@ describe("src createOfflineTransport", () => {
       msgId: "offline-connect-1",
       payload: {
         clientId: "C1",
-        globalLastCommittedId: 11,
+        projectId: "proj-1",
+        projectLastCommittedId: 11,
       },
     });
     expect(received[1]).toMatchObject({
       type: "sync_response",
       msgId: "offline-sync-1",
       payload: {
-        partitions: ["P1"],
+        projectId: "proj-1",
         events: [],
         nextSinceCommittedId: 4,
         hasMore: false,
@@ -61,7 +62,8 @@ describe("src createOfflineTransport", () => {
             protocolVersion: "1.0",
             payload: {
               clientId: message.payload.clientId,
-              globalLastCommittedId: 0,
+              projectId: message.payload.projectId,
+              projectLastCommittedId: 0,
             },
           });
         }
@@ -79,20 +81,20 @@ describe("src createOfflineTransport", () => {
     await transport.send({
       type: "connect",
       protocolVersion: "1.0",
-      payload: { token: "jwt", clientId: "C1" },
+      payload: { token: "jwt", clientId: "C1", projectId: "proj-1" },
     });
     await transport.send({
       type: "submit_events",
       protocolVersion: "1.0",
       payload: {
-        events: [{ id: "evt-1", partitions: ["P1"], event: { type: "event" } }],
+        events: [{ id: "evt-1", partition: "P1", projectId: "proj-1", event: { type: "event" } }],
       },
     });
     await transport.send({
       type: "submit_events",
       protocolVersion: "1.0",
       payload: {
-        events: [{ id: "evt-2", partitions: ["P1"], event: { type: "event" } }],
+        events: [{ id: "evt-2", partition: "P1", projectId: "proj-1", event: { type: "event" } }],
       },
     });
 
@@ -164,7 +166,7 @@ describe("src createOfflineTransport", () => {
       protocolVersion: "1.0",
       payload: {
         events: [
-          { id: "evt-cap-1", partitions: ["P1"], event: { type: "event" } },
+          { id: "evt-cap-1", partition: "P1", projectId: "proj-1", event: { type: "event" } },
         ],
       },
     });
@@ -174,7 +176,7 @@ describe("src createOfflineTransport", () => {
       msgId: "evt-cap-2",
       payload: {
         events: [
-          { id: "evt-cap-2", partitions: ["P1"], event: { type: "event" } },
+          { id: "evt-cap-2", partition: "P1", projectId: "proj-1", event: { type: "event" } },
         ],
       },
     });
@@ -226,7 +228,8 @@ describe("src createOfflineTransport", () => {
                 protocolVersion: "1.0",
                 payload: {
                   clientId: message.payload.clientId,
-                  globalLastCommittedId: 0,
+                  projectId: message.payload.projectId,
+                  projectLastCommittedId: 0,
                 },
               });
             }
@@ -260,7 +263,7 @@ describe("src createOfflineTransport", () => {
     await transport.send({
       type: "connect",
       protocolVersion: "1.0",
-      payload: { token: "jwt", clientId: "C1" },
+      payload: { token: "jwt", clientId: "C1", projectId: "proj-1" },
     });
     expect(onlineA.sent[0].type).toBe("connect");
 

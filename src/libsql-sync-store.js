@@ -1,30 +1,30 @@
-import {
-  canonicalizeSubmitItem,
-  intersectsPartitions,
-  normalizePartitionSet,
-} from "./canonicalize.js";
+import { canonicalizeSubmitItem } from "./canonicalize.js";
 import { normalizeMeta } from "./event-record.js";
 import { createLibsqlDriver, parseIntSafe } from "./libsql-driver.js";
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const DEFAULT_SCAN_CHUNK_SIZE = 512;
 
 const parseCommittedRow = (row) => ({
   id: row.id,
   projectId: row.project_id || undefined,
   userId: row.user_id || undefined,
-  partitions: JSON.parse(row.partitions),
+  partition: row.partition,
   committedId: parseIntSafe(row.committed_id, 0),
   type: row.type,
   schemaVersion: parseIntSafe(row.schema_version, 0),
   payload: JSON.parse(row.payload),
-  meta: normalizeMeta(JSON.parse(row.meta)),
-  created: parseIntSafe(row.created, 0),
+  payloadCompression: row.payload_compression || undefined,
+  meta: normalizeMeta({
+    clientTs: parseIntSafe(row.client_ts, 0),
+  }),
+  serverTs: parseIntSafe(row.server_ts, 0),
+  createdAt: parseIntSafe(row.created_at, 0),
 });
 
 const toComparisonKey = (event) =>
   canonicalizeSubmitItem({
-    partitions: event.partitions,
+    partition: event.partition,
     projectId: event.projectId,
     userId: event.userId,
     type: event.type,
@@ -85,20 +85,38 @@ export const createLibsqlSyncStore = (
           CREATE TABLE IF NOT EXISTS committed_events (
             committed_id INTEGER PRIMARY KEY AUTOINCREMENT,
             id TEXT NOT NULL UNIQUE,
-            project_id TEXT,
+            project_id TEXT NOT NULL,
             user_id TEXT,
-            partitions TEXT NOT NULL,
+            partition TEXT NOT NULL,
             type TEXT NOT NULL,
             schema_version INTEGER NOT NULL,
             payload TEXT NOT NULL,
-            meta TEXT NOT NULL,
-            created INTEGER NOT NULL
+            payload_compression TEXT DEFAULT NULL,
+            client_ts INTEGER NOT NULL,
+            server_ts INTEGER NOT NULL,
+            created_at INTEGER NOT NULL
           );
         `);
+        await db.execute(`
+          CREATE INDEX IF NOT EXISTS committed_events_project_committed_idx
+          ON committed_events(project_id, committed_id);
+        `);
       } else if (next === 2) {
-        if (!(await tableHasColumn(db, "committed_events", "schema_version"))) {
+        if (!(await tableHasColumn(db, "committed_events", "partition"))) {
           throw new Error(
-            "Sync store schemaVersion rollout requires explicit backfill or reset for legacy data",
+            "Sync store requires reset for the singular-partition schema",
+          );
+        }
+      } else if (next === 3) {
+        const hasLegacyPartitions = await tableHasColumn(
+          db,
+          "committed_events",
+          "partitions",
+        );
+        const hasLegacyMeta = await tableHasColumn(db, "committed_events", "meta");
+        if (hasLegacyPartitions || hasLegacyMeta) {
+          throw new Error(
+            "Sync store legacy committed_events table is incompatible; reset required",
           );
         }
       } else {
@@ -117,12 +135,14 @@ export const createLibsqlSyncStore = (
           id,
           project_id,
           user_id,
-          partitions,
+          partition,
           type,
           schema_version,
           payload,
-          meta,
-          created
+          payload_compression,
+          client_ts,
+          server_ts,
+          created_at
         FROM committed_events
         WHERE id = ?
       `,
@@ -137,21 +157,15 @@ export const createLibsqlSyncStore = (
     return parseIntSafe(row?.max_committed_id, 0);
   };
 
-  const getMaxCommittedIdForPartitionsInternal = async (partitions) => {
-    const normalizedPartitions = normalizePartitionSet(partitions);
-    if (normalizedPartitions.length === 0) return 0;
+  const getMaxCommittedIdForProjectInternal = async (projectId) => {
+    if (!projectId) return 0;
     const row = await db.queryOne(
       `
-        SELECT COALESCE(MAX(ce.committed_id), 0) AS max_committed_id
-        FROM committed_events ce
-        WHERE EXISTS (
-          SELECT 1
-          FROM json_each(ce.partitions) ce_p
-          JOIN json_each(?) req_p
-            ON CAST(ce_p.value AS TEXT) = CAST(req_p.value AS TEXT)
-        )
+        SELECT COALESCE(MAX(committed_id), 0) AS max_committed_id
+        FROM committed_events
+        WHERE project_id = ?
       `,
-      [JSON.stringify(normalizedPartitions)],
+      [projectId],
     );
     return parseIntSafe(row?.max_committed_id, 0);
   };
@@ -181,7 +195,7 @@ export const createLibsqlSyncStore = (
 
     commitOrGetExisting: async ({
       id,
-      partitions,
+      partition,
       projectId,
       userId,
       type,
@@ -191,10 +205,9 @@ export const createLibsqlSyncStore = (
       now,
     }) => {
       await ensureInitialized();
-      const normalizedPartitions = normalizePartitionSet(partitions);
       const normalizedMeta = normalizeMeta(meta);
       const comparisonKey = canonicalizeSubmitItem({
-        partitions: normalizedPartitions,
+        partition,
         projectId,
         userId,
         type,
@@ -209,24 +222,28 @@ export const createLibsqlSyncStore = (
             id,
             project_id,
             user_id,
-            partitions,
+            partition,
             type,
             schema_version,
             payload,
-            meta,
-            created
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            payload_compression,
+            client_ts,
+            server_ts,
+            created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO NOTHING
         `,
         [
           id,
-          projectId ?? null,
+          projectId,
           userId ?? null,
-          JSON.stringify(normalizedPartitions),
+          partition,
           type,
           schemaVersion,
           JSON.stringify(payload),
-          JSON.stringify(normalizedMeta),
+          null,
+          parseIntSafe(normalizedMeta.clientTs, 0),
+          now,
           now,
         ],
       );
@@ -257,17 +274,23 @@ export const createLibsqlSyncStore = (
     },
 
     listCommittedSince: async ({
-      partitions,
+      projectId,
       sinceCommittedId,
       limit,
       syncToCommittedId,
     }) => {
       await ensureInitialized();
-      const normalizedPartitions = normalizePartitionSet(partitions);
+      if (!projectId) {
+        return {
+          events: [],
+          hasMore: false,
+          nextSinceCommittedId: sinceCommittedId,
+        };
+      }
       const upperBound =
         syncToCommittedId !== undefined
           ? syncToCommittedId
-          : await getMaxCommittedIdInternal();
+          : await getMaxCommittedIdForProjectInternal(projectId);
 
       const pageSize = Math.max(
         limit + 1,
@@ -289,19 +312,22 @@ export const createLibsqlSyncStore = (
               id,
               project_id,
               user_id,
-              partitions,
+              partition,
               type,
               schema_version,
               payload,
-              meta,
-              created
+              payload_compression,
+              client_ts,
+              server_ts,
+              created_at
             FROM committed_events
-            WHERE committed_id > ?
+            WHERE project_id = ?
+              AND committed_id > ?
               AND committed_id <= ?
             ORDER BY committed_id ASC
             LIMIT ?
           `,
-          [cursor, upperBound, pageSize],
+          [projectId, cursor, upperBound, pageSize],
         );
 
         if (rows.length === 0) {
@@ -312,11 +338,8 @@ export const createLibsqlSyncStore = (
         cursor = parseIntSafe(rows[rows.length - 1].committed_id, 0);
 
         for (const row of rows) {
-          const parsed = parseCommittedRow(row);
-          if (intersectsPartitions(normalizedPartitions, parsed.partitions)) {
-            matched.push(parsed);
-            if (matched.length > limit) break;
-          }
+          matched.push(parseCommittedRow(row));
+          if (matched.length > limit) break;
         }
 
         if (rows.length < pageSize) {
@@ -343,9 +366,9 @@ export const createLibsqlSyncStore = (
       return getMaxCommittedIdInternal();
     },
 
-    getMaxCommittedIdForPartitions: async ({ partitions }) => {
+    getMaxCommittedIdForProject: async ({ projectId }) => {
       await ensureInitialized();
-      return getMaxCommittedIdForPartitionsInternal(partitions);
+      return getMaxCommittedIdForProjectInternal(projectId);
     },
   };
 };

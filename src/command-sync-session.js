@@ -6,15 +6,7 @@ import { createSyncClient } from "./sync-client.js";
 const toNonEmptyString = (value) =>
   typeof value === "string" && value.length > 0 ? value : null;
 
-const commandPartitions = (command) => {
-  const fromArray = Array.isArray(command?.partitions) ? command.partitions : [];
-  const normalized = fromArray
-    .map((partition) => toNonEmptyString(partition))
-    .filter(Boolean);
-  if (normalized.length > 0) return [...new Set(normalized)];
-  const fallback = toNonEmptyString(command?.partition);
-  return fallback ? [fallback] : [];
-};
+const commandPartition = (command) => toNonEmptyString(command?.partition);
 
 const isTransportDisconnectedError = (error) => {
   const code = error?.code;
@@ -33,7 +25,7 @@ const isTransportDisconnectedError = (error) => {
  * @param {{
  *   token: string,
  *   actor: { userId: string, clientId: string },
- *   partitions: string[],
+ *   projectId: string,
  *   transport?: object,
  *   store?: object,
  *   logger?: (entry: object) => void,
@@ -54,7 +46,7 @@ const isTransportDisconnectedError = (error) => {
 export const createCommandSyncSession = ({
   token,
   actor,
-  partitions,
+  projectId,
   transport,
   store,
   logger = () => {},
@@ -75,8 +67,8 @@ export const createCommandSyncSession = ({
       "createCommandSyncSession: actor.userId and actor.clientId are required",
     );
   }
-  if (!Array.isArray(partitions) || partitions.length === 0) {
-    throw new Error("createCommandSyncSession: partitions are required");
+  if (!toNonEmptyString(projectId)) {
+    throw new Error("createCommandSyncSession: projectId is required");
   }
 
   const runtimeStore =
@@ -155,7 +147,7 @@ export const createCommandSyncSession = ({
     store: runtimeStore,
     token,
     clientId: actor.clientId,
-    partitions,
+    projectId,
     logger,
     reconnect,
     onEvent: (entry) => {
@@ -194,16 +186,21 @@ export const createCommandSyncSession = ({
     }
 
     const submitItems = commands.map((command) => {
-      const partitionsForCommand = commandPartitions(command);
-      if (partitionsForCommand.length === 0) {
-        throw new Error("Command must include at least one partition");
+      const partition = commandPartition(command);
+      if (!partition) {
+        throw new Error("Command must include a partition");
       }
 
       boundedRemember(command?.id);
       const syncEvent = mapCommandToSyncEvent(command);
+      const resolvedProjectId =
+        toNonEmptyString(syncEvent?.projectId) ||
+        toNonEmptyString(command?.projectId) ||
+        projectId;
       return {
         id: command.id,
-        partitions: partitionsForCommand,
+        partition,
+        projectId: resolvedProjectId,
         ...syncEvent,
       };
     });

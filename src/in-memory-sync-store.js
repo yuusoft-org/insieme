@@ -1,29 +1,25 @@
-import {
-  canonicalizeSubmitItem,
-  intersectsPartitions,
-  normalizePartitionSet,
-} from "./canonicalize.js";
+import { canonicalizeSubmitItem } from "./canonicalize.js";
 import { normalizeMeta } from "./event-record.js";
 
 /**
  * @param {number} [startCommittedId]
  */
 export const createInMemorySyncStore = (startCommittedId = 0) => {
-  /** @type {Map<string, { comparisonKey: string, committedEvent: { id: string, projectId?: string, userId?: string, partitions: string[], committedId: number, type: string, schemaVersion: number, payload: object, meta: object, created: number } }>} */
+  /** @type {Map<string, { comparisonKey: string, committedEvent: { id: string, projectId?: string, userId?: string, partition: string, committedId: number, type: string, schemaVersion: number, payload: object, meta: object, serverTs: number } }>} */
   const byId = new Map();
 
-  /** @type {{ id: string, projectId?: string, userId?: string, partitions: string[], committedId: number, type: string, schemaVersion: number, payload: object, meta: object, created: number }[]} */
+  /** @type {{ id: string, projectId?: string, userId?: string, partition: string, committedId: number, type: string, schemaVersion: number, payload: object, meta: object, serverTs: number }[]} */
   const committed = [];
 
   let nextCommittedId = startCommittedId + 1;
 
   return {
     /**
-     * @param {{ id: string, partitions: string[], projectId?: string, userId?: string, type: string, schemaVersion: number, payload: object, meta: object, now: number }} input
+     * @param {{ id: string, partition: string, projectId?: string, userId?: string, type: string, schemaVersion: number, payload: object, meta: object, now: number }} input
      */
     commitOrGetExisting: async ({
       id,
-      partitions,
+      partition,
       projectId,
       userId,
       type,
@@ -32,10 +28,9 @@ export const createInMemorySyncStore = (startCommittedId = 0) => {
       meta,
       now,
     }) => {
-      const normalizedPartitions = normalizePartitionSet(partitions);
       const normalizedMeta = normalizeMeta(meta);
       const comparisonKey = canonicalizeSubmitItem({
-        partitions: normalizedPartitions,
+        partition,
         projectId,
         userId,
         type,
@@ -63,13 +58,13 @@ export const createInMemorySyncStore = (startCommittedId = 0) => {
         id,
         projectId,
         userId,
-        partitions: normalizedPartitions,
+        partition,
         committedId: nextCommittedId,
         type,
         schemaVersion,
         payload: structuredClone(payload),
         meta: normalizedMeta,
-        created: now,
+        serverTs: now,
       };
       nextCommittedId += 1;
 
@@ -83,15 +78,14 @@ export const createInMemorySyncStore = (startCommittedId = 0) => {
     },
 
     /**
-     * @param {{ partitions: string[], sinceCommittedId: number, limit: number, syncToCommittedId?: number }} input
+     * @param {{ projectId: string, sinceCommittedId: number, limit: number, syncToCommittedId?: number }} input
      */
     listCommittedSince: async ({
-      partitions,
+      projectId,
       sinceCommittedId,
       limit,
       syncToCommittedId,
     }) => {
-      const normalizedPartitions = normalizePartitionSet(partitions);
       const upperBound =
         syncToCommittedId !== undefined
           ? syncToCommittedId
@@ -99,9 +93,9 @@ export const createInMemorySyncStore = (startCommittedId = 0) => {
 
       const filtered = committed.filter(
         (event) =>
+          event.projectId === projectId &&
           event.committedId > sinceCommittedId &&
-          event.committedId <= upperBound &&
-          intersectsPartitions(normalizedPartitions, event.partitions),
+          event.committedId <= upperBound,
       );
 
       const events = filtered.slice(0, limit);
@@ -124,13 +118,12 @@ export const createInMemorySyncStore = (startCommittedId = 0) => {
     },
 
     /**
-     * @param {{ partitions: string[] }} input
+     * @param {{ projectId: string }} input
      */
-    getMaxCommittedIdForPartitions: async ({ partitions }) => {
-      const normalizedPartitions = normalizePartitionSet(partitions);
+    getMaxCommittedIdForProject: async ({ projectId }) => {
       let maxCommittedId = 0;
       for (const event of committed) {
-        if (!intersectsPartitions(normalizedPartitions, event.partitions)) {
+        if (event.projectId !== projectId) {
           continue;
         }
         if (event.committedId > maxCommittedId) {

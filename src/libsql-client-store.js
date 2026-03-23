@@ -4,7 +4,7 @@ import { normalizeMaterializedViewDefinitions } from "./materialized-view.js";
 import { createMaterializedViewRuntime } from "./materialized-view-runtime.js";
 import { createLibsqlDriver, parseIntSafe } from "./libsql-driver.js";
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const DEFAULT_MATERIALIZED_BACKFILL_CHUNK_SIZE = 512;
 
 const toSerializedJson = (value) => JSON.stringify(value);
@@ -28,13 +28,14 @@ const createTransaction = async (db, fn) => {
 const parseDraft = (row) => ({
   draftClock: parseIntSafe(row.draft_clock, 0),
   id: row.id,
-  partitions: JSON.parse(row.partitions),
-  projectId: row.project_id || undefined,
-  userId: row.user_id || undefined,
+  partition: row.partition,
   type: row.type,
   schemaVersion: parseIntSafe(row.schema_version, 0),
   payload: JSON.parse(row.payload),
-  meta: normalizeMeta(JSON.parse(row.meta)),
+  payloadCompression: row.payload_compression || undefined,
+  meta: normalizeMeta({
+    clientTs: parseIntSafe(row.client_ts, 0),
+  }),
   createdAt: parseIntSafe(row.created_at, 0),
 });
 
@@ -43,12 +44,16 @@ const parseCommittedRow = (row) => ({
   id: row.id,
   projectId: row.project_id || undefined,
   userId: row.user_id || undefined,
-  partitions: JSON.parse(row.partitions),
+  partition: row.partition,
   type: row.type,
   schemaVersion: parseIntSafe(row.schema_version, 0),
   payload: JSON.parse(row.payload),
-  meta: normalizeMeta(JSON.parse(row.meta)),
-  created: parseIntSafe(row.created, 0),
+  payloadCompression: row.payload_compression || undefined,
+  meta: normalizeMeta({
+    clientTs: parseIntSafe(row.client_ts, 0),
+  }),
+  serverTs: parseIntSafe(row.server_ts, 0),
+  createdAt: parseIntSafe(row.created_at, 0),
 });
 
 const encodeMaterializedValue = (value) =>
@@ -56,7 +61,7 @@ const encodeMaterializedValue = (value) =>
 
 const toComparisonKey = (event) =>
   canonicalizeSubmitItem({
-    partitions: event.partitions,
+    partition: event.partition,
     projectId: event.projectId,
     userId: event.userId,
     type: event.type,
@@ -114,13 +119,12 @@ export const createLibsqlClientStore = (
         CREATE TABLE IF NOT EXISTS local_drafts (
           draft_clock INTEGER PRIMARY KEY AUTOINCREMENT,
           id TEXT NOT NULL UNIQUE,
-          partitions TEXT NOT NULL,
-          project_id TEXT,
-          user_id TEXT,
+          partition TEXT NOT NULL,
           type TEXT NOT NULL,
           schema_version INTEGER NOT NULL,
           payload TEXT NOT NULL,
-          meta TEXT NOT NULL,
+          payload_compression TEXT DEFAULT NULL,
+          client_ts INTEGER NOT NULL,
           created_at INTEGER NOT NULL
         );
       `);
@@ -130,12 +134,14 @@ export const createLibsqlClientStore = (
           id TEXT NOT NULL UNIQUE,
           project_id TEXT,
           user_id TEXT,
-          partitions TEXT NOT NULL,
+          partition TEXT NOT NULL,
           type TEXT NOT NULL,
           schema_version INTEGER NOT NULL,
           payload TEXT NOT NULL,
-          meta TEXT NOT NULL,
-          created INTEGER NOT NULL
+          payload_compression TEXT DEFAULT NULL,
+          client_ts INTEGER NOT NULL,
+          server_ts INTEGER NOT NULL,
+          created_at INTEGER NOT NULL
         );
       `);
       await db.execute(`
@@ -157,19 +163,48 @@ export const createLibsqlClientStore = (
       `);
     },
     async () => {
-      const hasDraftSchemaVersion = await tableHasColumn(
-        db,
-        "local_drafts",
-        "schema_version",
-      );
-      const hasCommittedSchemaVersion = await tableHasColumn(
+      const hasDraftPartition = await tableHasColumn(db, "local_drafts", "partition");
+      const hasCommittedPartition = await tableHasColumn(
         db,
         "committed_events",
-        "schema_version",
+        "partition",
       );
-      if (!hasDraftSchemaVersion || !hasCommittedSchemaVersion) {
+      const hasCommittedServerTs = await tableHasColumn(
+        db,
+        "committed_events",
+        "server_ts",
+      );
+      if (!hasDraftPartition || !hasCommittedPartition || !hasCommittedServerTs) {
         throw new Error(
-          "Client store schemaVersion rollout requires reset or explicit backfill for legacy data",
+          "Client store requires reset for the singular-partition schema",
+        );
+      }
+    },
+    async () => {
+      const hasLegacyDraftPartitions = await tableHasColumn(
+        db,
+        "local_drafts",
+        "partitions",
+      );
+      const hasLegacyDraftMeta = await tableHasColumn(db, "local_drafts", "meta");
+      const hasLegacyCommittedPartitions = await tableHasColumn(
+        db,
+        "committed_events",
+        "partitions",
+      );
+      const hasLegacyCommittedMeta = await tableHasColumn(
+        db,
+        "committed_events",
+        "meta",
+      );
+      if (
+        hasLegacyDraftPartitions ||
+        hasLegacyDraftMeta ||
+        hasLegacyCommittedPartitions ||
+        hasLegacyCommittedMeta
+      ) {
+        throw new Error(
+          "Client store legacy collab tables are incompatible; reset required",
         );
       }
     },
@@ -197,7 +232,7 @@ export const createLibsqlClientStore = (
   const assertCommittedInvariant = async (event) => {
     const byId = await db.queryOne(
       `
-        SELECT committed_id, id, project_id, user_id, partitions, type, schema_version, payload, meta, created
+        SELECT committed_id, id, project_id, user_id, partition, type, schema_version, payload, payload_compression, client_ts, server_ts, created_at
         FROM committed_events
         WHERE id = ?
       `,
@@ -266,12 +301,14 @@ export const createLibsqlClientStore = (
               id,
               project_id,
               user_id,
-              partitions,
+              partition,
               type,
               schema_version,
               payload,
-              meta,
-              created
+              payload_compression,
+              client_ts,
+              server_ts,
+              created_at
             FROM committed_events
             WHERE committed_id > ?
             ORDER BY committed_id ASC
@@ -382,13 +419,12 @@ export const createLibsqlClientStore = (
 
     insertDraft: async ({
       id,
-      partitions,
-      projectId,
-      userId,
+      partition,
       type,
       schemaVersion,
       payload,
       meta,
+      payloadCompression,
       createdAt,
     }) => {
       await ensureInitialized();
@@ -396,26 +432,24 @@ export const createLibsqlClientStore = (
         `
           INSERT INTO local_drafts(
             id,
-            partitions,
-            project_id,
-            user_id,
+            partition,
             type,
             schema_version,
             payload,
-            meta,
+            payload_compression,
+            client_ts,
             created_at
           )
-          VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES(?, ?, ?, ?, ?, ?, ?, ?)
         `,
         [
           id,
-          toSerializedJson(partitions),
-          projectId ?? null,
-          userId ?? null,
+          partition,
           type,
           schemaVersion,
           toSerializedJson(payload),
-          toSerializedJson(normalizeMeta(meta)),
+          payloadCompression ?? null,
+          parseIntSafe(meta?.clientTs, 0),
           createdAt,
         ],
       );
@@ -429,26 +463,24 @@ export const createLibsqlClientStore = (
             `
               INSERT INTO local_drafts(
                 id,
-                partitions,
-                project_id,
-                user_id,
+                partition,
                 type,
                 schema_version,
                 payload,
-                meta,
+                payload_compression,
+                client_ts,
                 created_at
               )
-              VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+              VALUES(?, ?, ?, ?, ?, ?, ?, ?)
             `,
             [
               item.id,
-              toSerializedJson(item.partitions),
-              item.projectId ?? null,
-              item.userId ?? null,
+              item.partition,
               item.type,
               item.schemaVersion,
               toSerializedJson(item.payload),
-              toSerializedJson(normalizeMeta(item.meta)),
+              item.payloadCompression ?? null,
+              parseIntSafe(item.meta?.clientTs, 0),
               item.createdAt,
             ],
           );
@@ -459,7 +491,7 @@ export const createLibsqlClientStore = (
     loadDraftsOrdered: async () => {
       await ensureInitialized();
       const rows = await db.queryAll(`
-        SELECT draft_clock, id, partitions, project_id, user_id, type, schema_version, payload, meta, created_at
+        SELECT draft_clock, id, partition, type, schema_version, payload, payload_compression, client_ts, created_at
         FROM local_drafts
         ORDER BY draft_clock ASC, id ASC
       `);
@@ -473,7 +505,7 @@ export const createLibsqlClientStore = (
       if (result.status === "committed") {
         const draft = await db.queryOne(
           `
-            SELECT draft_clock, id, partitions, project_id, user_id, type, schema_version, payload, meta, created_at
+            SELECT draft_clock, id, partition, type, schema_version, payload, payload_compression, client_ts, created_at
             FROM local_drafts
             WHERE id = ?
           `,
@@ -485,7 +517,7 @@ export const createLibsqlClientStore = (
           const nextCommittedEvent = buildCommittedEventFromDraft({
             draft: parsedDraft,
             committedId: result.committedId,
-            created: result.created,
+            serverTs: result.serverTs,
           });
           const insertResult = await db.execute(
             `
@@ -494,25 +526,29 @@ export const createLibsqlClientStore = (
                 id,
                 project_id,
                 user_id,
-                partitions,
+                partition,
                 type,
                 schema_version,
                 payload,
-                meta,
-                created
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              payload_compression,
+              client_ts,
+              server_ts,
+              created_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `,
             [
               nextCommittedEvent.committedId,
               nextCommittedEvent.id,
               nextCommittedEvent.projectId ?? null,
               nextCommittedEvent.userId ?? null,
-              toSerializedJson(nextCommittedEvent.partitions),
+              nextCommittedEvent.partition,
               nextCommittedEvent.type,
               nextCommittedEvent.schemaVersion,
               toSerializedJson(nextCommittedEvent.payload),
-              toSerializedJson(nextCommittedEvent.meta),
-              nextCommittedEvent.created,
+              nextCommittedEvent.payloadCompression ?? null,
+              parseIntSafe(nextCommittedEvent.meta?.clientTs, 0),
+              nextCommittedEvent.serverTs,
+              Date.now(),
             ],
           );
 
@@ -545,25 +581,29 @@ export const createLibsqlClientStore = (
               id,
               project_id,
               user_id,
-              partitions,
+              partition,
               type,
               schema_version,
               payload,
-              meta,
-              created
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            payload_compression,
+            client_ts,
+            server_ts,
+            created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `,
           [
             event.committedId,
             event.id,
             event.projectId ?? null,
             event.userId ?? null,
-            toSerializedJson(event.partitions),
+            event.partition,
             event.type,
             event.schemaVersion,
             toSerializedJson(event.payload),
-            toSerializedJson(normalizeMeta(event.meta)),
-            event.created,
+            event.payloadCompression ?? null,
+            parseIntSafe(event.meta?.clientTs, 0),
+            event.serverTs,
+            event.createdAt ?? Date.now(),
           ],
         );
 
@@ -597,14 +637,6 @@ export const createLibsqlClientStore = (
       });
     },
 
-    loadMaterializedViews: async ({ viewName, partitions }) => {
-      await ensureInitialized();
-      return materializedViewRuntime.loadMaterializedViews({
-        viewName,
-        partitions,
-      });
-    },
-
     evictMaterializedView: async ({ viewName, partition }) => {
       await ensureInitialized();
       await materializedViewRuntime.evictMaterializedView({
@@ -630,7 +662,7 @@ export const createLibsqlClientStore = (
       getDrafts: async () => {
         await ensureInitialized();
         const rows = await db.queryAll(`
-          SELECT draft_clock, id, partitions, project_id, user_id, type, schema_version, payload, meta, created_at
+          SELECT draft_clock, id, partition, type, schema_version, payload, payload_compression, client_ts, created_at
           FROM local_drafts
           ORDER BY draft_clock ASC, id ASC
         `);
@@ -639,7 +671,7 @@ export const createLibsqlClientStore = (
       getCommitted: async () => {
         await ensureInitialized();
         const rows = await db.queryAll(`
-          SELECT committed_id, id, project_id, user_id, partitions, type, schema_version, payload, meta, created
+          SELECT committed_id, id, project_id, user_id, partition, type, schema_version, payload, payload_compression, client_ts, server_ts, created_at
           FROM committed_events
           ORDER BY committed_id ASC
         `);

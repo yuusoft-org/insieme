@@ -14,13 +14,13 @@ const sortDrafts = (left, right) => {
  * In-memory client store implementing the simplified client storage interface.
  */
 export const createInMemoryClientStore = ({ materializedViews } = {}) => {
-  /** @type {{ draftClock: number, id: string, partitions: string[], projectId?: string, userId?: string, type: string, schemaVersion: number, payload: object, meta: object, createdAt: number }[]} */
+  /** @type {{ draftClock: number, id: string, partition: string, projectId?: string, userId?: string, type: string, schemaVersion: number, payload: object, meta: object, createdAt: number }[]} */
   const drafts = [];
 
-  /** @type {{ committedId: number, id: string, projectId?: string, userId?: string, partitions: string[], type: string, schemaVersion: number, payload: object, meta: object, created: number }[]} */
+  /** @type {{ committedId: number, id: string, projectId?: string, userId?: string, partition: string, type: string, schemaVersion: number, payload: object, meta: object, serverTs: number, createdAt?: number }[]} */
   const committed = [];
 
-  /** @type {Map<string, { comparisonKey: string, committedEvent: { committedId: number, id: string, projectId?: string, userId?: string, partitions: string[], type: string, schemaVersion: number, payload: object, meta: object, created: number } }>} */
+  /** @type {Map<string, { comparisonKey: string, committedEvent: { committedId: number, id: string, projectId?: string, userId?: string, partition: string, type: string, schemaVersion: number, payload: object, meta: object, serverTs: number, createdAt?: number } }>} */
   const committedById = new Map();
 
   const materializedViewDefinitions =
@@ -47,7 +47,7 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
 
   const toComparisonKey = (event) =>
     canonicalizeSubmitItem({
-      partitions: event.partitions,
+      partition: event.partition,
       projectId: event.projectId,
       userId: event.userId,
       type: event.type,
@@ -95,7 +95,7 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
       const nextDrafts = items.map(
         ({
           id,
-          partitions,
+          partition,
           projectId,
           userId,
           type,
@@ -116,7 +116,7 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
           return {
             draftClock: nextDraftClock,
             id,
-            partitions: [...partitions],
+            partition,
             projectId,
             userId,
             type,
@@ -136,7 +136,7 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
 
     insertDraft: async ({
       id,
-      partitions,
+      partition,
       projectId,
       userId,
       type,
@@ -153,7 +153,7 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
       drafts.push({
         draftClock: nextDraftClock,
         id,
-        partitions: [...partitions],
+        partition,
         projectId,
         userId,
         type,
@@ -174,7 +174,7 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
           const committedEvent = buildCommittedEventFromDraft({
             draft,
             committedId: result.committedId,
-            created: result.created,
+            serverTs: result.serverTs,
           });
           if (upsertCommitted(committedEvent)) {
             await materializedViewRuntime.onCommittedEvent(committedEvent);
@@ -207,12 +207,6 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
         partition,
       });
     },
-
-    loadMaterializedViews: async ({ viewName, partitions }) =>
-      materializedViewRuntime.loadMaterializedViews({
-        viewName,
-        partitions,
-      }),
 
     evictMaterializedView: async ({ viewName, partition }) =>
       materializedViewRuntime.evictMaterializedView({
