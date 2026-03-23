@@ -24,6 +24,16 @@ const createCounterDefinitions = (checkpoint = { mode: "manual" }) =>
     },
   ]);
 
+const loadViews = async (runtime, viewName, partitions) =>
+  Object.fromEntries(
+    await Promise.all(
+      partitions.map(async (partition) => [
+        partition,
+        await runtime.loadMaterializedView({ viewName, partition }),
+      ]),
+    ),
+  );
+
 afterEach(() => {
   vi.useRealTimers();
 });
@@ -47,9 +57,9 @@ describe("src materialized-view-runtime", () => {
       listCommittedAfter: async () => [
         {
           committedId: 1,
-          partitions: ["P1"],
+          partition: "P1",
           event: { type: "increment", payload: {} },
-          status_updated_at: 10,
+          serverTs: 10,
         },
       ],
       loadCheckpoint: async () => ({
@@ -103,21 +113,21 @@ describe("src materialized-view-runtime", () => {
 
     await runtime.onCommittedEvent({
       committedId: 1,
-      partitions: ["P1"],
+      partition: "P1",
       event: { type: "increment", payload: {} },
-      status_updated_at: 10,
+      serverTs: 10,
     });
     await runtime.onCommittedEvent({
       committedId: 2,
-      partitions: ["P1"],
+      partition: "P1",
       event: { type: "increment", payload: {} },
-      status_updated_at: 11,
+      serverTs: 11,
     });
     await runtime.onCommittedEvent({
       committedId: 3,
-      partitions: ["P1"],
+      partition: "P1",
       event: { type: "increment", payload: {} },
-      status_updated_at: 12,
+      serverTs: 12,
     });
 
     await vi.advanceTimersByTimeAsync(19);
@@ -133,25 +143,25 @@ describe("src materialized-view-runtime", () => {
     ]);
   });
 
-  it("supports chunked multi-partition replay for batch reads", async () => {
+  it("supports chunked multi-partition replay via repeated loads", async () => {
     const committedEvents = [
       {
         committedId: 1,
-        partitions: ["P1"],
+        partition: "P1",
         event: { type: "increment", payload: {} },
-        status_updated_at: 10,
+        serverTs: 10,
       },
       {
         committedId: 2,
-        partitions: ["P1", "P2"],
+        partition: "P1",
         event: { type: "increment", payload: {} },
-        status_updated_at: 11,
+        serverTs: 11,
       },
       {
         committedId: 3,
-        partitions: ["P2"],
+        partition: "P2",
         event: { type: "increment", payload: {} },
-        status_updated_at: 12,
+        serverTs: 12,
       },
     ];
     const runtime = createMaterializedViewRuntime({
@@ -164,14 +174,9 @@ describe("src materialized-view-runtime", () => {
           .slice(0, limit),
     });
 
-    expect(
-      await runtime.loadMaterializedViews({
-        viewName: "counter",
-        partitions: ["P1", "P2"],
-      }),
-    ).toEqual({
+    expect(await loadViews(runtime, "counter", ["P1", "P2"])).toEqual({
       P1: { count: 2 },
-      P2: { count: 2 },
+      P2: { count: 1 },
     });
   });
 
@@ -201,17 +206,17 @@ describe("src materialized-view-runtime", () => {
 
     await runtime.onCommittedEvent({
       committedId: 1,
-      partitions: ["P1"],
+      partition: "P1",
       event: { type: "increment", payload: {} },
-      status_updated_at: 10,
+      serverTs: 10,
     });
     expect(checkpointWrites).toHaveLength(0);
 
     await runtime.onCommittedEvent({
       committedId: 2,
-      partitions: ["P1"],
+      partition: "P1",
       event: { type: "increment", payload: {} },
-      status_updated_at: 11,
+      serverTs: 11,
     });
 
     expect(checkpointWrites).toEqual([
@@ -249,9 +254,9 @@ describe("src materialized-view-runtime", () => {
 
     await runtime.onCommittedEvent({
       committedId: 1,
-      partitions: ["P1"],
+      partition: "P1",
       event: { type: "increment", payload: {} },
-      status_updated_at: 10,
+      serverTs: 10,
     });
 
     await vi.advanceTimersByTimeAsync(19);
@@ -279,9 +284,19 @@ describe("src materialized-view-runtime", () => {
           return [
             {
               committedId: 1,
-              partitions: ["P1"],
+              partition: "P1",
               event: { type: "increment", payload: {} },
-              status_updated_at: 10,
+              serverTs: 10,
+            },
+          ];
+        }
+        if (sinceCommittedId === 1) {
+          return [
+            {
+              committedId: 2,
+              partition: "P1",
+              event: { type: "increment", payload: {} },
+              serverTs: 11,
             },
           ];
         }
@@ -298,9 +313,9 @@ describe("src materialized-view-runtime", () => {
     latestCommittedId = 2;
     const commitDuringRead = runtime.onCommittedEvent({
       committedId: 2,
-      partitions: ["P1"],
+      partition: "P1",
       event: { type: "increment", payload: {} },
-      status_updated_at: 11,
+      serverTs: 11,
     });
 
     hydrateGate.resolve();
@@ -351,9 +366,9 @@ describe("src materialized-view-runtime", () => {
 
     await runtime.onCommittedEvent({
       committedId: 1,
-      partitions: ["P1"],
+      partition: "P1",
       event: { type: "increment", payload: {} },
-      status_updated_at: 10,
+      serverTs: 10,
     });
 
     await new Promise((resolve) => setTimeout(resolve, 5));
@@ -390,9 +405,9 @@ describe("src materialized-view-runtime", () => {
     });
     await runtime.onCommittedEvent({
       committedId: 1,
-      partitions: ["P1"],
+      partition: "P1",
       event: { type: "increment", payload: {} },
-      status_updated_at: 10,
+      serverTs: 10,
     });
 
     await vi.advanceTimersByTimeAsync(1);
@@ -416,9 +431,9 @@ describe("src materialized-view-runtime", () => {
     const committedEvents = [
       {
         committedId: 1,
-        partitions: ["P1"],
+        partition: "P1",
         event: { type: "increment", payload: {} },
-        status_updated_at: 10,
+        serverTs: 10,
       },
     ];
     const runtime = createMaterializedViewRuntime({
@@ -436,9 +451,9 @@ describe("src materialized-view-runtime", () => {
     });
     await runtime.onCommittedEvent({
       committedId: 1,
-      partitions: ["P1"],
+      partition: "P1",
       event: { type: "increment", payload: {} },
-      status_updated_at: 10,
+      serverTs: 10,
     });
 
     await runtime.evictMaterializedView({
@@ -458,21 +473,21 @@ describe("src materialized-view-runtime", () => {
     const committedEvents = [
       {
         committedId: 1,
-        partitions: ["P1"],
+        partition: "P1",
         event: { type: "increment", payload: {} },
-        status_updated_at: 10,
+        serverTs: 10,
       },
       {
         committedId: 2,
-        partitions: ["P2"],
+        partition: "P2",
         event: { type: "increment", payload: {} },
-        status_updated_at: 11,
+        serverTs: 11,
       },
       {
         committedId: 3,
-        partitions: ["P1", "P2"],
+        partition: "P1",
         event: { type: "increment", payload: {} },
-        status_updated_at: 12,
+        serverTs: 12,
       },
     ];
     const runtime = createMaterializedViewRuntime({
@@ -490,20 +505,17 @@ describe("src materialized-view-runtime", () => {
         viewName: "counter",
         partition: "P1",
       }),
-      runtime.loadMaterializedViews({
-        viewName: "counter",
-        partitions: ["P1", "P2"],
-      }),
+      loadViews(runtime, "counter", ["P1", "P2"]),
     ]);
 
     expect(singleP1).toEqual({ count: 2 });
     expect(batched).toEqual({
       P1: { count: 2 },
-      P2: { count: 2 },
+      P2: { count: 1 },
     });
   });
 
-  it("rejects invalid batch loads and ignores partitionless committed events", async () => {
+  it("rejects invalid single loads and ignores partitionless committed events", async () => {
     const runtime = createMaterializedViewRuntime({
       definitions: createCounterDefinitions(),
       getLatestCommittedId: async () => 0,
@@ -511,18 +523,18 @@ describe("src materialized-view-runtime", () => {
     });
 
     await expect(
-      runtime.loadMaterializedViews({
+      runtime.loadMaterializedView({
         viewName: "counter",
-        partitions: "P1",
+        partition: "",
       }),
-    ).rejects.toThrow("loadMaterializedViews requires partitions array");
+    ).rejects.toThrow("loadMaterializedView requires a non-empty partition");
 
     await runtime.onCommittedEvent();
     await runtime.onCommittedEvent({
       committedId: 1,
-      partitions: [],
+      partition: "",
       event: { type: "increment", payload: {} },
-      status_updated_at: 10,
+      serverTs: 10,
     });
 
     expect(

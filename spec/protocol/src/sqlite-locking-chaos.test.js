@@ -43,7 +43,7 @@ describeSqlite("src sqlite locking chaos", () => {
     await expectSqliteBusy(
       store.insertDraft({
         id: "evt-lock-1",
-        partitions: ["P1"],
+        partition: "P1",
         type: "x",
         schemaVersion: 1,
         payload: { n: 1 },
@@ -55,7 +55,7 @@ describeSqlite("src sqlite locking chaos", () => {
     lockerDb.exec("ROLLBACK;");
     await store.insertDraft({
       id: "evt-lock-1",
-      partitions: ["P1"],
+      partition: "P1",
       type: "x",
       schemaVersion: 1,
       payload: { n: 1 },
@@ -83,7 +83,8 @@ describeSqlite("src sqlite locking chaos", () => {
     await expectSqliteBusy(
       store.commitOrGetExisting({
         id: "evt-lock-2",
-        partitions: ["P1"],
+        partition: "P1",
+        projectId: "proj-1",
         type: "x",
         schemaVersion: 1,
         payload: { n: 2 },
@@ -95,7 +96,8 @@ describeSqlite("src sqlite locking chaos", () => {
     lockerDb.exec("ROLLBACK;");
     const committed = await store.commitOrGetExisting({
       id: "evt-lock-2",
-      partitions: ["P1"],
+      partition: "P1",
+      projectId: "proj-1",
       type: "x",
       schemaVersion: 1,
       payload: { n: 2 },

@@ -77,7 +77,7 @@ describe("src createCommandSyncSession", () => {
         userId: "u1",
         clientId: "c1",
       },
-      partitions: ["project:p1:story"],
+      projectId: "p1",
       transport,
       store,
       onCommittedCommand: (payload) => {
@@ -89,20 +89,20 @@ describe("src createCommandSyncSession", () => {
 
     transport.emit({
       type: "connected",
-      payload: { clientId: "c1", globalLastCommittedId: 0 },
+      payload: { clientId: "c1", projectId: "p1", projectLastCommittedId: 0 },
     });
     await tick();
 
     transport.emit({
       type: "sync_response",
       payload: {
-        partitions: ["project:p1:story"],
+        projectId: "p1",
         events: [
           {
             id: "cmd-1",
             projectId: "p1",
             userId: "u2",
-            partitions: ["project:p1:story"],
+            partition: "project:p1:story",
             committedId: 1,
             type: "scene.create",
             schemaVersion: 1,
@@ -114,7 +114,7 @@ describe("src createCommandSyncSession", () => {
               clientTs: 1,
               foo: "bar",
             },
-            created: 1,
+            serverTs: 1,
           },
         ],
         nextSinceCommittedId: 1,
@@ -145,7 +145,7 @@ describe("src createCommandSyncSession", () => {
         userId: "u1",
         clientId: "c1",
       },
-      partitions: ["project:p1:story"],
+      projectId: "p1",
       transport,
       store,
     });
@@ -153,13 +153,13 @@ describe("src createCommandSyncSession", () => {
     await session.start();
     transport.emit({
       type: "connected",
-      payload: { clientId: "c1", globalLastCommittedId: 0 },
+      payload: { clientId: "c1", projectId: "p1", projectLastCommittedId: 0 },
     });
     await tick();
     transport.emit({
       type: "sync_response",
       payload: {
-        partitions: ["project:p1:story"],
+        projectId: "p1",
         events: [],
         nextSinceCommittedId: 0,
         hasMore: false,
@@ -181,7 +181,7 @@ describe("src createCommandSyncSession", () => {
         projectId: "p1",
         clientTs: 5,
         schemaVersion: 1,
-        partitions: ["project:p1:story"],
+        partition: "project:p1:story",
       },
     ]);
 
@@ -206,7 +206,7 @@ describe("src createCommandSyncSession", () => {
         userId: "u1",
         clientId: "c1",
       },
-      partitions: ["project:p1:story"],
+      projectId: "p1",
       transport,
       store,
     });
@@ -214,13 +214,13 @@ describe("src createCommandSyncSession", () => {
     await session.start();
     transport.emit({
       type: "connected",
-      payload: { clientId: "c1", globalLastCommittedId: 0 },
+      payload: { clientId: "c1", projectId: "p1", projectLastCommittedId: 0 },
     });
     await tick();
     transport.emit({
       type: "sync_response",
       payload: {
-        partitions: ["project:p1:story"],
+        projectId: "p1",
         events: [],
         nextSinceCommittedId: 0,
         hasMore: false,
@@ -237,7 +237,7 @@ describe("src createCommandSyncSession", () => {
         projectId: "p1",
         clientTs: 5,
         schemaVersion: 1,
-        partitions: ["project:p1:story"],
+        partition: "project:p1:story",
       },
       {
         id: "cmd-batch-2",
@@ -247,7 +247,7 @@ describe("src createCommandSyncSession", () => {
         projectId: "p1",
         clientTs: 6,
         schemaVersion: 1,
-        partitions: ["project:p1:story"],
+        partition: "project:p1:story",
       },
     ]);
 
@@ -268,7 +268,7 @@ describe("src createCommandSyncSession", () => {
         userId: "u1",
         clientId: "c1",
       },
-      partitions: ["project:p1:story"],
+      projectId: "p1",
       transport,
       store,
       onEvent: (entry) => {
@@ -283,19 +283,19 @@ describe("src createCommandSyncSession", () => {
     expect(session.getStatus()).toMatchObject({
       started: false,
       connected: false,
-      activePartitions: ["project:p1:story"],
+      activeProjectId: "p1",
     });
 
     await session.start();
     transport.emit({
       type: "connected",
-      payload: { clientId: "c1", globalLastCommittedId: 0 },
+      payload: { clientId: "c1", projectId: "p1", projectLastCommittedId: 0 },
     });
     await tick();
     transport.emit({
       type: "sync_response",
       payload: {
-        partitions: ["project:p1:story"],
+        projectId: "p1",
         events: [],
         nextSinceCommittedId: 0,
         hasMore: false,
@@ -311,7 +311,7 @@ describe("src createCommandSyncSession", () => {
 
     const submittedId = await session.submitEvent({
       id: "evt-direct-1",
-      partitions: ["project:p1:story"],
+      partition: "project:p1:story",
       projectId: "p1",
       userId: "u1",
       type: "scene.create",

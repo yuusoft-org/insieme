@@ -100,7 +100,7 @@ describeSqlite("src sqlite end-to-end reliability", () => {
     await serverStore.init();
     let server = createSyncServer({
       auth: { verifyToken: async () => ({ clientId: "C1", claims: {} }) },
-      authz: { authorizePartitions: async () => true },
+      authz: { authorizeProject: async () => true },
       validation: { validate: async () => {} },
       store: serverStore,
       clock: { now: createNowFactory(1000) },
@@ -116,7 +116,7 @@ describeSqlite("src sqlite end-to-end reliability", () => {
       store: clientStore,
       token: "C1",
       clientId: "C1",
-      partitions: ["P1"],
+      projectId: "proj-1",
       now: createNowFactory(2000),
       uuid: createUuidFactory("online"),
     });
@@ -124,13 +124,13 @@ describeSqlite("src sqlite end-to-end reliability", () => {
     await client.start();
     await tick();
     await client.submitEvent({
-      partitions: ["P1"],
+      partition: "P1",
       type: "x",
       schemaVersion: 1,
       payload: { n: 1 },
     });
     await client.submitEvent({
-      partitions: ["P1"],
+      partition: "P1",
       type: "x",
       schemaVersion: 1,
       payload: { n: 2 },
@@ -148,7 +148,7 @@ describeSqlite("src sqlite end-to-end reliability", () => {
     await clientStore.init();
     await clientStore.insertDraft({
       id: "offline-3",
-      partitions: ["P1"],
+      partition: "P1",
       type: "x",
       schemaVersion: 1,
       payload: { n: 3 },
@@ -162,7 +162,7 @@ describeSqlite("src sqlite end-to-end reliability", () => {
     await serverStore.init();
     server = createSyncServer({
       auth: { verifyToken: async () => ({ clientId: "C1", claims: {} }) },
-      authz: { authorizePartitions: async () => true },
+      authz: { authorizeProject: async () => true },
       validation: { validate: async () => {} },
       store: serverStore,
       clock: { now: createNowFactory(4000) },
@@ -178,14 +178,18 @@ describeSqlite("src sqlite end-to-end reliability", () => {
       store: clientStore,
       token: "C1",
       clientId: "C1",
-      partitions: ["P1"],
+      projectId: "proj-1",
       now: createNowFactory(5000),
       uuid: createUuidFactory("unused"),
     });
 
     await client.start();
+    await tick();
+    await tick();
+    await tick();
+    await tick();
     await client.flushDrafts();
-    await client.syncNow();
+    await tick();
     await tick();
 
     const clientDrafts = clientDb._raw

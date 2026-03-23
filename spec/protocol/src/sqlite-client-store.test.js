@@ -26,7 +26,7 @@ afterEach(() => {
 const describeSqlite = hasNodeSqlite ? describe : describe.skip;
 const makeDraft = ({
   id = "evt-1",
-  partitions = ["P1"],
+  partition = "P1",
   type = "x",
   schemaVersion = 1,
   payload = { n: 1 },
@@ -35,7 +35,7 @@ const makeDraft = ({
   createdAt = 100,
 } = {}) => ({
   id,
-  partitions,
+  partition,
   type,
   schemaVersion,
   payload,
@@ -45,24 +45,36 @@ const makeDraft = ({
 
 const makeCommitted = ({
   id = "evt-1",
-  partitions = ["P1"],
+  partition = "P1",
+  projectId = "proj-1",
   committedId = 1,
   type = "x",
   schemaVersion = 1,
   payload = { n: 1 },
   clientId = "C1",
   clientTs = 10,
-  created = 10,
+  serverTs = 10,
 } = {}) => ({
   id,
-  partitions,
+  partition,
+  projectId,
   committedId,
   type,
   schemaVersion,
   payload,
   meta: { clientId, clientTs },
-  created,
+  serverTs,
 });
+
+const loadViews = async (store, viewName, partitions) =>
+  Object.fromEntries(
+    await Promise.all(
+      partitions.map(async (partition) => [
+        partition,
+        await store.loadMaterializedView({ viewName, partition }),
+      ]),
+    ),
+  );
 
 describeSqlite("src createSqliteClientStore", () => {
   it("runs migrations and sets schema version", async () => {
@@ -72,7 +84,7 @@ describeSqlite("src createSqliteClientStore", () => {
     await store.init();
 
     const row = db._raw.prepare("PRAGMA user_version").get();
-    expect(row.user_version).toBe(2);
+    expect(row.user_version).toBe(3);
 
     db.close();
   });
@@ -92,7 +104,7 @@ describeSqlite("src createSqliteClientStore", () => {
           id: "evt-1",
           status: "committed",
           committedId: 5,
-          created: 500,
+          serverTs: 500,
         },
       });
 
@@ -138,7 +150,7 @@ describeSqlite("src createSqliteClientStore", () => {
 
     await expect(
       store.applyCommittedBatch({
-        events: [makeCommitted({ committedId: 9, created: 11, clientTs: 11 })],
+        events: [makeCommitted({ committedId: 9, serverTs: 11, clientTs: 11 })],
       }),
     ).rejects.toThrow("committed event invariant violation");
 
@@ -161,7 +173,7 @@ describeSqlite("src createSqliteClientStore", () => {
           makeCommitted({
             id: "evt-2",
             payload: { n: 2 },
-            created: 11,
+            serverTs: 11,
             clientTs: 11,
           }),
         ],
@@ -193,18 +205,27 @@ describeSqlite("src createSqliteClientStore", () => {
 
       await store.applyCommittedBatch({
         events: [
-          makeCommitted({ type: "increment", payload: {}, created: 10, clientTs: 10 }),
+          makeCommitted({ type: "increment", payload: {}, serverTs: 10, clientTs: 10 }),
           makeCommitted({
             id: "evt-2",
-            partitions: ["P1", "P2"],
             committedId: 2,
+            partition: "P1",
             type: "increment",
             payload: {},
-            created: 11,
+            serverTs: 11,
             clientTs: 11,
           }),
+          makeCommitted({
+            id: "evt-3",
+            committedId: 3,
+            partition: "P2",
+            type: "increment",
+            payload: {},
+            serverTs: 12,
+            clientTs: 12,
+          }),
         ],
-        nextCursor: 2,
+        nextCursor: 3,
       });
 
       db.close();
@@ -265,19 +286,14 @@ describeSqlite("src createSqliteClientStore", () => {
     });
     await store.init();
 
-    await store.applyCommittedBatch({
-      events: [
-        makeCommitted({ type: "increment", payload: {}, created: 10, clientTs: 10 }),
-      ],
+      await store.applyCommittedBatch({
+        events: [
+          makeCommitted({ type: "increment", payload: {}, serverTs: 10, clientTs: 10 }),
+        ],
       nextCursor: 1,
     });
 
-    expect(
-      await store.loadMaterializedViews({
-        viewName: "counter",
-        partitions: ["P1"],
-      }),
-    ).toEqual({
+    expect(await loadViews(store, "counter", ["P1"])).toEqual({
       P1: { count: 1 },
     });
 
@@ -338,12 +354,12 @@ describeSqlite("src createSqliteClientStore", () => {
     });
     await store.init();
 
-    await store.applyCommittedBatch({
-      events: [
-        makeCommitted({ type: "increment", payload: {}, created: 10, clientTs: 10 }),
-      ],
-      nextCursor: 1,
-    });
+      await store.applyCommittedBatch({
+        events: [
+          makeCommitted({ type: "increment", payload: {}, serverTs: 10, clientTs: 10 }),
+        ],
+        nextCursor: 1,
+      });
 
     await store.evictMaterializedView({
       viewName: "counter",
@@ -381,18 +397,27 @@ describeSqlite("src createSqliteClientStore", () => {
 
       await store.applyCommittedBatch({
         events: [
-          makeCommitted({ type: "increment", payload: {}, created: 10, clientTs: 10 }),
+          makeCommitted({ type: "increment", payload: {}, serverTs: 10, clientTs: 10 }),
           makeCommitted({
             id: "evt-2",
-            partitions: ["P1", "P2"],
             committedId: 2,
+            partition: "P1",
             type: "increment",
             payload: {},
-            created: 11,
+            serverTs: 11,
             clientTs: 11,
           }),
+          makeCommitted({
+            id: "evt-3",
+            committedId: 3,
+            partition: "P2",
+            type: "increment",
+            payload: {},
+            serverTs: 12,
+            clientTs: 12,
+          }),
         ],
-        nextCursor: 2,
+        nextCursor: 3,
       });
 
       expect(
@@ -420,12 +445,7 @@ describeSqlite("src createSqliteClientStore", () => {
       });
       await store.init();
 
-      expect(
-        await store.loadMaterializedViews({
-          viewName: "counter",
-          partitions: ["P1", "P2"],
-        }),
-      ).toEqual({
+      expect(await loadViews(store, "counter", ["P1", "P2"])).toEqual({
         P1: { count: 2 },
         P2: { count: 1 },
       });
@@ -460,7 +480,7 @@ describeSqlite("src createSqliteClientStore", () => {
             committedId: cycle,
             type: "increment",
             payload: {},
-            created: cycle,
+            serverTs: cycle,
             clientTs: cycle,
           }),
         ],

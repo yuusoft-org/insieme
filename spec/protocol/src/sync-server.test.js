@@ -36,7 +36,7 @@ const createServer = ({
   const store = createInMemorySyncStore();
   const server = createSyncServer({
     auth: { verifyToken, validateSession },
-    authz: { authorizePartitions: authorize },
+    authz: { authorizeProject: authorize },
     validation: { validate },
     store,
     clock: { now },
@@ -46,33 +46,38 @@ const createServer = ({
   return { server, store };
 };
 
-const connectSession = async ({ session, clientId = "C1", token = "jwt" }) => {
+const connectSession = async ({
+  session,
+  clientId = "C1",
+  token = "jwt",
+  projectId = "proj-1",
+}) => {
   await session.receive({
     type: "connect",
     protocolVersion: "1.0",
-    payload: { token, clientId: clientId },
+    payload: { token, clientId, projectId },
   });
 };
 
-const syncSession = async ({ session, partitions = ["P1"], since = 0 }) => {
+const syncSession = async ({ session, projectId = "proj-1", since = 0 }) => {
   await session.receive({
     type: "sync",
     protocolVersion: "1.0",
-    payload: { partitions, sinceCommittedId: since, limit: 500 },
+    payload: { projectId, sinceCommittedId: since, limit: 500 },
   });
 };
 
 const toSubmitItem = ({
   id,
-  partitions = ["P1"],
+  partition = "P1",
   event = { type: "x", payload: {} },
   schemaVersion = 1,
-  projectId,
+  projectId = "proj-1",
   userId,
   meta,
 } = {}) => ({
   id,
-  partitions,
+  partition,
   projectId,
   userId,
   type: event.type,
@@ -94,14 +99,14 @@ describe("src createSyncServer", () => {
     await connectSession({ session: s1 });
     expect(c1.sent[0]).toMatchObject({
       type: "connected",
-      payload: { clientId: "C1", globalLastCommittedId: 0 },
+      payload: { clientId: "C1", projectId: "proj-1", projectLastCommittedId: 0 },
     });
 
     await syncSession({ session: s1 });
     expect(c1.sent[1]).toMatchObject({
       type: "sync_response",
       payload: {
-        partitions: ["P1"],
+        projectId: "proj-1",
         events: [],
         nextSinceCommittedId: 0,
         hasMore: false,
@@ -125,8 +130,8 @@ describe("src createSyncServer", () => {
 
     await connectSession({ session: s1, clientId: "C1", token: "jwt-c1" });
     await connectSession({ session: s2, clientId: "C2", token: "jwt-c2" });
-    await syncSession({ session: s1, partitions: ["P1"] });
-    await syncSession({ session: s2, partitions: ["P1"] });
+    await syncSession({ session: s1 });
+    await syncSession({ session: s2 });
 
     await s1.receive({
       type: "submit_events",
@@ -135,7 +140,7 @@ describe("src createSyncServer", () => {
         events: [
           toSubmitItem({
             id: "evt-1",
-            partitions: ["P1"],
+            partition: "P1",
             event: { type: "x", payload: {} },
           }),
         ],
@@ -159,7 +164,8 @@ describe("src createSyncServer", () => {
     expect(c2Broadcasts[0].payload).toMatchObject({
       id: "evt-1",
       committedId: 1,
-      partitions: ["P1"],
+      partition: "P1",
+      projectId: "proj-1",
     });
   });
 
@@ -177,7 +183,7 @@ describe("src createSyncServer", () => {
     const s1 = server.attachConnection(c1);
 
     await connectSession({ session: s1 });
-    await syncSession({ session: s1, partitions: ["P1"] });
+    await syncSession({ session: s1 });
 
     await s1.receive({
       type: "submit_events",
@@ -186,7 +192,7 @@ describe("src createSyncServer", () => {
         events: [
           toSubmitItem({
             id: "evt-bad-1",
-            partitions: ["P1"],
+            partition: "P1",
             event: { type: "x", payload: {} },
           }),
         ],
@@ -217,8 +223,8 @@ describe("src createSyncServer", () => {
 
     await connectSession({ session: s1, clientId: "C1", token: "jwt-c1" });
     await connectSession({ session: s2, clientId: "C2", token: "jwt-c2" });
-    await syncSession({ session: s1, partitions: ["P1"] });
-    await syncSession({ session: s2, partitions: ["P1"] });
+    await syncSession({ session: s1 });
+    await syncSession({ session: s2 });
 
     await s1.receive({
       type: "submit_events",
@@ -227,12 +233,12 @@ describe("src createSyncServer", () => {
         events: [
           toSubmitItem({
             id: "evt-batch-1",
-            partitions: ["P1"],
+            partition: "P1",
             event: { type: "x", payload: { n: 1 } },
           }),
           toSubmitItem({
             id: "evt-batch-2",
-            partitions: ["P1"],
+            partition: "P1",
             event: { type: "x", payload: { n: 2 } },
           }),
         ],
@@ -280,7 +286,7 @@ describe("src createSyncServer", () => {
     const s1 = server.attachConnection(c1);
 
     await connectSession({ session: s1 });
-    await syncSession({ session: s1, partitions: ["P1"] });
+    await syncSession({ session: s1 });
 
     await s1.receive({
       type: "submit_events",
@@ -289,17 +295,17 @@ describe("src createSyncServer", () => {
         events: [
           toSubmitItem({
             id: "evt-ok-1",
-            partitions: ["P1"],
+            partition: "P1",
             event: { type: "x", payload: { n: 1 } },
           }),
           toSubmitItem({
             id: "evt-bad-2",
-            partitions: ["P1"],
+            partition: "P1",
             event: { type: "bad", payload: { n: 2 } },
           }),
           toSubmitItem({
             id: "evt-later-3",
-            partitions: ["P1"],
+            partition: "P1",
             event: { type: "x", payload: { n: 3 } },
           }),
         ],
@@ -328,7 +334,7 @@ describe("src createSyncServer", () => {
     ]);
 
     const committedPage = await store.listCommittedSince({
-      partitions: ["P1"],
+      projectId: "proj-1",
       sinceCommittedId: 0,
       limit: 10,
     });
@@ -341,7 +347,7 @@ describe("src createSyncServer", () => {
     const s1 = server.attachConnection(c1);
 
     await connectSession({ session: s1 });
-    await syncSession({ session: s1, partitions: ["P1"] });
+    await syncSession({ session: s1 });
 
     await s1.receive({
       type: "submit_events",
@@ -350,7 +356,7 @@ describe("src createSyncServer", () => {
         events: [
           toSubmitItem({
             id: "evt-invalid-1",
-            partitions: ["P1"],
+            partition: "P1",
             event: {
               type: "legacy.action",
               payload: {
@@ -377,7 +383,7 @@ describe("src createSyncServer", () => {
     const s1 = server.attachConnection(c1);
 
     await connectSession({ session: s1 });
-    await syncSession({ session: s1, partitions: ["P1"] });
+    await syncSession({ session: s1 });
 
     const submit = {
       type: "submit_events",
@@ -386,7 +392,7 @@ describe("src createSyncServer", () => {
         events: [
           toSubmitItem({
             id: "evt-retry-1",
-            partitions: ["P1"],
+            partition: "P1",
             event: { type: "x", payload: { n: 1 } },
           }),
         ],
@@ -412,7 +418,7 @@ describe("src createSyncServer", () => {
     const s1 = server.attachConnection(c1);
 
     await connectSession({ session: s1 });
-    await syncSession({ session: s1, partitions: ["P1"] });
+    await syncSession({ session: s1 });
 
     await s1.receive({
       type: "submit_events",
@@ -421,17 +427,17 @@ describe("src createSyncServer", () => {
         events: [
           toSubmitItem({
             id: "evt-dup-1",
-            partitions: ["P1"],
+            partition: "P1",
             event: { type: "x", payload: { n: 1 } },
           }),
           toSubmitItem({
             id: "evt-dup-1",
-            partitions: ["P1"],
+            partition: "P1",
             event: { type: "x", payload: { n: 2 } },
           }),
           toSubmitItem({
             id: "evt-after-2",
-            partitions: ["P1"],
+            partition: "P1",
             event: { type: "x", payload: { n: 3 } },
           }),
         ],
@@ -460,7 +466,7 @@ describe("src createSyncServer", () => {
     ]);
   });
 
-  it("uses partition-scoped syncToCommittedId", async () => {
+  it("uses project-scoped syncToCommittedId", async () => {
     const { server } = createServer();
     const c1 = createConnectionTransport("c1");
     const c2 = createConnectionTransport("c2");
@@ -469,7 +475,7 @@ describe("src createSyncServer", () => {
 
     await connectSession({ session: s1, clientId: "C1", token: "jwt" });
     await connectSession({ session: s2, clientId: "C1", token: "jwt" });
-    await syncSession({ session: s1, partitions: ["P1"] });
+    await syncSession({ session: s1 });
 
     await s1.receive({
       type: "submit_events",
@@ -478,7 +484,7 @@ describe("src createSyncServer", () => {
         events: [
           toSubmitItem({
             id: "evt-p1-1",
-            partitions: ["P1"],
+            partition: "P1",
             event: { type: "legacy.action", payload: { n: 1 } },
           }),
         ],
@@ -491,7 +497,7 @@ describe("src createSyncServer", () => {
         events: [
           toSubmitItem({
             id: "evt-p2-1",
-            partitions: ["P2"],
+            partition: "P2",
             event: { type: "legacy.action", payload: { n: 2 } },
           }),
         ],
@@ -504,21 +510,23 @@ describe("src createSyncServer", () => {
         events: [
           toSubmitItem({
             id: "evt-p1-2",
-            partitions: ["P1"],
+            partition: "P1",
             event: { type: "legacy.action", payload: { n: 3 } },
           }),
         ],
       },
     });
 
-    await syncSession({ session: s2, partitions: ["P2"], since: 0 });
+    await syncSession({ session: s2, since: 0 });
 
     const syncResponse = c2.sent.find((message) => message.type === "sync_response");
     expect(syncResponse).toBeTruthy();
     expect(syncResponse.payload.events.map((event) => event.id)).toEqual([
+      "evt-p1-1",
       "evt-p2-1",
+      "evt-p1-2",
     ]);
-    expect(syncResponse.payload.syncToCommittedId).toBe(2);
+    expect(syncResponse.payload.syncToCommittedId).toBe(3);
   });
 
   it("echoes request msgId on direct responses and errors", async () => {
@@ -530,7 +538,7 @@ describe("src createSyncServer", () => {
       type: "connect",
       protocolVersion: "1.0",
       msgId: "msg-connect-1",
-      payload: { token: "jwt", clientId: "C1" },
+      payload: { token: "jwt", clientId: "C1", projectId: "proj-1" },
     });
     expect(c1.sent[0]).toMatchObject({
       type: "connected",
@@ -541,7 +549,7 @@ describe("src createSyncServer", () => {
       type: "sync",
       protocolVersion: "1.0",
       msgId: "msg-sync-1",
-      payload: { partitions: ["P1"], sinceCommittedId: 0, limit: 500 },
+      payload: { projectId: "proj-1", sinceCommittedId: 0, limit: 500 },
     });
     expect(c1.sent[1]).toMatchObject({
       type: "sync_response",
@@ -580,7 +588,7 @@ describe("src createSyncServer", () => {
     const s1 = server.attachConnection(c1);
 
     await connectSession({ session: s1 });
-    await syncSession({ session: s1, partitions: ["P1"] });
+    await syncSession({ session: s1 });
 
     const firstReceive = s1.receive({
       type: "submit_events",
@@ -589,7 +597,7 @@ describe("src createSyncServer", () => {
         events: [
           toSubmitItem({
             id: "evt-slow-1",
-            partitions: ["P1"],
+            partition: "P1",
             event: { type: "x", payload: { n: 1 } },
           }),
         ],
@@ -602,7 +610,7 @@ describe("src createSyncServer", () => {
         events: [
           toSubmitItem({
             id: "evt-fast-2",
-            partitions: ["P1"],
+            partition: "P1",
             event: { type: "x", payload: { n: 2 } },
           }),
         ],
@@ -645,14 +653,14 @@ describe("src createSyncServer", () => {
     await s1.receive({
       type: "sync",
       protocolVersion: "1.0",
-      payload: { partitions: ["P1"], sinceCommittedId: 0, limit: 10 },
+      payload: { projectId: "proj-1", sinceCommittedId: 0, limit: 10 },
     });
 
     await s1.receive({
       type: "sync",
       protocolVersion: "1.0",
       msgId: "limit-msg",
-      payload: { partitions: ["P1"], sinceCommittedId: 0, limit: 10 },
+      payload: { projectId: "proj-1", sinceCommittedId: 0, limit: 10 },
     });
 
     const last = c1.sent[c1.sent.length - 1];
@@ -680,6 +688,7 @@ describe("src createSyncServer", () => {
       payload: {
         token: "x".repeat(200),
         clientId: "C1",
+        projectId: "proj-1",
       },
     });
 
@@ -708,7 +717,7 @@ describe("src createSyncServer", () => {
     expect(c1.sent[0].type).toBe("connected");
 
     active = false;
-    await syncSession({ session: s1, partitions: ["P1"] });
+    await syncSession({ session: s1 });
 
     const last = c1.sent[c1.sent.length - 1];
     expect(last).toMatchObject({
@@ -724,7 +733,7 @@ describe("src createSyncServer", () => {
     const seenLimits = [];
     const server = createSyncServer({
       auth: { verifyToken: async () => ({ clientId: "C1", claims: {} }) },
-      authz: { authorizePartitions: async () => true },
+      authz: { authorizeProject: async () => true },
       validation: { validate: async () => {} },
       store: {
         commitOrGetExisting: async () => {
@@ -738,7 +747,7 @@ describe("src createSyncServer", () => {
             nextSinceCommittedId: sinceCommittedId,
           };
         },
-        getMaxCommittedIdForPartitions: async () => 0,
+        getMaxCommittedIdForProject: async () => 0,
         getMaxCommittedId: async () => 0,
       },
       clock: { now: () => 1000 },
@@ -751,17 +760,17 @@ describe("src createSyncServer", () => {
     await s1.receive({
       type: "sync",
       protocolVersion: "1.0",
-      payload: { partitions: ["P1"], sinceCommittedId: 0, limit: 99999 },
+      payload: { projectId: "proj-1", sinceCommittedId: 0, limit: 99999 },
     });
     await s1.receive({
       type: "sync",
       protocolVersion: "1.0",
-      payload: { partitions: ["P1"], sinceCommittedId: 0, limit: -5 },
+      payload: { projectId: "proj-1", sinceCommittedId: 0, limit: -5 },
     });
     await s1.receive({
       type: "sync",
       protocolVersion: "1.0",
-      payload: { partitions: ["P1"], sinceCommittedId: 0 },
+      payload: { projectId: "proj-1", sinceCommittedId: 0 },
     });
 
     expect(seenLimits).toEqual([1000, 1, 500]);

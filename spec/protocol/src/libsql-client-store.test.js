@@ -27,7 +27,7 @@ const describeLibsql = hasNodeLibsqlShim ? describe : describe.skip;
 
 const makeDraft = ({
   id = "evt-1",
-  partitions = ["P1"],
+  partition = "P1",
   type = "x",
   schemaVersion = 1,
   payload = { n: 1 },
@@ -36,7 +36,7 @@ const makeDraft = ({
   createdAt = 100,
 } = {}) => ({
   id,
-  partitions,
+  partition,
   type,
   schemaVersion,
   payload,
@@ -46,23 +46,25 @@ const makeDraft = ({
 
 const makeCommitted = ({
   id = "evt-1",
-  partitions = ["P1"],
+  partition = "P1",
+  projectId = "proj-1",
   committedId = 1,
   type = "x",
   schemaVersion = 1,
   payload = { n: 1 },
   clientId = "C1",
   clientTs = 10,
-  created = 10,
+  serverTs = 10,
 } = {}) => ({
   id,
-  partitions,
+  partition,
+  projectId,
   committedId,
   type,
   schemaVersion,
   payload,
   meta: { clientId, clientTs },
-  created,
+  serverTs,
 });
 
 const createCounterView = () => ({
@@ -74,6 +76,16 @@ const createCounterView = () => ({
   }),
 });
 
+const loadViews = async (store, viewName, partitions) =>
+  Object.fromEntries(
+    await Promise.all(
+      partitions.map(async (partition) => [
+        partition,
+        await store.loadMaterializedView({ viewName, partition }),
+      ]),
+    ),
+  );
+
 describeLibsql("src createLibsqlClientStore", () => {
   it("runs migrations and sets schema version", async () => {
     const db = createLibsqlClient(":memory:");
@@ -82,7 +94,7 @@ describeLibsql("src createLibsqlClientStore", () => {
     await store.init();
 
     const row = db._raw.prepare("PRAGMA user_version").get();
-    expect(row.user_version).toBe(2);
+    expect(row.user_version).toBe(3);
 
     db.close();
   });
@@ -97,7 +109,7 @@ describeLibsql("src createLibsqlClientStore", () => {
     await Promise.all([store.init(), store.init()]);
 
     const row = db._raw.prepare("PRAGMA user_version").get();
-    expect(row.user_version).toBe(2);
+    expect(row.user_version).toBe(3);
 
     db.close();
   });
@@ -117,7 +129,7 @@ describeLibsql("src createLibsqlClientStore", () => {
           id: "evt-1",
           status: "committed",
           committedId: 5,
-          created: 500,
+          serverTs: 500,
         },
       });
 
@@ -163,7 +175,7 @@ describeLibsql("src createLibsqlClientStore", () => {
 
     await expect(
       store.applyCommittedBatch({
-        events: [makeCommitted({ committedId: 9, created: 11, clientTs: 11 })],
+        events: [makeCommitted({ committedId: 9, serverTs: 11, clientTs: 11 })],
       }),
     ).rejects.toThrow("committed event invariant violation");
 
@@ -186,7 +198,7 @@ describeLibsql("src createLibsqlClientStore", () => {
           makeCommitted({
             id: "evt-2",
             payload: { n: 2 },
-            created: 11,
+            serverTs: 11,
             clientTs: 11,
           }),
         ],
@@ -218,18 +230,27 @@ describeLibsql("src createLibsqlClientStore", () => {
 
       await store.applyCommittedBatch({
         events: [
-          makeCommitted({ type: "increment", payload: {}, created: 10, clientTs: 10 }),
+          makeCommitted({ type: "increment", payload: {}, serverTs: 10, clientTs: 10 }),
           makeCommitted({
             id: "evt-2",
-            partitions: ["P1", "P2"],
             committedId: 2,
+            partition: "P1",
             type: "increment",
             payload: {},
-            created: 11,
+            serverTs: 11,
             clientTs: 11,
           }),
+          makeCommitted({
+            id: "evt-3",
+            committedId: 3,
+            partition: "P2",
+            type: "increment",
+            payload: {},
+            serverTs: 12,
+            clientTs: 12,
+          }),
         ],
-        nextCursor: 2,
+        nextCursor: 3,
       });
 
       db.close();
@@ -282,18 +303,27 @@ describeLibsql("src createLibsqlClientStore", () => {
 
       await store.applyCommittedBatch({
         events: [
-          makeCommitted({ type: "increment", payload: {}, created: 10, clientTs: 10 }),
+          makeCommitted({ type: "increment", payload: {}, serverTs: 10, clientTs: 10 }),
           makeCommitted({
             id: "evt-2",
-            partitions: ["P1", "P2"],
             committedId: 2,
+            partition: "P1",
             type: "increment",
             payload: {},
-            created: 11,
+            serverTs: 11,
             clientTs: 11,
           }),
+          makeCommitted({
+            id: "evt-3",
+            committedId: 3,
+            partition: "P2",
+            type: "increment",
+            payload: {},
+            serverTs: 12,
+            clientTs: 12,
+          }),
         ],
-        nextCursor: 2,
+        nextCursor: 3,
       });
 
       expect(
@@ -312,12 +342,7 @@ describeLibsql("src createLibsqlClientStore", () => {
       });
       await store.init();
 
-      expect(
-        await store.loadMaterializedViews({
-          viewName: "counter",
-          partitions: ["P1", "P2"],
-        }),
-      ).toEqual({
+      expect(await loadViews(store, "counter", ["P1", "P2"])).toEqual({
         P1: { count: 2 },
         P2: { count: 1 },
       });
@@ -334,7 +359,7 @@ describeLibsql("src createLibsqlClientStore", () => {
     await store.init();
 
     await store.applyCommittedBatch({
-      events: [makeCommitted({ type: "increment", payload: {}, created: 10, clientTs: 10 })],
+      events: [makeCommitted({ type: "increment", payload: {}, serverTs: 10, clientTs: 10 })],
       nextCursor: 1,
     });
 
@@ -384,7 +409,7 @@ describeLibsql("src createLibsqlClientStore", () => {
         id: "evt-missing",
         status: "committed",
         committedId: 2,
-        created: 102,
+        serverTs: 102,
       },
     });
 
@@ -406,7 +431,7 @@ describeLibsql("src createLibsqlClientStore", () => {
         id: "evt-1",
         status: "committed",
         committedId: 1,
-        created: 101,
+        serverTs: 101,
       },
     });
 
@@ -416,7 +441,7 @@ describeLibsql("src createLibsqlClientStore", () => {
         id: "evt-1",
         status: "committed",
         committedId: 1,
-        created: 103,
+        serverTs: 103,
       },
     });
 
@@ -426,7 +451,7 @@ describeLibsql("src createLibsqlClientStore", () => {
           id: "evt-2",
           committedId: 2,
           payload: { n: 2 },
-          created: 104,
+          serverTs: 104,
           clientTs: 104,
         }),
       ],

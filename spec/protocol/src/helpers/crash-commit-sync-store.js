@@ -14,7 +14,8 @@ const store = createSqliteSyncStore(db);
 await store.init();
 await store.commitOrGetExisting({
   id: eventId,
-  partitions: ["P1"],
+  partition: "P1",
+  projectId: "proj-1",
   type: "x",
   schemaVersion: 1,
   payload: { n: 1 },

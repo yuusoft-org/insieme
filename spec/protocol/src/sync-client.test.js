@@ -92,7 +92,7 @@ const createStartedClient = async ({
   store,
   clientId = "C1",
   token = "jwt",
-  partitions = ["P1"],
+  projectId = "proj-1",
   clientOverrides = {},
 } = {}) => {
   const client = createSyncClient({
@@ -100,7 +100,7 @@ const createStartedClient = async ({
     store,
     token,
     clientId,
-    partitions,
+    projectId,
     now: () => 1000,
     uuid: () => "evt-local-1",
     ...clientOverrides,
@@ -124,24 +124,24 @@ describe("src createSyncClient", () => {
 
     expect(transport.sent[0]).toMatchObject({
       type: "connect",
-      payload: { token: "jwt", clientId: "C1" },
+      payload: { token: "jwt", clientId: "C1", projectId: "proj-1" },
     });
 
     transport.emit({
       type: "connected",
-      payload: { clientId: "C1", globalLastCommittedId: 0 },
+      payload: { clientId: "C1", projectId: "proj-1", projectLastCommittedId: 0 },
     });
     await tick();
 
     expect(transport.sent[1]).toMatchObject({
       type: "sync",
-      payload: { partitions: ["P1"], sinceCommittedId: 0, limit: 500 },
+      payload: { projectId: "proj-1", sinceCommittedId: 0, limit: 500 },
     });
 
     transport.emit({
       type: "sync_response",
       payload: {
-        partitions: ["P1"],
+        projectId: "proj-1",
         events: [],
         nextSinceCommittedId: 0,
         hasMore: false,
@@ -160,14 +160,14 @@ describe("src createSyncClient", () => {
 
     transport.emit({
       type: "connected",
-      payload: { clientId: "C1", globalLastCommittedId: 0 },
+      payload: { clientId: "C1", projectId: "proj-1", projectLastCommittedId: 0 },
     });
     await tick();
 
     transport.emit({
       type: "sync_response",
       payload: {
-        partitions: ["P1"],
+        projectId: "proj-1",
         events: [],
         nextSinceCommittedId: 0,
         hasMore: false,
@@ -176,7 +176,7 @@ describe("src createSyncClient", () => {
     await tick();
 
     const id = await client.submitEvent({
-      partitions: ["P1"],
+      partition: "P1",
       type: "x",
       schemaVersion: 1,
       payload: {},
@@ -197,7 +197,7 @@ describe("src createSyncClient", () => {
             id: "evt-local-1",
             status: "committed",
             committedId: 10,
-            created: 1111,
+            serverTs: 1111,
           },
         ],
       },
@@ -218,14 +218,14 @@ describe("src createSyncClient", () => {
 
     transport.emit({
       type: "connected",
-      payload: { clientId: "C1", globalLastCommittedId: 0 },
+      payload: { clientId: "C1", projectId: "proj-1", projectLastCommittedId: 0 },
     });
     await tick();
 
     transport.emit({
       type: "sync_response",
       payload: {
-        partitions: ["P1"],
+        projectId: "proj-1",
         events: [],
         nextSinceCommittedId: 0,
         hasMore: false,
@@ -234,7 +234,7 @@ describe("src createSyncClient", () => {
     await tick();
 
     await client.submitEvent({
-      partitions: ["P1"],
+      partition: "P1",
       type: "x",
       schemaVersion: 1,
       payload: {},
@@ -268,14 +268,14 @@ describe("src createSyncClient", () => {
 
     transport.emit({
       type: "connected",
-      payload: { clientId: "C1", globalLastCommittedId: 0 },
+      payload: { clientId: "C1", projectId: "proj-1", projectLastCommittedId: 0 },
     });
     await tick();
 
     transport.emit({
       type: "sync_response",
       payload: {
-        partitions: ["P1"],
+        projectId: "proj-1",
         events: [],
         nextSinceCommittedId: 0,
         hasMore: false,
@@ -285,7 +285,7 @@ describe("src createSyncClient", () => {
 
     await store.insertDraft({
       id: "evt-retry-1",
-      partitions: ["P1"],
+      partition: "P1",
       type: "x",
       schemaVersion: 1,
       payload: { a: 1 },
@@ -305,14 +305,14 @@ describe("src createSyncClient", () => {
 
     transport.emit({
       type: "connected",
-      payload: { clientId: "C1", globalLastCommittedId: 0 },
+      payload: { clientId: "C1", projectId: "proj-1", projectLastCommittedId: 0 },
     });
     await tick();
 
     transport.emit({
       type: "sync_response",
       payload: {
-        partitions: ["P1"],
+        projectId: "proj-1",
         events: [],
         nextSinceCommittedId: 0,
         hasMore: false,
@@ -323,7 +323,7 @@ describe("src createSyncClient", () => {
     store.loadDraftsOrdered.mockClear();
     await store.insertDraft({
       id: "evt-serial-1",
-      partitions: ["P1"],
+      partition: "P1",
       type: "x",
       schemaVersion: 1,
       payload: { n: 1 },
@@ -369,14 +369,14 @@ describe("src createSyncClient", () => {
 
     transport.emit({
       type: "connected",
-      payload: { clientId: "C1", globalLastCommittedId: 0 },
+      payload: { clientId: "C1", projectId: "proj-1", projectLastCommittedId: 0 },
     });
     await tick();
 
     transport.emit({
       type: "sync_response",
       payload: {
-        partitions: ["P1"],
+        projectId: "proj-1",
         events: [],
         nextSinceCommittedId: 0,
         hasMore: false,
@@ -385,9 +385,9 @@ describe("src createSyncClient", () => {
     await tick();
 
     const ids = await client.submitEvents([
-      { id: "evt-b1", partitions: ["P1"], type: "x", schemaVersion: 1, payload: { n: 1 } },
-      { id: "evt-b2", partitions: ["P1"], type: "x", schemaVersion: 1, payload: { n: 2 } },
-      { id: "evt-b3", partitions: ["P1"], type: "x", schemaVersion: 1, payload: { n: 3 } },
+      { id: "evt-b1", partition: "P1", type: "x", schemaVersion: 1, payload: { n: 1 } },
+      { id: "evt-b2", partition: "P1", type: "x", schemaVersion: 1, payload: { n: 2 } },
+      { id: "evt-b3", partition: "P1", type: "x", schemaVersion: 1, payload: { n: 3 } },
     ]);
 
     expect(ids).toEqual(["evt-b1", "evt-b2", "evt-b3"]);
@@ -407,8 +407,8 @@ describe("src createSyncClient", () => {
       type: "submit_events_result",
       payload: {
         results: [
-          { id: "evt-b1", status: "committed", committedId: 10, created: 1110 },
-          { id: "evt-b2", status: "committed", committedId: 11, created: 1111 },
+          { id: "evt-b1", status: "committed", committedId: 10, serverTs: 1110 },
+          { id: "evt-b2", status: "committed", committedId: 11, serverTs: 1111 },
         ],
       },
     });
@@ -426,14 +426,14 @@ describe("src createSyncClient", () => {
 
     transport.emit({
       type: "connected",
-      payload: { clientId: "C1", globalLastCommittedId: 0 },
+      payload: { clientId: "C1", projectId: "proj-1", projectLastCommittedId: 0 },
     });
     await tick();
 
     transport.emit({
       type: "sync_response",
       payload: {
-        partitions: ["P1"],
+        projectId: "proj-1",
         events: [],
         nextSinceCommittedId: 0,
         hasMore: false,
@@ -442,9 +442,9 @@ describe("src createSyncClient", () => {
     await tick();
 
     await client.submitEvents([
-      { id: "evt-np-1", partitions: ["P1"], type: "x", schemaVersion: 1, payload: { n: 1 } },
-      { id: "evt-np-2", partitions: ["P1"], type: "x", schemaVersion: 1, payload: { n: 2 } },
-      { id: "evt-np-3", partitions: ["P1"], type: "x", schemaVersion: 1, payload: { n: 3 } },
+      { id: "evt-np-1", partition: "P1", type: "x", schemaVersion: 1, payload: { n: 1 } },
+      { id: "evt-np-2", partition: "P1", type: "x", schemaVersion: 1, payload: { n: 2 } },
+      { id: "evt-np-3", partition: "P1", type: "x", schemaVersion: 1, payload: { n: 3 } },
     ]);
 
     let submits = transport.sent.filter((message) => message.type === "submit_events");
@@ -511,14 +511,14 @@ describe("src createSyncClient", () => {
 
     transport.emit({
       type: "connected",
-      payload: { clientId: "C1", globalLastCommittedId: 0 },
+      payload: { clientId: "C1", projectId: "proj-1", projectLastCommittedId: 0 },
     });
     await tick();
 
     transport.emit({
       type: "sync_response",
       payload: {
-        partitions: ["P1"],
+        projectId: "proj-1",
         events: [],
         nextSinceCommittedId: 0,
         hasMore: false,
@@ -528,7 +528,7 @@ describe("src createSyncClient", () => {
 
     await store.insertDraft({
       id: "evt-too-large-1",
-      partitions: ["P1"],
+      partition: "P1",
       type: "x",
       schemaVersion: 1,
       payload: { text: "x".repeat(512) },
@@ -573,14 +573,14 @@ describe("src createSyncClient", () => {
 
     transport.emit({
       type: "connected",
-      payload: { clientId: "C1", globalLastCommittedId: 0 },
+      payload: { clientId: "C1", projectId: "proj-1", projectLastCommittedId: 0 },
     });
     await tick();
 
     transport.emit({
       type: "sync_response",
       payload: {
-        partitions: ["P1"],
+        projectId: "proj-1",
         events: [],
         nextSinceCommittedId: 0,
         hasMore: false,
@@ -597,7 +597,7 @@ describe("src createSyncClient", () => {
 
     await expect(
       client.submitEvent({
-        partitions: ["P1"],
+        partition: "P1",
         type: "legacy.action",
         schemaVersion: 1,
         payload: { n: 1 },
@@ -627,14 +627,14 @@ describe("src createSyncClient", () => {
       client.submitEvents([
         {
           id: "evt-rollback-1",
-          partitions: ["P1"],
+          partition: "P1",
           type: "x",
           schemaVersion: 1,
           payload: { n: 1 },
         },
         {
           id: "evt-rollback-2",
-          partitions: ["P1"],
+          partition: "P1",
           type: "x",
           schemaVersion: 1,
           payload: { n: 2 },
@@ -652,14 +652,14 @@ describe("src createSyncClient", () => {
 
     transport.emit({
       type: "connected",
-      payload: { clientId: "C1", globalLastCommittedId: 5 },
+      payload: { clientId: "C1", projectId: "proj-1", projectLastCommittedId: 5 },
     });
     await tick();
 
     transport.emit({
       type: "sync_response",
       payload: {
-        partitions: ["P1"],
+        projectId: "proj-1",
         events: [{ id: "evt-1", committedId: 1 }],
         nextSinceCommittedId: 1,
         hasMore: true,
@@ -670,7 +670,7 @@ describe("src createSyncClient", () => {
     transport.emit({
       type: "sync_response",
       payload: {
-        partitions: ["P1"],
+        projectId: "proj-1",
         events: [{ id: "evt-2", committedId: 2 }],
         nextSinceCommittedId: 2,
         hasMore: false,
@@ -694,12 +694,12 @@ describe("src createSyncClient", () => {
 
     transport.emit({
       type: "connected",
-      payload: { clientId: "C1", globalLastCommittedId: 10 },
+      payload: { clientId: "C1", projectId: "proj-1", projectLastCommittedId: 10 },
     });
     await tick();
 
     await client.submitEvent({
-      partitions: ["P1"],
+      partition: "P1",
       type: "x",
       schemaVersion: 1,
       payload: { n: 1 },
@@ -713,7 +713,7 @@ describe("src createSyncClient", () => {
     store.loadDraftsOrdered.mockResolvedValue([
       {
         id: "evt-local-1",
-        partitions: ["P1"],
+        partition: "P1",
         type: "x",
         schemaVersion: 1,
         payload: { n: 1 },
@@ -725,7 +725,7 @@ describe("src createSyncClient", () => {
     transport.emit({
       type: "sync_response",
       payload: {
-        partitions: ["P1"],
+        projectId: "proj-1",
         events: [],
         nextSinceCommittedId: 10,
         hasMore: false,
@@ -756,19 +756,19 @@ describe("src createSyncClient", () => {
     expect(transport.disconnect).toHaveBeenCalledTimes(1);
   });
 
-  it("setPartitions triggers a new sync request", async () => {
+  it("syncNow triggers a new sync request for the active project", async () => {
     const client = await createStartedClient({ transport, store });
 
     transport.emit({
       type: "connected",
-      payload: { clientId: "C1", globalLastCommittedId: 0 },
+      payload: { clientId: "C1", projectId: "proj-1", projectLastCommittedId: 0 },
     });
     await tick();
 
     transport.emit({
       type: "sync_response",
       payload: {
-        partitions: ["P1"],
+        projectId: "proj-1",
         events: [],
         nextSinceCommittedId: 0,
         hasMore: false,
@@ -777,14 +777,14 @@ describe("src createSyncClient", () => {
     await tick();
 
     store.loadCursor.mockResolvedValue(42);
-    await client.setPartitions(["P2", "P3"], { sinceCommittedId: 42 });
+    await client.syncNow({ sinceCommittedId: 42 });
 
     const syncCalls = transport.sent.filter(
       (message) => message.type === "sync",
     );
     const latestSync = syncCalls[syncCalls.length - 1];
     expect(latestSync.payload).toMatchObject({
-      partitions: ["P2", "P3"],
+      projectId: "proj-1",
       sinceCommittedId: 42,
       limit: 500,
     });
@@ -795,7 +795,7 @@ describe("src createSyncClient", () => {
 
     transport.emit({
       type: "connected",
-      payload: { clientId: "C1", globalLastCommittedId: 10 },
+      payload: { clientId: "C1", projectId: "proj-1", projectLastCommittedId: 10 },
     });
     await tick();
 
@@ -814,7 +814,7 @@ describe("src createSyncClient", () => {
 
     transport.emit({
       type: "connected",
-      payload: { clientId: "C1", globalLastCommittedId: 90 },
+      payload: { clientId: "C1", projectId: "proj-1", projectLastCommittedId: 90 },
     });
     await tick();
 
@@ -830,14 +830,14 @@ describe("src createSyncClient", () => {
 
     transport.emit({
       type: "connected",
-      payload: { clientId: "C1", globalLastCommittedId: 1 },
+      payload: { clientId: "C1", projectId: "proj-1", projectLastCommittedId: 1 },
     });
     await tick();
 
     transport.emit({
       type: "sync_response",
       payload: {
-        partitions: ["P1"],
+        projectId: "proj-1",
         events: [],
         nextSinceCommittedId: 1,
         hasMore: false,
@@ -857,7 +857,7 @@ describe("src createSyncClient", () => {
     await expect(client.syncNow()).rejects.toThrow("network down");
 
     await client.submitEvent({
-      partitions: ["P1"],
+      partition: "P1",
       type: "x",
       schemaVersion: 1,
       payload: { n: 1 },
@@ -902,7 +902,7 @@ describe("src createSyncClient", () => {
     transport.emit({
       type: "sync_response",
       payload: {
-        partitions: ["P1"],
+        projectId: "proj-1",
         events: [],
         nextSinceCommittedId: 0,
         hasMore: false,
@@ -922,14 +922,14 @@ describe("src createSyncClient", () => {
       if (message.type === "connect") {
         transport.emit({
           type: "connected",
-          payload: { clientId: "C1", globalLastCommittedId: 0 },
+          payload: { clientId: "C1", projectId: "proj-1", projectLastCommittedId: 0 },
         });
       }
       if (message.type === "sync") {
         transport.emit({
           type: "sync_response",
           payload: {
-            partitions: ["P1"],
+            projectId: "proj-1",
             events: [],
             nextSinceCommittedId: 0,
             hasMore: false,
@@ -1019,7 +1019,7 @@ describe("src createSyncClient", () => {
     transport.emit({
       type: "connected",
       msgId: "cli-msg-1",
-      payload: { clientId: "C1", globalLastCommittedId: 0 },
+      payload: { clientId: "C1", projectId: "proj-1", projectLastCommittedId: 0 },
     });
     await tick();
 
@@ -1032,7 +1032,7 @@ describe("src createSyncClient", () => {
       type: "sync_response",
       msgId: "cli-msg-2",
       payload: {
-        partitions: ["P1"],
+        projectId: "proj-1",
         events: [],
         nextSinceCommittedId: 0,
         hasMore: false,
@@ -1041,7 +1041,7 @@ describe("src createSyncClient", () => {
     await tick();
 
     await client.submitEvent({
-      partitions: ["P1"],
+      partition: "P1",
       type: "x",
       schemaVersion: 1,
       payload: { n: 1 },
@@ -1061,7 +1061,7 @@ describe("src createSyncClient", () => {
             id: "evt-local-1",
             status: "committed",
             committedId: 1,
-            created: 1001,
+            serverTs: 1001,
           },
         ],
       },
@@ -1083,7 +1083,7 @@ describe("src createSyncClient", () => {
       store,
       token: "jwt",
       clientId: "C1",
-      partitions: ["P1"],
+      projectId: "proj-1",
       now: () => 1000,
       uuid: () => "evt-local-1",
     });
@@ -1095,7 +1095,7 @@ describe("src createSyncClient", () => {
       syncInFlight: false,
       reconnectInFlight: false,
       reconnectAttempts: 0,
-      activePartitions: ["P1"],
+      activeProjectId: "proj-1",
       lastError: null,
     });
 
@@ -1104,12 +1104,12 @@ describe("src createSyncClient", () => {
       started: true,
       stopped: false,
       connected: false,
-      activePartitions: ["P1"],
+      activeProjectId: "proj-1",
     });
 
     transport.emit({
       type: "connected",
-      payload: { clientId: "C1", globalLastCommittedId: 0 },
+      payload: { clientId: "C1", projectId: "proj-1", projectLastCommittedId: 0 },
     });
     await tick();
 
