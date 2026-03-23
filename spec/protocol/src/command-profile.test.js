@@ -34,6 +34,30 @@ describe("src command-profile", () => {
     });
   });
 
+  it("uses the default schemaVersion when the command omits one", () => {
+    expect(
+      commandToSyncEvent(
+        {
+          id: "cmd-default-schema",
+          partition: "project:proj-1:story",
+          type: "scene.create",
+          payload: { sceneId: "scene-1" },
+          actor: { userId: "u1", clientId: "c1" },
+          projectId: "proj-1",
+          clientTs: 1000,
+        },
+        { defaultSchemaVersion: 7 },
+      ),
+    ).toMatchObject({
+      partition: "project:proj-1:story",
+      projectId: "proj-1",
+      userId: "u1",
+      type: "scene.create",
+      schemaVersion: 7,
+      meta: { clientId: "c1", clientTs: 1000 },
+    });
+  });
+
   it("maps committed sync row to command envelope", () => {
     const command = committedSyncEventToCommand({
       id: "cmd-1",
@@ -67,6 +91,37 @@ describe("src command-profile", () => {
       },
       actor: { userId: "u1", clientId: "c1" },
     });
+  });
+
+  it("falls back to serverTs when committed meta omits clientTs", () => {
+    expect(
+      committedSyncEventToCommand({
+        id: "cmd-server-ts",
+        partition: "project:proj-1:story",
+        type: "scene.create",
+        schemaVersion: 1,
+        payload: { sceneId: "scene-1" },
+        meta: { clientId: "c1" },
+        serverTs: 4321,
+      }),
+    ).toMatchObject({
+      id: "cmd-server-ts",
+      projectId: undefined,
+      actor: { userId: undefined, clientId: "c1" },
+      clientTs: 4321,
+    });
+  });
+
+  it("returns null when the committed event is malformed", () => {
+    expect(
+      committedSyncEventToCommand({
+        id: "cmd-invalid",
+        partition: "project:proj-1:story",
+        type: "scene.create",
+        schemaVersion: 1,
+        payload: null,
+      }),
+    ).toBeNull();
   });
 
   it("preserves arbitrary normalized meta on validation", () => {
@@ -136,5 +191,66 @@ describe("src command-profile", () => {
         },
       }),
     ).toThrow("item.id is required");
+  });
+
+  it("rejects invalid optional and project-scoped validation fields", () => {
+    expect(() =>
+      validateCommandSubmitItem({
+        id: "cmd-bad-user",
+        partition: "project:proj-1:story",
+        projectId: "proj-1",
+        type: "scene.update",
+        schemaVersion: 1,
+        payload: {},
+        userId: "",
+        meta: {
+          clientId: "c1",
+          clientTs: 1000,
+        },
+      }),
+    ).toThrow("item.userId must be a non-empty string when provided");
+
+    expect(() =>
+      validateCommandSubmitItem({
+        id: "cmd-missing-project",
+        partition: "project:proj-1:story",
+        type: "scene.update",
+        schemaVersion: 1,
+        payload: {},
+        meta: {
+          clientId: "c1",
+          clientTs: 1000,
+        },
+      }),
+    ).toThrow("item.projectId is required");
+
+    expect(() =>
+      validateCommandSubmitItem({
+        id: "cmd-missing-client",
+        partition: "project:proj-1:story",
+        projectId: "proj-1",
+        type: "scene.update",
+        schemaVersion: 1,
+        payload: {},
+        meta: {
+          clientTs: 1000,
+        },
+      }),
+    ).toThrow("item.meta.clientId is required");
+
+    expect(() =>
+      validateCommandSubmitItem({
+        id: "cmd-bad-client-ts",
+        partition: "project:proj-1:story",
+        projectId: "proj-1",
+        type: "scene.update",
+        schemaVersion: 1,
+        payload: {},
+        meta: {
+          clientId: "c1",
+          clientTs: Number.NaN,
+        },
+      }),
+    ).toThrow("item.meta.clientTs must be a finite number");
   });
 });

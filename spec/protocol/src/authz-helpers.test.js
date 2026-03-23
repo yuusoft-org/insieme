@@ -1,5 +1,58 @@
 import { describe, expect, it } from "vitest";
-import { authorizeSingleScopeId } from "../../../src/index.js";
+import {
+  authorizeProjectId,
+  authorizeSingleScopeId,
+} from "../../../src/index.js";
+
+describe("src authorizeProjectId", () => {
+  it("rejects missing identity, invalid project ids, and malformed claims", () => {
+    expect(
+      authorizeProjectId({
+        identity: undefined,
+        projectId: "proj-1",
+      }),
+    ).toBe(false);
+
+    expect(
+      authorizeProjectId({
+        identity: { claims: { projectIds: ["proj-1"] } },
+        projectId: "",
+      }),
+    ).toBe(false);
+
+    expect(
+      authorizeProjectId({
+        identity: { claims: { projectIds: "proj-1" } },
+        projectId: "proj-1",
+      }),
+    ).toBe(false);
+  });
+
+  it("authorizes allowed projects, custom claims fields, and allowAll", () => {
+    expect(
+      authorizeProjectId({
+        identity: { claims: { projectIds: ["proj-1"] } },
+        projectId: "proj-1",
+      }),
+    ).toBe(true);
+
+    expect(
+      authorizeProjectId({
+        identity: { claims: { workspaceIds: ["proj-2"] } },
+        projectId: "proj-2",
+        claimsField: "workspaceIds",
+      }),
+    ).toBe(true);
+
+    expect(
+      authorizeProjectId({
+        identity: { claims: { userId: "u1" } },
+        projectId: "proj-9",
+        allowAll: true,
+      }),
+    ).toBe(true);
+  });
+});
 
 describe("src authorizeSingleScopeId", () => {
   it("rejects missing identity or partition", () => {
@@ -61,26 +114,26 @@ describe("src authorizeSingleScopeId", () => {
     expect(
       authorizeSingleScopeId({
         identity: {
-        claims: {
-          workspaceIds: ["proj-9"],
+          claims: {
+            workspaceIds: ["proj-9"],
+          },
         },
-      },
-      partition: "project:proj-9:story",
-      scope: "project",
-      claimsField: "workspaceIds",
-    }),
+        partition: "project:proj-9:story",
+        scope: "project",
+        claimsField: "workspaceIds",
+      }),
     ).toBe(true);
 
     expect(
       authorizeSingleScopeId({
         identity: {
-        claims: {
-          projectIds: "proj-9",
+          claims: {
+            projectIds: "proj-9",
+          },
         },
-      },
-      partition: "project:proj-9:story",
-      scope: "project",
-    }),
+        partition: "project:proj-9:story",
+        scope: "project",
+      }),
     ).toBe(false);
   });
 });

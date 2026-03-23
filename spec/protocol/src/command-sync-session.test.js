@@ -260,6 +260,129 @@ describe("src createCommandSyncSession", () => {
     ]);
   });
 
+  it("proxies submitEvents through to the underlying sync client", async () => {
+    const session = createCommandSyncSession({
+      token: "t1",
+      actor: {
+        userId: "u1",
+        clientId: "c1",
+      },
+      projectId: "p1",
+      transport,
+      store,
+    });
+
+    await session.start();
+    transport.emit({
+      type: "connected",
+      payload: { clientId: "c1", projectId: "p1", projectLastCommittedId: 0 },
+    });
+    await tick();
+    transport.emit({
+      type: "sync_response",
+      payload: {
+        projectId: "p1",
+        events: [],
+        nextSinceCommittedId: 0,
+        hasMore: false,
+      },
+    });
+    await tick();
+
+    const submittedIds = await session.submitEvents([
+      {
+        id: "evt-wrapper-1",
+        partition: "project:p1:story",
+        projectId: "p1",
+        userId: "u1",
+        type: "scene.create",
+        schemaVersion: 1,
+        payload: { sceneId: "s3" },
+        meta: { clientId: "c1", clientTs: 7 },
+      },
+    ]);
+
+    expect(submittedIds).toEqual(["evt-wrapper-1"]);
+    const submit = transport.sent.find((entry) => entry.type === "submit_events");
+    expect(submit.payload.events[0]).toMatchObject({
+      id: "evt-wrapper-1",
+      projectId: "p1",
+      userId: "u1",
+      partition: "project:p1:story",
+    });
+  });
+
+  it("captures async onCommittedCommand failures", async () => {
+    const session = createCommandSyncSession({
+      token: "t1",
+      actor: {
+        userId: "u1",
+        clientId: "c1",
+      },
+      projectId: "p1",
+      transport,
+      store,
+      onCommittedCommand: () => Promise.reject(new Error("commit handler boom")),
+    });
+
+    await session.start();
+    transport.emit({
+      type: "connected",
+      payload: { clientId: "c1", projectId: "p1", projectLastCommittedId: 0 },
+    });
+    await tick();
+
+    transport.emit({
+      type: "sync_response",
+      payload: {
+        projectId: "p1",
+        events: [
+          {
+            id: "cmd-async-error",
+            projectId: "p1",
+            userId: "u2",
+            partition: "project:p1:story",
+            committedId: 1,
+            type: "scene.create",
+            schemaVersion: 1,
+            payload: { sceneId: "s1" },
+            meta: { clientId: "c2", clientTs: 1 },
+            serverTs: 1,
+          },
+        ],
+        nextSinceCommittedId: 1,
+        hasMore: false,
+      },
+    });
+    await tick();
+    await tick();
+
+    expect(session.getLastError()).toMatchObject({
+      code: "on_committed_command_failed",
+      message: "commit handler boom",
+    });
+  });
+
+  it("rejects online transport swap when the transport does not support it", async () => {
+    const transportWithoutSwap = createMockTransport();
+    delete transportWithoutSwap.setOnlineTransport;
+
+    const session = createCommandSyncSession({
+      token: "t1",
+      actor: {
+        userId: "u1",
+        clientId: "c1",
+      },
+      projectId: "p1",
+      transport: transportWithoutSwap,
+      store,
+    });
+
+    await expect(session.setOnlineTransport({ transportId: "next" })).rejects.toThrow(
+      "Current transport does not support online transport swap",
+    );
+  });
+
   it("exposes session helpers and clears local lastError state", async () => {
     const forwardedEvents = [];
     const session = createCommandSyncSession({
