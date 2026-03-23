@@ -47,15 +47,6 @@ const view = await store.loadMaterializedView({
 });
 ```
 
-Read several partitions in one call:
-
-```js
-const views = await store.loadMaterializedViews({
-  viewName: "event-count",
-  partitions: ["workspace-1", "workspace-2"],
-});
-```
-
 Lifecycle helpers:
 
 ```js
@@ -83,7 +74,7 @@ Use a small number of views.
 Why: each committed insert applies each reducer for each partition on the event.
 Work is roughly:
 
-`O(number_of_views * event_partition_count * reducer_cost)`
+`O(number_of_views * matching_hot_partitions * reducer_cost)`
 
 Keep reducers deterministic and fast.
 
@@ -166,6 +157,7 @@ This avoids duplicating event logic between:
 ## Versioning
 
 - `version` defaults to `"1"` when omitted.
+- `matchPartition` may be provided when a loaded partition should react to more than one event partition.
 - Change `version` when reducer semantics or state shape changes.
 - Persistent stores invalidate stale checkpoints lazily on next load and rebuild from committed events as needed.
 - Reducers receive the full committed event record, so they may also inspect `meta`, `projectId`, or `userId` when needed.

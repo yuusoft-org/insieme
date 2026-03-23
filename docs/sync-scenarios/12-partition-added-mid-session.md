@@ -1,43 +1,32 @@
-# Scenario 12 - Add Partition Mid-Session
+# Scenario 12 - Add Partition Mid-Session Removed
 
 Note: Envelope metadata (`msgId`, `timestamp`) is omitted when not central.
 
 ## Goal
-Verify partition-scope expansion with the simplified sync scope model.
+Document the v2 change from mutable partition scope to project-scoped clients.
 
 ## Actors
 - C1
 - Server
 
 ## Preconditions
-- C1 current active scope is `[P1]` and durable cursor is `800`.
-- Server contains older history in `P2` at `committedId=50,120,350`.
+- C1 is already running against project `P1`.
+- The application now needs data from a different project or partition set.
 
 ## Steps
 
-### 1) C1 expands scope to `[P1, P2]`
+### 1) Scope expansion is no longer a `sync` operation
 
-In core mode, `sync.partitions` defines both catch-up scope and future broadcast scope.
-To include full history for newly added `P2`, C1 performs a union full catch-up:
+- In v2, `createSyncClient(...)` is bound to one `projectId`.
+- The protocol no longer supports changing sync scope by sending a new partition list.
+- If the app needs another project, it should start a separate client/store for that project.
 
-**C1 -> Server**
-```yaml
-type: sync
-protocolVersion: "1.0"
-payload:
-  partitions: [P1, P2]
-  sinceCommittedId: 0
-  limit: 500
-```
-
-### 2) Server returns union history
-- Includes historical events for P1 and P2 up to current watermark.
-
-### 3) C1 applies idempotently
-- Existing P1 committed rows are deduped by `id`/`committedId`.
-- Missing P2 history is added.
+### 2) Migration pattern
+- Keep one client/store instance for `P1`.
+- Start another client/store instance for the new project scope.
+- Let each instance maintain its own durable cursor and draft queue.
 
 ## Assertions
-- C1 converges with complete history for both P1 and P2.
-- Active broadcast scope after sync is `[P1, P2]`.
-- No duplicate committed rows are created.
+- Mid-session partition-union sync is not part of the v2 protocol.
+- Project changes require a separate client/store lifecycle.
+- This keeps durable cursors and pending drafts scoped to one project.

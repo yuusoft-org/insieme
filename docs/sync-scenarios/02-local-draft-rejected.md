@@ -10,7 +10,7 @@ Verify rejected submit removes local draft and does not broadcast.
 - Server
 
 ## Preconditions
-- C1 connected with partition scope including `P1`.
+- C1 connected to project `P1`.
 - `local_drafts` contains `id=evt-uuid-rj1`.
 
 ## Steps
@@ -24,7 +24,7 @@ protocolVersion: "1.0"
 payload:
   events:
     - id: evt-uuid-rj1
-      partitions: [P1]
+      partition: P1
       projectId: P1
       userId: U1
       type: explorer.folderCreated

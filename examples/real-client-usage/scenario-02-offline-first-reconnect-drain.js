@@ -17,7 +17,7 @@ const client = createCoreSyncClient({
   store,
   token: "<jwt-from-auth-service>",
   clientId: "device-c1",
-  partitions: ["workspace-1"],
+  projectId: "workspace-1",
   onEvent: ({ type, payload }) => {
     if (type === "synced") console.log("catch-up done at", payload.cursor);
     if (type === "committed") console.log("drained draft committed", payload.id, payload.committedId);
@@ -28,7 +28,7 @@ const client = createCoreSyncClient({
 // App boot while offline:
 await store.init();
 await client.submitEvent({
-  partitions: ["workspace-1"],
+  partition: "workspace-1",
   projectId: "workspace-1",
   type: "todo.created",
   payload: {
@@ -40,7 +40,7 @@ await client.submitEvent({
   },
 });
 await client.submitEvent({
-  partitions: ["workspace-1"],
+  partition: "workspace-1",
   projectId: "workspace-1",
   type: "todo.created",
   payload: {

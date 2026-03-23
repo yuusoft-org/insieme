@@ -27,7 +27,7 @@ protocolVersion: "1.0"
 payload:
   events:
     - id: evt-uuid-4
-      partitions: [P1]
+      partition: P1
       projectId: P1
       userId: U1
       type: explorer.folderCreated

@@ -10,7 +10,7 @@ Verify a successful connect and an empty sync page.
 - Server
 
 ## Preconditions
-- Server has no committed events for `P1`.
+- Server has no committed events for project `P1`.
 
 ## Steps
 
@@ -23,6 +23,7 @@ protocolVersion: "1.0"
 payload:
   token: jwt
   clientId: C1
+  projectId: P1
 ```
 
 **Server -> C1**
@@ -31,7 +32,8 @@ type: connected
 protocolVersion: "1.0"
 payload:
   clientId: C1
-  globalLastCommittedId: 0
+  projectId: P1
+  projectLastCommittedId: 0
 ```
 
 ### 2) Sync
@@ -41,7 +43,7 @@ payload:
 type: sync
 protocolVersion: "1.0"
 payload:
-  partitions: [P1]
+  projectId: P1
   sinceCommittedId: 0
   limit: 50
 ```
@@ -51,7 +53,7 @@ payload:
 type: sync_response
 protocolVersion: "1.0"
 payload:
-  partitions: [P1]
+  projectId: P1
   events: []
   nextSinceCommittedId: 0
   hasMore: false

@@ -25,12 +25,13 @@ protocolVersion: "1.0"
 payload:
   committedId: 130
   id: evt-uuid-130
-  partitions: [P1]
+  partition: P1
+  projectId: P1
   type: explorer.folderCreated
   schemaVersion: 1
   payload: { id: B }
   meta: { clientId: C2, clientTs: 1738451206800 }
-  created: 1738451207000
+  serverTs: 1738451207000
 ```
 
 ### 2) C1 receives 129 later
@@ -42,12 +43,13 @@ protocolVersion: "1.0"
 payload:
   committedId: 129
   id: evt-uuid-129
-  partitions: [P1]
+  partition: P1
+  projectId: P1
   type: explorer.folderCreated
   schemaVersion: 1
   payload: { id: A }
   meta: { clientId: C2, clientTs: 1738451206700 }
-  created: 1738451206900
+  serverTs: 1738451206900
 ```
 
 ## Assertions

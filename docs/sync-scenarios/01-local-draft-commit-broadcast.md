@@ -12,7 +12,7 @@ Verify local draft resolution to committed and peer broadcast delivery.
 
 ## Preconditions
 - C1 and C2 are connected.
-- C1 and C2 active partition scope includes `P1`.
+- C1 and C2 are connected to project `P1`.
 - Server last `committedId` is 100.
 - C1 has a local draft row `id=evt-uuid-1` in `local_drafts`.
 
@@ -27,7 +27,7 @@ protocolVersion: "1.0"
 payload:
   events:
     - id: evt-uuid-1
-      partitions: [P1]
+      partition: P1
       projectId: P1
       userId: U1
       type: explorer.folderCreated
@@ -54,7 +54,7 @@ payload:
     - id: evt-uuid-1
       status: committed
       committedId: 101
-      created: 1738451205000
+      serverTs: 1738451205000
 ```
 
 **Server -> C2**
@@ -64,7 +64,7 @@ protocolVersion: "1.0"
 payload:
   committedId: 101
   id: evt-uuid-1
-  partitions: [P1]
+  partition: P1
   projectId: P1
   userId: U1
   type: explorer.folderCreated
@@ -73,7 +73,7 @@ payload:
   meta:
     clientId: C1
     clientTs: 1738451204000
-  created: 1738451205000
+  serverTs: 1738451205000
 ```
 
 ## Assertions
