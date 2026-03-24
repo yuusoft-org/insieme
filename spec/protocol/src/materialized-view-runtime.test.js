@@ -228,6 +228,55 @@ describe("src materialized-view-runtime", () => {
     ]);
   });
 
+  it("supports targeted flush for hot partitions and no-ops for cold ones", async () => {
+    const checkpointWrites = [];
+    const runtime = createMaterializedViewRuntime({
+      definitions: createCounterDefinitions({
+        mode: "manual",
+      }),
+      getLatestCommittedId: async () => 1,
+      listCommittedAfter: async () => [],
+      saveCheckpoint: async ({ partition, value, lastCommittedId }) => {
+        checkpointWrites.push({
+          partition,
+          value,
+          lastCommittedId,
+        });
+      },
+    });
+
+    await runtime.flushMaterializedView({
+      viewName: "counter",
+      partition: "P-cold",
+    });
+    expect(checkpointWrites).toEqual([]);
+
+    await runtime.loadMaterializedView({
+      viewName: "counter",
+      partition: "P1",
+    });
+
+    await runtime.onCommittedEvent({
+      committedId: 1,
+      partition: "P1",
+      event: { type: "increment", payload: {} },
+      serverTs: 10,
+    });
+
+    await runtime.flushMaterializedView({
+      viewName: "counter",
+      partition: "P1",
+    });
+
+    expect(checkpointWrites).toEqual([
+      {
+        partition: "P1",
+        value: { count: 1 },
+        lastCommittedId: 1,
+      },
+    ]);
+  });
+
   it("flushes interval checkpoints on the configured timer", async () => {
     vi.useFakeTimers();
     const checkpointWrites = [];
@@ -383,6 +432,23 @@ describe("src materialized-view-runtime", () => {
     await invalidatePromise;
 
     expect(checkpoints.has("counter:P1")).toBe(false);
+  });
+
+  it("invalidates cold partitions even when checkpoint deletion is unavailable", async () => {
+    const runtime = createMaterializedViewRuntime({
+      definitions: createCounterDefinitions({
+        mode: "manual",
+      }),
+      getLatestCommittedId: async () => 0,
+      listCommittedAfter: async () => [],
+    });
+
+    await expect(
+      runtime.invalidateMaterializedView({
+        viewName: "counter",
+        partition: "P-cold",
+      }),
+    ).resolves.toBeUndefined();
   });
 
   it("surfaces background checkpoint errors on the next foreground read", async () => {

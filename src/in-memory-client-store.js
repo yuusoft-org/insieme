@@ -1,5 +1,8 @@
 import { canonicalizeSubmitItem } from "./canonicalize.js";
-import { buildCommittedEventFromDraft, normalizeMeta } from "./event-record.js";
+import {
+  buildCommittedEventFromDraft,
+  normalizeClientTs,
+} from "./event-record.js";
 import { normalizeMaterializedViewDefinitions } from "./materialized-view.js";
 import { createMaterializedViewRuntime } from "./materialized-view-runtime.js";
 
@@ -14,13 +17,13 @@ const sortDrafts = (left, right) => {
  * In-memory client store implementing the simplified client storage interface.
  */
 export const createInMemoryClientStore = ({ materializedViews } = {}) => {
-  /** @type {{ draftClock: number, id: string, partition: string, projectId?: string, userId?: string, type: string, schemaVersion: number, payload: object, meta: object, createdAt: number }[]} */
+  /** @type {{ draftClock: number, id: string, partition: string, projectId?: string, userId?: string, type: string, schemaVersion: number, payload: object, clientTs: number, createdAt: number }[]} */
   const drafts = [];
 
-  /** @type {{ committedId: number, id: string, projectId?: string, userId?: string, partition: string, type: string, schemaVersion: number, payload: object, meta: object, serverTs: number, createdAt?: number }[]} */
+  /** @type {{ committedId: number, id: string, projectId?: string, userId?: string, partition: string, type: string, schemaVersion: number, payload: object, clientTs: number, serverTs: number, createdAt?: number }[]} */
   const committed = [];
 
-  /** @type {Map<string, { comparisonKey: string, committedEvent: { committedId: number, id: string, projectId?: string, userId?: string, partition: string, type: string, schemaVersion: number, payload: object, meta: object, serverTs: number, createdAt?: number } }>} */
+  /** @type {Map<string, { comparisonKey: string, committedEvent: { committedId: number, id: string, projectId?: string, userId?: string, partition: string, type: string, schemaVersion: number, payload: object, clientTs: number, serverTs: number, createdAt?: number } }>} */
   const committedById = new Map();
 
   const materializedViewDefinitions =
@@ -45,18 +48,12 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
     if (index >= 0) drafts.splice(index, 1);
   };
 
-  const normalizeCommittedMeta = (meta) =>
-    normalizeMeta({
-      clientTs:
-        typeof meta?.clientTs === "number" && Number.isFinite(meta.clientTs)
-          ? meta.clientTs
-          : 0,
-    });
-
   const normalizeCommittedEvent = (event) => ({
     ...event,
     payload: structuredClone(event.payload),
-    meta: normalizeCommittedMeta(event.meta),
+    clientTs: normalizeClientTs(event.clientTs, {
+      defaultClientTs: event.meta?.clientTs,
+    }),
   });
 
   const toComparisonKey = (event) =>
@@ -65,7 +62,7 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
       type: event.type,
       schemaVersion: event.schemaVersion,
       payload: event.payload,
-      meta: normalizeCommittedMeta(event.meta),
+      clientTs: normalizeClientTs(event.clientTs),
     });
 
   const upsertCommitted = (event) => {
@@ -109,6 +106,7 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
           type,
           schemaVersion,
           payload,
+          clientTs,
           meta,
           createdAt,
         }) => {
@@ -130,7 +128,9 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
             type,
             schemaVersion,
             payload: structuredClone(payload),
-            meta: normalizeMeta(meta),
+            clientTs: normalizeClientTs(clientTs, {
+              defaultClientTs: meta?.clientTs,
+            }),
             createdAt,
           };
         },
@@ -150,6 +150,7 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
       type,
       schemaVersion,
       payload,
+      clientTs,
       meta,
       createdAt,
     }) => {
@@ -167,7 +168,9 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
         type,
         schemaVersion,
         payload: structuredClone(payload),
-        meta: normalizeMeta(meta),
+        clientTs: normalizeClientTs(clientTs, {
+          defaultClientTs: meta?.clientTs,
+        }),
         createdAt,
       });
       nextDraftClock += 1;

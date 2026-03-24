@@ -2,6 +2,7 @@ import {
   isNonEmptyString,
   isObject,
   normalizeSubmitEventInput,
+  toFiniteNumberOrNull,
   toPositiveIntegerOrNull,
 } from "./event-record.js";
 
@@ -14,7 +15,7 @@ import {
  *   type: string,
  *   schemaVersion: number,
  *   payload: object,
- *   meta: object,
+ *   clientTs: number,
  *   createdAt: number,
  * }} SubmitItem
  */
@@ -194,14 +195,10 @@ export const createSyncClient = ({
     type: draft.type,
     schemaVersion: draft.schemaVersion,
     payload: draft.payload,
-    meta: normalizeSubmitEventInput(
-      { meta: draft.meta },
-      {
-        defaultProjectId: activeProjectId,
-        defaultClientId: clientId,
-        defaultClientTs: draft.meta?.clientTs,
-      },
-    ).meta,
+    meta: {
+      clientId,
+      clientTs: draft.clientTs,
+    },
   });
 
   const getApproxSubmitEnvelopeBytes = (events) => {
@@ -823,12 +820,24 @@ export const createSyncClient = ({
 
     const seenIds = new Set();
     const drafts = inputs.map((input) => ({
-      ...normalizeSubmitEventInput(input, {
-        defaultId: uuid(),
-        defaultProjectId: activeProjectId,
-        defaultClientId: clientId,
-        defaultClientTs: now(),
-      }),
+      ...(() => {
+        const normalized = normalizeSubmitEventInput(input, {
+          defaultId: uuid(),
+          defaultProjectId: activeProjectId,
+          defaultClientId: clientId,
+          defaultClientTs: now(),
+        });
+        return {
+          id: normalized.id,
+          partition: normalized.partition,
+          projectId: normalized.projectId,
+          userId: normalized.userId,
+          type: normalized.type,
+          schemaVersion: normalized.schemaVersion,
+          payload: normalized.payload,
+          clientTs: normalized.clientTs,
+        };
+      })(),
       createdAt: now(),
     }));
 
@@ -850,6 +859,9 @@ export const createSyncClient = ({
         throw new Error(
           "submitEvents requires schemaVersion as a positive integer",
         );
+      }
+      if (toFiniteNumberOrNull(draft.clientTs) === null) {
+        throw new Error("submitEvents requires clientTs as a finite number");
       }
       if (!isObject(draft.payload)) {
         throw new Error("submitEvents requires payload object");

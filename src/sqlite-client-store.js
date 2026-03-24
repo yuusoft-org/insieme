@@ -2,7 +2,10 @@
 // Expects a better-sqlite3 style DB object (exec/prepare/transaction APIs).
 
 import { canonicalizeSubmitItem } from "./canonicalize.js";
-import { buildCommittedEventFromDraft, normalizeMeta } from "./event-record.js";
+import {
+  buildCommittedEventFromDraft,
+  normalizeClientTs,
+} from "./event-record.js";
 import { normalizeMaterializedViewDefinitions } from "./materialized-view.js";
 import { createMaterializedViewRuntime } from "./materialized-view-runtime.js";
 import { deserializePayload, serializePayload } from "./payload-codec.js";
@@ -43,7 +46,7 @@ const toComparisonKey = (event) =>
     type: event.type,
     schemaVersion: event.schemaVersion,
     payload: event.payload,
-    meta: normalizeCommittedMeta(event.meta),
+    clientTs: normalizeClientTs(event.clientTs),
   });
 
 const tableHasColumn = (db, tableName, columnName) => {
@@ -56,18 +59,6 @@ const getTableColumnType = (db, tableName, columnName) => {
   const column = rows.find((row) => row.name === columnName);
   return typeof column?.type === "string" ? column.type.toUpperCase() : null;
 };
-
-const parseDraftMeta = (row) => {
-  const defaultClientTs = parseIntSafe(row.client_ts);
-  return normalizeMeta(undefined, {
-    defaultClientTs,
-  });
-};
-
-const normalizeCommittedMeta = (meta) =>
-  normalizeMeta({
-    clientTs: parseIntSafe(meta?.clientTs),
-  });
 
 export const createSqliteClientStore = (
   db,
@@ -256,7 +247,7 @@ export const createSqliteClientStore = (
     schemaVersion: parseIntSafe(row.schema_version),
     payload: deserializePayload(row.payload),
     payloadCompression: row.payload_compression || undefined,
-    meta: parseDraftMeta(row),
+    clientTs: parseIntSafe(row.client_ts),
     createdAt: row.created_at,
   });
 
@@ -270,9 +261,7 @@ export const createSqliteClientStore = (
     schemaVersion: parseIntSafe(row.schema_version),
     payload: deserializePayload(row.payload),
     payloadCompression: row.payload_compression || undefined,
-    meta: normalizeCommittedMeta({
-      clientTs: row.client_ts,
-    }),
+    clientTs: parseIntSafe(row.client_ts),
     serverTs: row.server_ts,
     createdAt: row.created_at,
   });
@@ -280,7 +269,9 @@ export const createSqliteClientStore = (
   const normalizeCommittedEvent = (event) => ({
     ...event,
     payload: structuredClone(event.payload),
-    meta: normalizeCommittedMeta(event.meta),
+    clientTs: normalizeClientTs(event.clientTs, {
+      defaultClientTs: event.meta?.clientTs,
+    }),
   });
 
   const encodeMaterializedValue = (value) =>
@@ -455,7 +446,11 @@ export const createSqliteClientStore = (
           schema_version: item.schemaVersion,
           payload: serializePayload(item.payload),
           payload_compression: item.payloadCompression ?? null,
-          client_ts: parseIntSafe(item.meta?.clientTs),
+          client_ts: parseIntSafe(
+            normalizeClientTs(item.clientTs, {
+              defaultClientTs: item.meta?.clientTs,
+            }),
+          ),
           created_at: item.createdAt,
         });
       }
@@ -486,7 +481,7 @@ export const createSqliteClientStore = (
             schema_version: nextCommittedEvent.schemaVersion,
             payload: serializePayload(nextCommittedEvent.payload),
             payload_compression: nextCommittedEvent.payloadCompression ?? null,
-            client_ts: parseIntSafe(nextCommittedEvent.meta?.clientTs),
+            client_ts: parseIntSafe(nextCommittedEvent.clientTs),
             server_ts: nextCommittedEvent.serverTs,
             created_at: Date.now(),
           });
@@ -521,7 +516,7 @@ export const createSqliteClientStore = (
           schema_version: committedRecord.schemaVersion,
           payload: serializePayload(committedRecord.payload),
           payload_compression: committedRecord.payloadCompression ?? null,
-          client_ts: parseIntSafe(committedRecord.meta?.clientTs),
+          client_ts: parseIntSafe(committedRecord.clientTs),
           server_ts: committedRecord.serverTs,
           created_at: committedRecord.createdAt ?? Date.now(),
         });
@@ -627,6 +622,7 @@ export const createSqliteClientStore = (
       type,
       schemaVersion,
       payload,
+      clientTs,
       meta,
       payloadCompression,
       createdAt,
@@ -639,7 +635,11 @@ export const createSqliteClientStore = (
         schema_version: schemaVersion,
         payload: serializePayload(payload),
         payload_compression: payloadCompression ?? null,
-        client_ts: parseIntSafe(meta?.clientTs),
+        client_ts: parseIntSafe(
+          normalizeClientTs(clientTs, {
+            defaultClientTs: meta?.clientTs,
+          }),
+        ),
         created_at: createdAt,
       });
     },

@@ -179,9 +179,7 @@ describeLibsql("src createLibsqlClientStore", () => {
         expect.objectContaining({
           id: "evt-1",
           committedId: 5,
-          meta: {
-            clientTs: 100,
-          },
+          clientTs: 100,
         }),
       ]);
       db.close();
@@ -198,9 +196,7 @@ describeLibsql("src createLibsqlClientStore", () => {
         expect.objectContaining({
           id: "evt-1",
           committedId: 5,
-          meta: {
-            clientTs: 100,
-          },
+          clientTs: 100,
         }),
       ]);
 

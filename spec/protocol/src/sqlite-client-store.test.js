@@ -154,9 +154,7 @@ describeSqlite("src createSqliteClientStore", () => {
         expect.objectContaining({
           id: "evt-1",
           committedId: 5,
-          meta: {
-            clientTs: 100,
-          },
+          clientTs: 100,
         }),
       ]);
       db.close();
@@ -173,9 +171,7 @@ describeSqlite("src createSqliteClientStore", () => {
         expect.objectContaining({
           id: "evt-1",
           committedId: 5,
-          meta: {
-            clientTs: 100,
-          },
+          clientTs: 100,
         }),
       ]);
 

@@ -120,9 +120,7 @@ describe("src createIndexedDbClientStore", () => {
       expect(committed[0]).toMatchObject({
         id: "evt-1",
         committedId: 5,
-        meta: {
-          clientTs: 100,
-        },
+        clientTs: 100,
       });
     }
 
@@ -139,9 +137,7 @@ describe("src createIndexedDbClientStore", () => {
       expect(committed[0]).toMatchObject({
         id: "evt-1",
         committedId: 5,
-        meta: {
-          clientTs: 100,
-        },
+        clientTs: 100,
       });
     }
   });

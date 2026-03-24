@@ -195,7 +195,7 @@ describe("src createCommandSyncSession", () => {
       type: "scene.create",
       payload: { sceneId: "s1" },
       schemaVersion: 1,
-      meta: { foo: "bar", clientId: "c1", clientTs: 5 },
+      meta: { clientId: "c1", clientTs: 5 },
     });
   });
 

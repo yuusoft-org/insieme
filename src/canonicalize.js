@@ -1,4 +1,9 @@
-import { isNonEmptyString, normalizeMeta, toPositiveIntegerOrNull } from "./event-record.js";
+import {
+  isNonEmptyString,
+  normalizeClientTs,
+  normalizeMeta,
+  toPositiveIntegerOrNull,
+} from "./event-record.js";
 
 /**
  * Deterministically sorts object keys and recursively normalizes values.
@@ -33,6 +38,7 @@ export const deepSortKeys = (value) => {
  *   type?: string,
  *   schemaVersion?: number,
  *   payload?: object,
+ *   clientTs?: number,
  *   meta?: object,
  * }} input
  * @returns {string}
@@ -44,9 +50,12 @@ export const canonicalizeSubmitItem = ({
   type,
   schemaVersion,
   payload,
+  clientTs,
   meta,
 }) => {
-  const normalizedMeta = normalizeMeta(meta);
+  const normalizedMeta = normalizeMeta(meta, {
+    defaultClientTs: normalizeClientTs(clientTs),
+  });
   delete normalizedMeta.clientId;
 
   const canonicalInput = {

@@ -1,5 +1,8 @@
 import { canonicalizeSubmitItem } from "./canonicalize.js";
-import { buildCommittedEventFromDraft, normalizeMeta } from "./event-record.js";
+import {
+  buildCommittedEventFromDraft,
+  normalizeClientTs,
+} from "./event-record.js";
 import { normalizeMaterializedViewDefinitions } from "./materialized-view.js";
 import { createMaterializedViewRuntime } from "./materialized-view-runtime.js";
 
@@ -154,16 +157,9 @@ const parseDraftRow = (row) => ({
   schemaVersion: parseIntSafe(row.schema_version, 0),
   payload: structuredClone(row.payload),
   payloadCompression: row.payload_compression || undefined,
-  meta: normalizeMeta(undefined, {
-    defaultClientTs: parseIntSafe(row.client_ts, 0),
-  }),
+  clientTs: parseIntSafe(row.client_ts, 0),
   createdAt: parseIntSafe(row.created_at, 0),
 });
-
-const normalizeCommittedMeta = (meta) =>
-  normalizeMeta({
-    clientTs: parseIntSafe(meta?.clientTs, 0),
-  });
 
 const serializeDraftRow = ({
   draftClock,
@@ -173,7 +169,7 @@ const serializeDraftRow = ({
   schemaVersion,
   payload,
   payloadCompression,
-  meta,
+  clientTs,
   createdAt,
 }) => ({
   draft_clock: draftClock,
@@ -183,7 +179,7 @@ const serializeDraftRow = ({
   schema_version: schemaVersion,
   payload: structuredClone(payload),
   payload_compression: payloadCompression,
-  client_ts: parseIntSafe(meta?.clientTs, 0),
+  client_ts: parseIntSafe(clientTs, 0),
   created_at: createdAt,
 });
 
@@ -197,9 +193,7 @@ const parseCommittedRow = (row) => ({
   schemaVersion: parseIntSafe(row.schema_version, 0),
   payload: structuredClone(row.payload),
   payloadCompression: row.payload_compression || undefined,
-  meta: normalizeCommittedMeta({
-    clientTs: row.client_ts,
-  }),
+  clientTs: parseIntSafe(row.client_ts, 0),
   serverTs: parseIntSafe(row.server_ts, 0),
   createdAt: parseIntSafe(row.created_at, 0),
 });
@@ -213,7 +207,7 @@ const serializeCommittedRow = ({
   type,
   schemaVersion,
   payload,
-  meta,
+  clientTs,
   payloadCompression,
   serverTs,
   createdAt,
@@ -227,7 +221,7 @@ const serializeCommittedRow = ({
   schema_version: schemaVersion,
   payload: structuredClone(payload),
   payload_compression: payloadCompression,
-  client_ts: parseIntSafe(meta?.clientTs, 0),
+  client_ts: parseIntSafe(clientTs, 0),
   server_ts: serverTs,
   created_at: createdAt,
 });
@@ -235,7 +229,9 @@ const serializeCommittedRow = ({
 const normalizeCommittedEvent = (event) => ({
   ...event,
   payload: structuredClone(event.payload),
-  meta: normalizeCommittedMeta(event.meta),
+  clientTs: normalizeClientTs(event.clientTs, {
+    defaultClientTs: event.meta?.clientTs,
+  }),
 });
 
 const toComparisonKey = (event) =>
@@ -244,7 +240,7 @@ const toComparisonKey = (event) =>
     type: event.type,
     schemaVersion: event.schemaVersion,
     payload: event.payload,
-    meta: normalizeCommittedMeta(event.meta),
+    clientTs: normalizeClientTs(event.clientTs),
   });
 
 export const createIndexedDbClientStore = ({
@@ -456,14 +452,14 @@ export const createIndexedDbClientStore = ({
             draftStore.add(serializeDraftRow({
               id: item.id,
               draftClock,
-              projectId: item.projectId,
-              userId: item.userId,
               partition: item.partition,
               type: item.type,
               schemaVersion: item.schemaVersion,
               payload: structuredClone(item.payload),
               payloadCompression: item.payloadCompression ?? null,
-              meta: normalizeMeta(item.meta),
+              clientTs: normalizeClientTs(item.clientTs, {
+                defaultClientTs: item.meta?.clientTs,
+              }),
               createdAt: item.createdAt,
             }));
             draftClock += 1;
@@ -476,12 +472,11 @@ export const createIndexedDbClientStore = ({
 
     insertDraft: async ({
       id,
-      projectId,
-      userId,
       partition,
       type,
       schemaVersion,
       payload,
+      clientTs,
       meta,
       payloadCompression,
       createdAt,
@@ -501,14 +496,14 @@ export const createIndexedDbClientStore = ({
           draftStore.add(serializeDraftRow({
             id,
             draftClock,
-            projectId,
-            userId,
             partition,
             type,
             schemaVersion,
             payload: structuredClone(payload),
             payloadCompression: payloadCompression ?? null,
-            meta: normalizeMeta(meta),
+            clientTs: normalizeClientTs(clientTs, {
+              defaultClientTs: meta?.clientTs,
+            }),
             createdAt,
           }));
           await saveMetaInt(metaStore, NEXT_DRAFT_CLOCK_KEY, draftClock + 1);

@@ -31,6 +31,7 @@ describe("src command-profile", () => {
       schemaVersion: 2,
       payload: { sceneId: "scene-1", name: "Intro" },
       meta: { foo: "bar", clientId: "c1", clientTs: 1000 },
+      clientTs: 1000,
     });
   });
 
@@ -55,6 +56,7 @@ describe("src command-profile", () => {
       type: "scene.create",
       schemaVersion: 7,
       meta: { clientId: "c1", clientTs: 1000 },
+      clientTs: 1000,
     });
   });
 

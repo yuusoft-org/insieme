@@ -44,6 +44,12 @@ export const normalizeMeta = (
   return normalized;
 };
 
+export const normalizeClientTs = (value, { defaultClientTs } = {}) => {
+  return (
+    toFiniteNumberOrNull(value) ?? toFiniteNumberOrNull(defaultClientTs) ?? undefined
+  );
+};
+
 export const normalizeSubmitEventInput = (
   input,
   {
@@ -85,6 +91,10 @@ export const normalizeSubmitEventInput = (
     type,
     schemaVersion,
     payload: payload === undefined ? undefined : structuredClone(payload),
+    clientTs: normalizeClientTs(input?.clientTs, {
+      defaultClientTs:
+        normalizeClientTs(input?.meta?.clientTs) ?? defaultClientTs,
+    }),
     meta: normalizeMeta(input?.meta, {
       defaultClientId,
       defaultClientTs,
@@ -106,6 +116,8 @@ export const buildCommittedEventFromDraft = ({
   schemaVersion: draft.schemaVersion,
   payload: structuredClone(draft.payload),
   payloadCompression: draft.payloadCompression,
-  meta: normalizeMeta(draft.meta),
+  clientTs: normalizeClientTs(draft.clientTs, {
+    defaultClientTs: draft.meta?.clientTs,
+  }),
   serverTs,
 });

@@ -370,6 +370,18 @@ export const createMaterializedViewRuntime = ({
       });
     },
 
+    flushMaterializedView: async ({ viewName, partition }) => {
+      assertHealthy();
+      assertPartition(partition, "flushMaterializedView");
+      const definition = getDefinition(viewName);
+      await withLocks([toLockKey(viewName, partition)], async () => {
+        const entry = getHotEntries(definition.name).get(partition);
+        if (!entry) return;
+        await flushEntry(definition, partition, entry);
+      });
+      assertHealthy();
+    },
+
     flushMaterializedViews: async () => {
       assertHealthy();
       for (const definition of normalizedDefinitions || []) {

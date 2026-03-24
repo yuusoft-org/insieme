@@ -76,7 +76,7 @@ describe("src createInMemoryClientStore", () => {
     expect(committed[0]).toMatchObject({
       id: "evt-1",
       committedId: 10,
-      meta: { clientTs: 100 },
+      clientTs: 100,
       serverTs: 111,
     });
   });

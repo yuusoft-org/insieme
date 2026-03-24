@@ -1,5 +1,8 @@
 import { canonicalizeSubmitItem } from "./canonicalize.js";
-import { buildCommittedEventFromDraft, normalizeMeta } from "./event-record.js";
+import {
+  buildCommittedEventFromDraft,
+  normalizeClientTs,
+} from "./event-record.js";
 import { normalizeMaterializedViewDefinitions } from "./materialized-view.js";
 import { createMaterializedViewRuntime } from "./materialized-view-runtime.js";
 import { createLibsqlDriver, parseIntSafe } from "./libsql-driver.js";
@@ -24,16 +27,6 @@ const createTransaction = async (db, fn) => {
   }
 };
 
-const parseStoredMeta = (row) =>
-  normalizeMeta(undefined, {
-    defaultClientTs: parseIntSafe(row.client_ts, 0),
-  });
-
-const normalizeCommittedMeta = (meta) =>
-  normalizeMeta({
-    clientTs: parseIntSafe(meta?.clientTs, 0),
-  });
-
 const parseDraft = (row) => ({
   draftClock: parseIntSafe(row.draft_clock, 0),
   id: row.id,
@@ -42,7 +35,7 @@ const parseDraft = (row) => ({
   schemaVersion: parseIntSafe(row.schema_version, 0),
   payload: deserializePayload(row.payload),
   payloadCompression: row.payload_compression || undefined,
-  meta: parseStoredMeta(row),
+  clientTs: parseIntSafe(row.client_ts, 0),
   createdAt: parseIntSafe(row.created_at, 0),
 });
 
@@ -56,9 +49,7 @@ const parseCommittedRow = (row) => ({
   schemaVersion: parseIntSafe(row.schema_version, 0),
   payload: deserializePayload(row.payload),
   payloadCompression: row.payload_compression || undefined,
-  meta: normalizeCommittedMeta({
-    clientTs: row.client_ts,
-  }),
+  clientTs: parseIntSafe(row.client_ts, 0),
   serverTs: parseIntSafe(row.server_ts, 0),
   createdAt: parseIntSafe(row.created_at, 0),
 });
@@ -66,7 +57,9 @@ const parseCommittedRow = (row) => ({
 const normalizeCommittedEvent = (event) => ({
   ...event,
   payload: structuredClone(event.payload),
-  meta: normalizeCommittedMeta(event.meta),
+  clientTs: normalizeClientTs(event.clientTs, {
+    defaultClientTs: event.meta?.clientTs,
+  }),
 });
 
 const encodeMaterializedValue = (value) =>
@@ -78,7 +71,7 @@ const toComparisonKey = (event) =>
     type: event.type,
     schemaVersion: event.schemaVersion,
     payload: event.payload,
-    meta: normalizeCommittedMeta(event.meta),
+    clientTs: normalizeClientTs(event.clientTs),
   });
 
 const tableHasColumn = async (db, tableName, columnName) => {
@@ -443,6 +436,7 @@ export const createLibsqlClientStore = (
       type,
       schemaVersion,
       payload,
+      clientTs,
       meta,
       payloadCompression,
       createdAt,
@@ -469,7 +463,12 @@ export const createLibsqlClientStore = (
           schemaVersion,
           serializePayload(payload),
           payloadCompression ?? null,
-          parseIntSafe(meta?.clientTs, 0),
+          parseIntSafe(
+            normalizeClientTs(clientTs, {
+              defaultClientTs: meta?.clientTs,
+            }),
+            0,
+          ),
           createdAt,
         ],
       );
@@ -500,7 +499,12 @@ export const createLibsqlClientStore = (
               item.schemaVersion,
               serializePayload(item.payload),
               item.payloadCompression ?? null,
-              parseIntSafe(item.meta?.clientTs, 0),
+              parseIntSafe(
+                normalizeClientTs(item.clientTs, {
+                  defaultClientTs: item.meta?.clientTs,
+                }),
+                0,
+              ),
               item.createdAt,
             ],
           );
@@ -568,7 +572,7 @@ export const createLibsqlClientStore = (
               nextCommittedEvent.schemaVersion,
               serializePayload(nextCommittedEvent.payload),
               nextCommittedEvent.payloadCompression ?? null,
-              parseIntSafe(nextCommittedEvent.meta?.clientTs, 0),
+              parseIntSafe(nextCommittedEvent.clientTs, 0),
               nextCommittedEvent.serverTs,
               Date.now(),
             ],
@@ -624,7 +628,7 @@ export const createLibsqlClientStore = (
             committedRecord.schemaVersion,
             serializePayload(committedRecord.payload),
             committedRecord.payloadCompression ?? null,
-            parseIntSafe(committedRecord.meta?.clientTs, 0),
+            parseIntSafe(committedRecord.clientTs, 0),
             committedRecord.serverTs,
             committedRecord.createdAt ?? Date.now(),
           ],

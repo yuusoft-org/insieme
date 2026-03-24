@@ -2,6 +2,7 @@ import {
   cloneObject,
   isNonEmptyString,
   isObject,
+  normalizeClientTs,
   normalizeMeta,
   toFiniteNumberOrNull,
   toPositiveIntegerOrNull,
@@ -56,6 +57,9 @@ export const commandToSyncEvent = (
       defaultClientId: command?.actor?.clientId,
       defaultClientTs: command?.clientTs,
     }),
+    clientTs: normalizeClientTs(command?.clientTs, {
+      defaultClientTs: command?.clientTs,
+    }),
   };
 };
 
@@ -88,9 +92,11 @@ export const committedSyncEventToCommand = (committedEvent) => {
     ? committedEvent.partition
     : undefined;
   const meta = normalizeMeta(committedEvent?.meta);
-  const fallbackClientTs = toFiniteNumberOrNull(committedEvent?.serverTs);
+  const fallbackClientTs =
+    normalizeClientTs(committedEvent?.clientTs) ??
+    toFiniteNumberOrNull(committedEvent?.serverTs);
 
-  return {
+  const normalizedCommand = {
     id: committedEvent.id,
     projectId: isNonEmptyString(committedEvent?.projectId)
       ? committedEvent.projectId
@@ -99,7 +105,6 @@ export const committedSyncEventToCommand = (committedEvent) => {
     type: committedEvent.type,
     schemaVersion: committedEvent.schemaVersion,
     payload: structuredClone(committedEvent.payload),
-    meta: structuredClone(meta),
     actor: {
       userId: isNonEmptyString(committedEvent?.userId)
         ? committedEvent.userId
@@ -108,6 +113,12 @@ export const committedSyncEventToCommand = (committedEvent) => {
     },
     clientTs: toFiniteNumberOrNull(meta.clientTs) ?? fallbackClientTs,
   };
+
+  if (Object.keys(meta).length > 0) {
+    normalizedCommand.meta = structuredClone(meta);
+  }
+
+  return normalizedCommand;
 };
 
 /**
