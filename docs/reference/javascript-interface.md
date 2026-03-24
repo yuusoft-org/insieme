@@ -6,6 +6,10 @@ This file defines the minimal JS API surface aligned with the current core proto
 - storage and transport are pluggable,
 - wire semantics are normative in `docs/protocol/*.md`.
 
+For published package entry points and recommended imports, see
+`docs/reference/package-entrypoints.md`. The runtime contracts below describe
+the API shape after you choose an entry point.
+
 ## Shared Data Shapes
 
 ```js
@@ -277,20 +281,20 @@ export function createSyncServer(deps) {}
 
 ## Built-in Store Adapters
 
-Runtime exports include three persistence families:
+Runtime exports include these persistence families:
 
 - In-memory:
-  - `createInMemoryClientStore(options?)`
-  - `createInMemorySyncStore(startCommittedId?)`
+  - `createInMemoryClientStore(options?)` from `insieme`, `insieme/client`, or `insieme/browser`
+  - `createInMemorySyncStore(startCommittedId?)` from `insieme/node` or `insieme/server`
 - SQLite-style DB object (`exec`, `prepare`, optional `transaction`):
-  - `createSqliteClientStore(db, options?)`
-  - `createSqliteSyncStore(db, options?)`
+  - `createSqliteClientStore(db, options?)` from `insieme/node` or `insieme/server`
+  - `createSqliteSyncStore(db, options?)` from `insieme/node` or `insieme/server`
 - LibSQL client:
-  - `createLibsqlClientStore(client, options?)`
-  - `createLibsqlSyncStore(client, options?)`
+  - `createLibsqlClientStore(client, options?)` from `insieme`, `insieme/client`, `insieme/node`, or `insieme/server`
+  - `createLibsqlSyncStore(client, options?)` from `insieme/node` or `insieme/server`
 - IndexedDB:
-  - `createIndexedDbClientStore(options?)`
-  - `createIndexedDBClientStore(options?)`
+  - `createIndexedDbClientStore(options?)` from `insieme`, `insieme/client`, or `insieme/browser`
+  - `createIndexedDBClientStore(options?)` from `insieme`, `insieme/client`, or `insieme/browser`
 
 ## Optional Materialized Views
 

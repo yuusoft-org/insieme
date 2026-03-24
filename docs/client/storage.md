@@ -73,11 +73,14 @@ For `@libsql/client`:
 
 ```js
 import { createClient } from "@libsql/client";
-import { createLibsqlClientStore } from "insieme";
+import { createLibsqlClientStore } from "insieme/client";
 
 const client = createClient({ url: "file:./insieme-client.db" });
 const store = createLibsqlClientStore(client);
 ```
+
+For Node SQLite (`better-sqlite3` style APIs), use `createSqliteClientStore`
+from `insieme/node`.
 
 ## Optional Tables
 
