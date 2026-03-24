@@ -6,13 +6,19 @@ import * as nodeEntrypoint from "insieme/node";
 import * as server from "insieme/server";
 
 const CLIENT_EXPORTS = [
+  "commandToSyncEvent",
+  "committedSyncEventToCommand",
   "createBrowserWebSocketTransport",
+  "createCommandSyncSession",
+  "createIndexedDBClientStore",
   "createInMemoryClientStore",
   "createIndexedDbClientStore",
   "createLibsqlClientStore",
+  "createMaterializedViewRuntime",
   "createOfflineTransport",
   "createReducer",
   "createSyncClient",
+  "validateCommandSubmitItem",
 ].sort();
 
 const NODE_EXPORTS = [
