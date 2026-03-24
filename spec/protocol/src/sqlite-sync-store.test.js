@@ -62,7 +62,13 @@ describeSqlite("src createSqliteSyncStore", () => {
     expect(second.committedEvent.committedId).toBe(1);
 
     const schema = db._raw.prepare("PRAGMA user_version").get();
-    expect(schema.user_version).toBe(3);
+    expect(schema.user_version).toBe(4);
+    const payload = db._raw
+      .prepare(
+        "SELECT type FROM pragma_table_info('committed_events') WHERE name = 'payload'",
+      )
+      .get();
+    expect(payload.type).toBe("BLOB");
 
     db.close();
   });

@@ -84,7 +84,17 @@ describeSqlite("src createSqliteClientStore", () => {
     await store.init();
 
     const row = db._raw.prepare("PRAGMA user_version").get();
-    expect(row.user_version).toBe(3);
+    expect(row.user_version).toBe(4);
+    const draftPayload = db._raw
+      .prepare("SELECT type FROM pragma_table_info('local_drafts') WHERE name = 'payload'")
+      .get();
+    const committedPayload = db._raw
+      .prepare(
+        "SELECT type FROM pragma_table_info('committed_events') WHERE name = 'payload'",
+      )
+      .get();
+    expect(draftPayload.type).toBe("BLOB");
+    expect(committedPayload.type).toBe("BLOB");
 
     db.close();
   });

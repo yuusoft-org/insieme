@@ -1,8 +1,9 @@
 import { canonicalizeSubmitItem } from "./canonicalize.js";
 import { normalizeMeta } from "./event-record.js";
 import { createLibsqlDriver, parseIntSafe } from "./libsql-driver.js";
+import { deserializePayload, serializePayload } from "./payload-codec.js";
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 const DEFAULT_SCAN_CHUNK_SIZE = 512;
 
 const parseCommittedRow = (row) => ({
@@ -13,7 +14,7 @@ const parseCommittedRow = (row) => ({
   committedId: parseIntSafe(row.committed_id, 0),
   type: row.type,
   schemaVersion: parseIntSafe(row.schema_version, 0),
-  payload: JSON.parse(row.payload),
+  payload: deserializePayload(row.payload),
   payloadCompression: row.payload_compression || undefined,
   meta: normalizeMeta({
     clientTs: parseIntSafe(row.client_ts, 0),
@@ -36,6 +37,12 @@ const toComparisonKey = (event) =>
 const tableHasColumn = async (db, tableName, columnName) => {
   const rows = await db.queryAll(`PRAGMA table_info(${tableName})`);
   return rows.some((row) => row.name === columnName);
+};
+
+const getTableColumnType = async (db, tableName, columnName) => {
+  const rows = await db.queryAll(`PRAGMA table_info(${tableName})`);
+  const column = rows.find((row) => row.name === columnName);
+  return typeof column?.type === "string" ? column.type.toUpperCase() : null;
 };
 
 export const createLibsqlSyncStore = (
@@ -90,7 +97,7 @@ export const createLibsqlSyncStore = (
             partition TEXT NOT NULL,
             type TEXT NOT NULL,
             schema_version INTEGER NOT NULL,
-            payload TEXT NOT NULL,
+            payload BLOB NOT NULL,
             payload_compression TEXT DEFAULT NULL,
             client_ts INTEGER NOT NULL,
             server_ts INTEGER NOT NULL,
@@ -118,6 +125,15 @@ export const createLibsqlSyncStore = (
           throw new Error(
             "Sync store legacy committed_events table is incompatible; reset required",
           );
+        }
+      } else if (next === 4) {
+        const payloadType = await getTableColumnType(
+          db,
+          "committed_events",
+          "payload",
+        );
+        if (payloadType !== "BLOB") {
+          throw new Error("Sync store requires reset for blob payload storage");
         }
       } else {
         throw new Error(`Missing migration for schema version ${next}`);
@@ -240,7 +256,7 @@ export const createLibsqlSyncStore = (
           partition,
           type,
           schemaVersion,
-          JSON.stringify(payload),
+          serializePayload(payload),
           null,
           parseIntSafe(normalizedMeta.clientTs, 0),
           now,

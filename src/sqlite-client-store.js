@@ -5,8 +5,9 @@ import { canonicalizeSubmitItem } from "./canonicalize.js";
 import { buildCommittedEventFromDraft, normalizeMeta } from "./event-record.js";
 import { normalizeMaterializedViewDefinitions } from "./materialized-view.js";
 import { createMaterializedViewRuntime } from "./materialized-view-runtime.js";
+import { deserializePayload, serializePayload } from "./payload-codec.js";
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 const DEFAULT_MATERIALIZED_BACKFILL_CHUNK_SIZE = 512;
 
 const createTransaction = (db, fn) => {
@@ -48,6 +49,12 @@ const toComparisonKey = (event) =>
 const tableHasColumn = (db, tableName, columnName) => {
   const rows = db.prepare(`PRAGMA table_info(${tableName})`).all();
   return rows.some((row) => row.name === columnName);
+};
+
+const getTableColumnType = (db, tableName, columnName) => {
+  const rows = db.prepare(`PRAGMA table_info(${tableName})`).all();
+  const column = rows.find((row) => row.name === columnName);
+  return typeof column?.type === "string" ? column.type.toUpperCase() : null;
 };
 
 export const createSqliteClientStore = (
@@ -129,7 +136,7 @@ export const createSqliteClientStore = (
           partition TEXT NOT NULL,
           type TEXT NOT NULL,
           schema_version INTEGER NOT NULL,
-          payload TEXT NOT NULL,
+          payload BLOB NOT NULL,
           payload_compression TEXT DEFAULT NULL,
           client_ts INTEGER NOT NULL,
           created_at INTEGER NOT NULL
@@ -143,7 +150,7 @@ export const createSqliteClientStore = (
           partition TEXT NOT NULL,
           type TEXT NOT NULL,
           schema_version INTEGER NOT NULL,
-          payload TEXT NOT NULL,
+          payload BLOB NOT NULL,
           payload_compression TEXT DEFAULT NULL,
           client_ts INTEGER NOT NULL,
           server_ts INTEGER NOT NULL,
@@ -212,6 +219,19 @@ export const createSqliteClientStore = (
         );
       }
     },
+    () => {
+      const draftPayloadType = getTableColumnType(db, "local_drafts", "payload");
+      const committedPayloadType = getTableColumnType(
+        db,
+        "committed_events",
+        "payload",
+      );
+      if (draftPayloadType !== "BLOB" || committedPayloadType !== "BLOB") {
+        throw new Error(
+          "Client store requires reset for blob payload storage",
+        );
+      }
+    },
   ];
 
   const runMigrations = () => {
@@ -243,7 +263,7 @@ export const createSqliteClientStore = (
     partition: row.partition,
     type: row.type,
     schemaVersion: parseIntSafe(row.schema_version),
-    payload: JSON.parse(row.payload),
+    payload: deserializePayload(row.payload),
     payloadCompression: row.payload_compression || undefined,
     meta: normalizeMeta({
       clientTs: parseIntSafe(row.client_ts),
@@ -259,7 +279,7 @@ export const createSqliteClientStore = (
     partition: row.partition,
     type: row.type,
     schemaVersion: parseIntSafe(row.schema_version),
-    payload: JSON.parse(row.payload),
+    payload: deserializePayload(row.payload),
     payloadCompression: row.payload_compression || undefined,
     meta: normalizeMeta({
       clientTs: parseIntSafe(row.client_ts),
@@ -438,7 +458,7 @@ export const createSqliteClientStore = (
           partition: item.partition,
           type: item.type,
           schema_version: item.schemaVersion,
-          payload: JSON.stringify(item.payload),
+          payload: serializePayload(item.payload),
           payload_compression: item.payloadCompression ?? null,
           client_ts: parseIntSafe(item.meta?.clientTs),
           created_at: item.createdAt,
@@ -467,7 +487,7 @@ export const createSqliteClientStore = (
             partition: nextCommittedEvent.partition,
             type: nextCommittedEvent.type,
             schema_version: nextCommittedEvent.schemaVersion,
-            payload: JSON.stringify(nextCommittedEvent.payload),
+            payload: serializePayload(nextCommittedEvent.payload),
             payload_compression: nextCommittedEvent.payloadCompression ?? null,
             client_ts: parseIntSafe(nextCommittedEvent.meta?.clientTs),
             server_ts: nextCommittedEvent.serverTs,
@@ -501,7 +521,7 @@ export const createSqliteClientStore = (
           partition: event.partition,
           type: event.type,
           schema_version: event.schemaVersion,
-          payload: JSON.stringify(event.payload),
+          payload: serializePayload(event.payload),
           payload_compression: event.payloadCompression ?? null,
           client_ts: parseIntSafe(event.meta?.clientTs),
           server_ts: event.serverTs,
@@ -623,7 +643,7 @@ export const createSqliteClientStore = (
         partition,
         type,
         schema_version: schemaVersion,
-        payload: JSON.stringify(payload),
+        payload: serializePayload(payload),
         payload_compression: payloadCompression ?? null,
         client_ts: parseIntSafe(meta?.clientTs),
         created_at: createdAt,

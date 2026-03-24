@@ -3,11 +3,10 @@ import { buildCommittedEventFromDraft, normalizeMeta } from "./event-record.js";
 import { normalizeMaterializedViewDefinitions } from "./materialized-view.js";
 import { createMaterializedViewRuntime } from "./materialized-view-runtime.js";
 import { createLibsqlDriver, parseIntSafe } from "./libsql-driver.js";
+import { deserializePayload, serializePayload } from "./payload-codec.js";
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 const DEFAULT_MATERIALIZED_BACKFILL_CHUNK_SIZE = 512;
-
-const toSerializedJson = (value) => JSON.stringify(value);
 
 const createTransaction = async (db, fn) => {
   await db.execute("BEGIN IMMEDIATE");
@@ -31,7 +30,7 @@ const parseDraft = (row) => ({
   partition: row.partition,
   type: row.type,
   schemaVersion: parseIntSafe(row.schema_version, 0),
-  payload: JSON.parse(row.payload),
+  payload: deserializePayload(row.payload),
   payloadCompression: row.payload_compression || undefined,
   meta: normalizeMeta({
     clientTs: parseIntSafe(row.client_ts, 0),
@@ -47,7 +46,7 @@ const parseCommittedRow = (row) => ({
   partition: row.partition,
   type: row.type,
   schemaVersion: parseIntSafe(row.schema_version, 0),
-  payload: JSON.parse(row.payload),
+  payload: deserializePayload(row.payload),
   payloadCompression: row.payload_compression || undefined,
   meta: normalizeMeta({
     clientTs: parseIntSafe(row.client_ts, 0),
@@ -71,6 +70,12 @@ const toComparisonKey = (event) =>
 const tableHasColumn = async (db, tableName, columnName) => {
   const rows = await db.queryAll(`PRAGMA table_info(${tableName})`);
   return rows.some((row) => row.name === columnName);
+};
+
+const getTableColumnType = async (db, tableName, columnName) => {
+  const rows = await db.queryAll(`PRAGMA table_info(${tableName})`);
+  const column = rows.find((row) => row.name === columnName);
+  return typeof column?.type === "string" ? column.type.toUpperCase() : null;
 };
 
 export const createLibsqlClientStore = (
@@ -120,7 +125,7 @@ export const createLibsqlClientStore = (
           partition TEXT NOT NULL,
           type TEXT NOT NULL,
           schema_version INTEGER NOT NULL,
-          payload TEXT NOT NULL,
+          payload BLOB NOT NULL,
           payload_compression TEXT DEFAULT NULL,
           client_ts INTEGER NOT NULL,
           created_at INTEGER NOT NULL
@@ -135,7 +140,7 @@ export const createLibsqlClientStore = (
           partition TEXT NOT NULL,
           type TEXT NOT NULL,
           schema_version INTEGER NOT NULL,
-          payload TEXT NOT NULL,
+          payload BLOB NOT NULL,
           payload_compression TEXT DEFAULT NULL,
           client_ts INTEGER NOT NULL,
           server_ts INTEGER NOT NULL,
@@ -203,6 +208,23 @@ export const createLibsqlClientStore = (
       ) {
         throw new Error(
           "Client store legacy collab tables are incompatible; reset required",
+        );
+      }
+    },
+    async () => {
+      const draftPayloadType = await getTableColumnType(
+        db,
+        "local_drafts",
+        "payload",
+      );
+      const committedPayloadType = await getTableColumnType(
+        db,
+        "committed_events",
+        "payload",
+      );
+      if (draftPayloadType !== "BLOB" || committedPayloadType !== "BLOB") {
+        throw new Error(
+          "Client store requires reset for blob payload storage",
         );
       }
     },
@@ -445,7 +467,7 @@ export const createLibsqlClientStore = (
           partition,
           type,
           schemaVersion,
-          toSerializedJson(payload),
+          serializePayload(payload),
           payloadCompression ?? null,
           parseIntSafe(meta?.clientTs, 0),
           createdAt,
@@ -476,7 +498,7 @@ export const createLibsqlClientStore = (
               item.partition,
               item.type,
               item.schemaVersion,
-              toSerializedJson(item.payload),
+              serializePayload(item.payload),
               item.payloadCompression ?? null,
               parseIntSafe(item.meta?.clientTs, 0),
               item.createdAt,
@@ -542,7 +564,7 @@ export const createLibsqlClientStore = (
               nextCommittedEvent.partition,
               nextCommittedEvent.type,
               nextCommittedEvent.schemaVersion,
-              toSerializedJson(nextCommittedEvent.payload),
+              serializePayload(nextCommittedEvent.payload),
               nextCommittedEvent.payloadCompression ?? null,
               parseIntSafe(nextCommittedEvent.meta?.clientTs, 0),
               nextCommittedEvent.serverTs,
@@ -597,7 +619,7 @@ export const createLibsqlClientStore = (
             event.partition,
             event.type,
             event.schemaVersion,
-            toSerializedJson(event.payload),
+            serializePayload(event.payload),
             event.payloadCompression ?? null,
             parseIntSafe(event.meta?.clientTs, 0),
             event.serverTs,

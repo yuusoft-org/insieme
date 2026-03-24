@@ -1,7 +1,8 @@
 import { canonicalizeSubmitItem } from "./canonicalize.js";
 import { normalizeMeta } from "./event-record.js";
+import { deserializePayload, serializePayload } from "./payload-codec.js";
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 const DEFAULT_SCAN_CHUNK_SIZE = 512;
 
 const createTransaction = (db, fn) => {
@@ -34,6 +35,12 @@ const parseIntSafe = (value, fallback = 0) => {
 const tableHasColumn = (db, tableName, columnName) => {
   const rows = db.prepare(`PRAGMA table_info(${tableName})`).all();
   return rows.some((row) => row.name === columnName);
+};
+
+const getTableColumnType = (db, tableName, columnName) => {
+  const rows = db.prepare(`PRAGMA table_info(${tableName})`).all();
+  const column = rows.find((row) => row.name === columnName);
+  return typeof column?.type === "string" ? column.type.toUpperCase() : null;
 };
 
 export const createSqliteSyncStore = (
@@ -90,7 +97,7 @@ export const createSqliteSyncStore = (
           partition TEXT NOT NULL,
           type TEXT NOT NULL,
           schema_version INTEGER NOT NULL,
-          payload TEXT NOT NULL,
+          payload BLOB NOT NULL,
           payload_compression TEXT DEFAULT NULL,
           client_ts INTEGER NOT NULL,
           server_ts INTEGER NOT NULL,
@@ -115,6 +122,12 @@ export const createSqliteSyncStore = (
         throw new Error(
           "Sync store legacy committed_events table is incompatible; reset required",
         );
+      }
+    },
+    () => {
+      const payloadType = getTableColumnType(db, "committed_events", "payload");
+      if (payloadType !== "BLOB") {
+        throw new Error("Sync store requires reset for blob payload storage");
       }
     },
   ];
@@ -150,7 +163,7 @@ export const createSqliteSyncStore = (
     committedId: row.committed_id,
     type: row.type,
     schemaVersion: parseIntSafe(row.schema_version, 0),
-    payload: JSON.parse(row.payload),
+    payload: deserializePayload(row.payload),
     payloadCompression: row.payload_compression || undefined,
     meta: normalizeMeta({
       clientTs: parseIntSafe(row.client_ts, 0),
@@ -297,7 +310,7 @@ export const createSqliteSyncStore = (
           partition,
           type,
           schema_version: schemaVersion,
-          payload: JSON.stringify(payload),
+          payload: serializePayload(payload),
           payload_compression: null,
           client_ts: parseIntSafe(normalizedMeta.clientTs, 0),
           server_ts: now,
