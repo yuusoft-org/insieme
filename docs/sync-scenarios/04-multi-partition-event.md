@@ -1,23 +1,21 @@
-# Scenario 04 - Multi-Partition Event
+# Scenario 04 - Multi-Partition Event Removed
 
 Note: Envelope metadata (`msgId`, `timestamp`) is omitted when not central.
 
 ## Goal
-Verify one committed event is visible in each referenced partition.
+Document the v2 change from multi-partition events to single-partition events.
 
 ## Actors
 - C1 (origin)
-- C2 (scope includes `P1`)
-- C3 (scope includes `P2`)
 - Server
 
 ## Preconditions
-- C1, C2, C3 connected.
-- C1 can submit to both `P1` and `P2`.
+- C1 is connected to project `P1`.
+- The application wants to affect both partition `P1` and partition `P2`.
 
 ## Steps
 
-### 1) C1 submits event with two partitions
+### 1) Legacy shape is no longer accepted
 
 **C1 -> Server**
 ```yaml
@@ -26,7 +24,7 @@ protocolVersion: "1.0"
 payload:
   events:
     - id: evt-uuid-mp1
-      partitions: [P1, P2]
+      partition: P1
       projectId: P1
       userId: U1
       type: explorer.folderCreated
@@ -37,12 +35,12 @@ payload:
         clientTs: 1738451204000
 ```
 
-### 2) Server commits and delivers
-- Commit as one event with one `committedId`.
-- Return `submit_events_result` to C1.
-- Broadcast to C2 and C3 (scope intersection).
+### 2) Replication pattern in v2
+- Each committed event carries exactly one `partition`.
+- If the application needs the same logical change in multiple partitions, it must submit multiple events with distinct ids.
+- Broadcast fan-out is project-scoped; consumers inspect each event's single `partition`.
 
 ## Assertions
-- C2 receives committed event in `P1` view.
-- C3 receives committed event in `P2` view.
-- Event identity (`id`, `committedId`, `schemaVersion`) is identical across both partition views.
+- Multi-partition payloads are not part of the v2 protocol.
+- One committed event maps to one partition.
+- Apps that need cross-partition effects must model them above the core protocol.

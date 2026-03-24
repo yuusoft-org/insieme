@@ -65,7 +65,7 @@ describe("src trace logging", () => {
     const serverStore = createInMemorySyncStore();
     const server = createSyncServer({
       auth: { verifyToken: async () => ({ clientId: "C1", claims: {} }) },
-      authz: { authorizePartitions: async () => true },
+      authz: { authorizeProject: async () => true },
       validation: { validate: async () => {} },
       store: serverStore,
       clock: { now: createNowFactory() },
@@ -81,7 +81,7 @@ describe("src trace logging", () => {
       store: createInMemoryClientStore(),
       token: "C1",
       clientId: "C1",
-      partitions: ["P1"],
+      projectId: "proj-1",
       now: createNowFactory(),
       uuid: () => "evt-log-1",
     });
@@ -90,7 +90,7 @@ describe("src trace logging", () => {
     await tick();
 
     await client.submitEvent({
-      partitions: ["P1"],
+      partition: "P1",
       event: {
         type: "event",
         schemaVersion: 1,
@@ -118,7 +118,7 @@ describe("src trace logging", () => {
     const clientLogs = [];
     const server = createSyncServer({
       auth: { verifyToken: async () => ({ clientId: "C1", claims: {} }) },
-      authz: { authorizePartitions: async () => true },
+      authz: { authorizeProject: async () => true },
       validation: { validate: async () => {} },
       store: createInMemorySyncStore(),
       clock: { now: createNowFactory() },
@@ -133,7 +133,7 @@ describe("src trace logging", () => {
       store: createInMemoryClientStore(),
       token: "C1",
       clientId: "C1",
-      partitions: ["P1"],
+      projectId: "proj-1",
       now: createNowFactory(),
       uuid: () => "evt-client-log-1",
       logger: (entry) => clientLogs.push(entry),
@@ -143,7 +143,7 @@ describe("src trace logging", () => {
     await tick();
 
     await client.submitEvent({
-      partitions: ["P1"],
+      partition: "P1",
       event: {
         type: "event",
         schemaVersion: 1,
@@ -169,7 +169,7 @@ describe("src trace logging", () => {
   it("continues protocol flow even if logger throws", async () => {
     const server = createSyncServer({
       auth: { verifyToken: async () => ({ clientId: "C1", claims: {} }) },
-      authz: { authorizePartitions: async () => true },
+      authz: { authorizeProject: async () => true },
       validation: { validate: async () => {} },
       store: createInMemorySyncStore(),
       clock: { now: createNowFactory() },
@@ -187,7 +187,7 @@ describe("src trace logging", () => {
       store: createInMemoryClientStore(),
       token: "C1",
       clientId: "C1",
-      partitions: ["P1"],
+      projectId: "proj-1",
       now: createNowFactory(),
       uuid: () => "evt-safe-1",
       logger: () => {
@@ -198,7 +198,7 @@ describe("src trace logging", () => {
     await client.start();
     await tick();
     await client.submitEvent({
-      partitions: ["P1"],
+      partition: "P1",
       event: {
         type: "event",
         schemaVersion: 1,
@@ -214,7 +214,7 @@ describe("src trace logging", () => {
     let nextMsg = 0;
     const server = createSyncServer({
       auth: { verifyToken: async () => ({ clientId: "C1", claims: {} }) },
-      authz: { authorizePartitions: async () => true },
+      authz: { authorizeProject: async () => true },
       validation: { validate: async () => {} },
       store: createInMemorySyncStore(),
       clock: { now: createNowFactory() },
@@ -230,7 +230,7 @@ describe("src trace logging", () => {
       store: createInMemoryClientStore(),
       token: "C1",
       clientId: "C1",
-      partitions: ["P1"],
+      projectId: "proj-1",
       now: createNowFactory(),
       uuid: () => "evt-msg-1",
       msgId: () => {
@@ -243,7 +243,7 @@ describe("src trace logging", () => {
     await client.start();
     await tick();
     await client.submitEvent({
-      partitions: ["P1"],
+      partition: "P1",
       event: {
         type: "event",
         schemaVersion: 1,

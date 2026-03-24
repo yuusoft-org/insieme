@@ -42,7 +42,7 @@ const makeServer = ({
 }) =>
   createSyncServer({
     auth: { verifyToken },
-    authz: { authorizePartitions: authorize },
+    authz: { authorizeProject: authorize },
     validation: { validate },
     store,
     clock: { now },
@@ -104,7 +104,7 @@ const createClientNode = ({
   server,
   token,
   clientId,
-  partitions = ["P1"],
+  projectId = "proj-1",
   store,
   now,
   uuid,
@@ -121,7 +121,7 @@ const createClientNode = ({
     store,
     token,
     clientId,
-    partitions,
+    projectId,
     now,
     uuid,
     logger,
@@ -149,12 +149,12 @@ describe("src reliability integration", () => {
       events: [
         {
           id: "evt-130",
-          partitions: ["P1"],
+          partition: "P1",
           committedId: 130,
           type: "x",
           payload: { n: 130 },
           meta: { clientId: "C2", clientTs: 1300 },
-          created: 1300,
+          serverTs: 1300,
         },
       ],
     });
@@ -163,12 +163,12 @@ describe("src reliability integration", () => {
       events: [
         {
           id: "evt-129",
-          partitions: ["P1"],
+          partition: "P1",
           committedId: 129,
           type: "x",
           payload: { n: 129 },
           meta: { clientId: "C2", clientTs: 1290 },
-          created: 1290,
+          serverTs: 1290,
         },
       ],
       nextCursor: 130,
@@ -186,12 +186,12 @@ describe("src reliability integration", () => {
       events: [
         {
           id: "evt-1",
-          partitions: ["P1"],
+          partition: "P1",
           committedId: 1,
           type: "x",
           payload: { n: 1 },
           meta: { clientId: "C1", clientTs: 1 },
-          created: 1,
+          serverTs: 1,
         },
       ],
     });
@@ -203,21 +203,21 @@ describe("src reliability integration", () => {
       events: [
         {
           id: "evt-1",
-          partitions: ["P1"],
+          partition: "P1",
           committedId: 1,
           type: "x",
           payload: { n: 1 },
           meta: { clientId: "C1", clientTs: 1 },
-          created: 1,
+          serverTs: 1,
         },
         {
           id: "evt-2",
-          partitions: ["P1"],
+          partition: "P1",
           committedId: 2,
           type: "x",
           payload: { n: 2 },
           meta: { clientId: "C1", clientTs: 2 },
-          created: 2,
+          serverTs: 2,
         },
       ],
       nextCursor: 2,
@@ -254,7 +254,7 @@ describe("src reliability integration", () => {
 
     await expect(
       node.client.submitEvent({
-        partitions: ["P1"],
+        partition: "P1",
         type: "x",
         schemaVersion: 1,
         payload: { ok: false },
@@ -264,7 +264,7 @@ describe("src reliability integration", () => {
     expect(node.store._debug.getDrafts()).toHaveLength(0);
 
     await node.client.submitEvent({
-      partitions: ["P1"],
+      partition: "P1",
       type: "x",
       schemaVersion: 1,
       payload: { ok: true },
@@ -281,7 +281,7 @@ describe("src reliability integration", () => {
 
     await store.insertDraft({
       id: "evt-d1",
-      partitions: ["P1"],
+      partition: "P1",
       type: "x",
       schemaVersion: 1,
       payload: { n: 1 },
@@ -290,7 +290,7 @@ describe("src reliability integration", () => {
     });
     await store.insertDraft({
       id: "evt-d2",
-      partitions: ["P1"],
+      partition: "P1",
       type: "x",
       schemaVersion: 1,
       payload: { n: 2 },
@@ -299,7 +299,7 @@ describe("src reliability integration", () => {
     });
     await store.insertDraft({
       id: "evt-d3",
-      partitions: ["P1"],
+      partition: "P1",
       type: "x",
       schemaVersion: 1,
       payload: { n: 3 },
@@ -312,7 +312,7 @@ describe("src reliability integration", () => {
         id: "evt-d2",
         status: "committed",
         committedId: 501,
-        created: 501,
+        serverTs: 501,
       },
     });
     await store.applySubmitResult({
@@ -320,7 +320,7 @@ describe("src reliability integration", () => {
         id: "evt-d1",
         status: "committed",
         committedId: 502,
-        created: 502,
+        serverTs: 502,
       },
     });
     await store.applySubmitResult({
@@ -328,7 +328,7 @@ describe("src reliability integration", () => {
         id: "evt-d3",
         status: "committed",
         committedId: 503,
-        created: 503,
+        serverTs: 503,
       },
     });
 
@@ -338,13 +338,14 @@ describe("src reliability integration", () => {
     ).toEqual([501, 502, 503]);
   });
 
-  it("SC-12: adding partitions mid-session with since=0 converges without duplicates", async () => {
+  it("SC-12: full-project since=0 catch-up converges without duplicates", async () => {
     const serverStore = createInMemorySyncStore();
     const now = createNowFactory();
 
     await serverStore.commitOrGetExisting({
       id: "evt-p2-1",
-      partitions: ["P2"],
+      partition: "P2",
+      projectId: "proj-1",
       type: "x",
       schemaVersion: 1,
       payload: { n: 1 },
@@ -353,7 +354,8 @@ describe("src reliability integration", () => {
     });
     await serverStore.commitOrGetExisting({
       id: "evt-p1-1",
-      partitions: ["P1"],
+      partition: "P1",
+      projectId: "proj-1",
       type: "x",
       schemaVersion: 1,
       payload: { n: 2 },
@@ -362,7 +364,8 @@ describe("src reliability integration", () => {
     });
     await serverStore.commitOrGetExisting({
       id: "evt-p2-2",
-      partitions: ["P2"],
+      partition: "P2",
+      projectId: "proj-1",
       type: "x",
       schemaVersion: 1,
       payload: { n: 3 },
@@ -378,13 +381,11 @@ describe("src reliability integration", () => {
       store: createInMemoryClientStore(),
       now: createNowFactory(),
       uuid: createUuidFactory("evt"),
-      partitions: ["P1"],
     });
 
     await node.client.start();
     await tick();
 
-    await node.client.setPartitions(["P1", "P2"], { sinceCommittedId: 0 });
     await node.client.syncNow({ sinceCommittedId: 0 });
     await tick();
 
@@ -439,7 +440,7 @@ describe("src reliability integration", () => {
     await tick();
 
     await node.client.submitEvent({
-      partitions: ["P1"],
+      partition: "P1",
       type: "x",
       schemaVersion: 1,
       payload: { n: 1 },
@@ -472,7 +473,7 @@ describe("src reliability integration", () => {
     expect(node.store._debug.getDrafts()).toHaveLength(0);
 
     await node.client.submitEvent({
-      partitions: ["P1"],
+      partition: "P1",
       type: "x",
       schemaVersion: 1,
       payload: { n: 1 },
@@ -509,13 +510,13 @@ describe("src reliability integration", () => {
 
       await Promise.all([
         c1.client.submitEvent({
-          partitions: ["P1"],
+          partition: "P1",
           type: "x",
           schemaVersion: 1,
           payload: { v: "U1" },
         }),
         c2.client.submitEvent({
-          partitions: ["P1"],
+          partition: "P1",
           type: "x",
           schemaVersion: 1,
           payload: { v: "U2" },
@@ -556,7 +557,7 @@ describe("src reliability integration", () => {
     // offline draft creation and persistence
     await store.insertDraft({
       id: "offline-1",
-      partitions: ["P1"],
+      partition: "P1",
       type: "x",
       schemaVersion: 1,
       payload: { n: 1 },
@@ -565,7 +566,7 @@ describe("src reliability integration", () => {
     });
     await store.insertDraft({
       id: "offline-2",
-      partitions: ["P1"],
+      partition: "P1",
       type: "x",
       schemaVersion: 1,
       payload: { n: 2 },
@@ -574,7 +575,7 @@ describe("src reliability integration", () => {
     });
     await store.insertDraft({
       id: "offline-3",
-      partitions: ["P1"],
+      partition: "P1",
       type: "x",
       schemaVersion: 1,
       payload: { n: 3 },
@@ -648,7 +649,7 @@ describe("src reliability integration", () => {
 
         if (action < 0.45) {
           await node.client.submitEvent({
-            partitions: ["P1"],
+            partition: "P1",
             event: {
               type: "event",
               schemaVersion: 1,
@@ -672,7 +673,7 @@ describe("src reliability integration", () => {
           nodes[index] = restarted;
           await restarted.client.start();
         } else {
-          await node.client.setPartitions(["P1"]);
+          await node.client.syncNow();
         }
       }
 

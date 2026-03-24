@@ -35,7 +35,14 @@ protocolVersion: "1.0"
 payload:
   token: jwt
   clientId: client-123
+  projectId: workspace-1
 ```
+
+Rules:
+
+- `payload.token` **MUST** be present.
+- `payload.clientId` **MUST** be present.
+- `payload.projectId` **MUST** be a non-empty string.
 
 ### `submit_events`
 
@@ -47,7 +54,7 @@ protocolVersion: "1.0"
 payload:
   events:
     - id: evt-uuid-1
-      partitions: [workspace-1]
+      partition: workspace-1
       projectId: workspace-1
       userId: user-123
       type: explorer.folderCreated
@@ -62,7 +69,8 @@ Rules:
 
 - `payload.events` **MUST** be an array with at least 1 item.
 - Each `payload.events[n].id` **MUST** be present.
-- Each `payload.events[n].partitions` **MUST** follow `partitions.md`.
+- Each `payload.events[n].partition` **MUST** follow `partitions.md`.
+- Each `payload.events[n].projectId` **MUST** be present and match the authenticated session project.
 - Each `payload.events[n].type` **MUST** be present.
 - Each `payload.events[n].schemaVersion` **MUST** be a positive integer.
 - Each `payload.events[n].payload` **MUST** be an object.
@@ -78,14 +86,14 @@ Rules:
 type: sync
 protocolVersion: "1.0"
 payload:
-  partitions:
-    - workspace-1
+  projectId: workspace-1
   sinceCommittedId: 1200
   limit: 500
 ```
 
 Rules:
 
+- `payload.projectId` **MUST** be present and match the authenticated session project.
 - `sinceCommittedId` is exclusive.
 - `limit` is optional.
 - If omitted, server **MUST** use default `500`.
@@ -100,7 +108,8 @@ type: connected
 protocolVersion: "1.0"
 payload:
   clientId: client-123
-  globalLastCommittedId: 1700
+  projectId: workspace-1
+  projectLastCommittedId: 1700
 ```
 
 ### `submit_events_result`
@@ -115,11 +124,11 @@ payload:
     - id: evt-uuid-1
       status: committed
       committedId: 1201
-      created: 1738451201500
+      serverTs: 1738451201500
     - id: evt-uuid-2
       status: committed
       committedId: 1202
-      created: 1738451201501
+      serverTs: 1738451201501
 ```
 
 Rejected example:
@@ -148,6 +157,7 @@ Rules:
 - Server **MUST** send exactly one `submit_events_result` per `submit_events` request.
 - `results` **MUST** contain exactly one entry per submitted item, in request order.
 - Result `status` values are `committed`, `rejected`, or `not_processed`.
+- `committed` results **MUST** include `committedId` and `serverTs`.
 - `results[n]` **MUST NOT** echo event fields such as `schemaVersion`; clients correlate outcomes by submitted `id`.
 - If one item is rejected, later submitted items in the same batch that were not attempted **MUST** be returned as `not_processed`.
 - Origin submit outcome is authoritative from this message.
@@ -162,8 +172,7 @@ protocolVersion: "1.0"
 payload:
   committedId: 1201
   id: evt-uuid-1
-  partitions:
-    - workspace-1
+  partition: workspace-1
   projectId: workspace-1
   userId: user-123
   type: explorer.folderCreated
@@ -172,7 +181,7 @@ payload:
   meta:
     clientId: client-123
     clientTs: 1738451200000
-  created: 1738451205000
+  serverTs: 1738451205000
 ```
 
 Server **MUST NOT** send `event_broadcast` for an item to the same connection that submitted that item.
@@ -184,12 +193,11 @@ Committed broadcast events **MUST** include a positive-integer `schemaVersion`.
 type: sync_response
 protocolVersion: "1.0"
 payload:
-  partitions:
-    - workspace-1
+  projectId: workspace-1
   events:
     - committedId: 1201
       id: evt-uuid-50
-      partitions: [workspace-1]
+      partition: workspace-1
       projectId: workspace-1
       userId: user-456
       type: explorer.folderCreated
@@ -198,7 +206,7 @@ payload:
       meta:
         clientId: client-456
         clientTs: 1738451200000
-      created: 1738451200000
+      serverTs: 1738451200000
   nextSinceCommittedId: 1700
   hasMore: false
   syncToCommittedId: 1700
@@ -208,7 +216,7 @@ Cursor rule:
 
 - If `hasMore=true`, client **MUST** use `nextSinceCommittedId` in the next `sync` call.
 - If `hasMore=false`, `nextSinceCommittedId` becomes the durable cursor.
-- `payload.partitions` **MUST** be present and reflect the normalized active sync scope used for this response page.
+- `payload.projectId` **MUST** be present and reflect the active project scope used for this response page.
 - `payload.syncToCommittedId` **MUST** remain fixed for the full paging cycle.
 - Each `payload.events[n].schemaVersion` **MUST** be present and be a positive integer.
 

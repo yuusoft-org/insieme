@@ -3,7 +3,7 @@ import { createInMemoryClientStore } from "../../../src/index.js";
 
 const makeDraft = (overrides = {}) => ({
   id: "evt-1",
-  partitions: ["P1"],
+  partition: "P1",
   type: "x",
   payload: { n: 1 },
   meta: { clientId: "C1", clientTs: 100 },
@@ -13,14 +13,25 @@ const makeDraft = (overrides = {}) => ({
 
 const makeCommitted = (overrides = {}) => ({
   id: "evt-1",
-  partitions: ["P1"],
+  partition: "P1",
+  projectId: "proj-1",
   committedId: 1,
   type: "x",
   payload: { n: 1 },
   meta: { clientId: "C1", clientTs: 10 },
-  created: 10,
+  serverTs: 10,
   ...overrides,
 });
+
+const loadViews = async (store, viewName, partitions) =>
+  Object.fromEntries(
+    await Promise.all(
+      partitions.map(async (partition) => [
+        partition,
+        await store.loadMaterializedView({ viewName, partition }),
+      ]),
+    ),
+  );
 
 const counterView = {
   name: "counter",
@@ -53,7 +64,7 @@ describe("src createInMemoryClientStore", () => {
         id: "evt-1",
         status: "committed",
         committedId: 10,
-        created: 111,
+        serverTs: 111,
       },
     });
 
@@ -65,8 +76,8 @@ describe("src createInMemoryClientStore", () => {
     expect(committed[0]).toMatchObject({
       id: "evt-1",
       committedId: 10,
-      meta: { clientId: "C1", clientTs: 100 },
-      created: 111,
+      clientTs: 100,
+      serverTs: 111,
     });
   });
 
@@ -94,13 +105,13 @@ describe("src createInMemoryClientStore", () => {
     await store.insertDraft(makeDraft({ id: "evt-1" }));
 
     const events = [
-      makeCommitted({ id: "evt-1", committedId: 1, payload: { n: 1 }, created: 10 }),
+      makeCommitted({ id: "evt-1", committedId: 1, payload: { n: 1 }, serverTs: 10 }),
       makeCommitted({
         id: "evt-2",
         committedId: 2,
         payload: { n: 2 },
         meta: { clientId: "C2", clientTs: 11 },
-        created: 11,
+        serverTs: 11,
       }),
     ];
 
@@ -135,7 +146,7 @@ describe("src createInMemoryClientStore", () => {
 
     await expect(
       store.applyCommittedBatch({
-        events: [makeCommitted({ id: "evt-1", committedId: 2, payload: { n: 1 }, created: 11 })],
+        events: [makeCommitted({ id: "evt-1", committedId: 2, payload: { n: 1 }, serverTs: 11 })],
         nextCursor: 2,
       }),
     ).rejects.toThrow("committed event invariant violation");
@@ -161,7 +172,7 @@ describe("src createInMemoryClientStore", () => {
         id: "evt-1",
         status: "committed",
         committedId: 1,
-        created: 10,
+        serverTs: 10,
       },
     });
 
@@ -169,30 +180,39 @@ describe("src createInMemoryClientStore", () => {
       events: [
         makeCommitted({
           id: "evt-2",
-          partitions: ["P1", "P2"],
           committedId: 2,
+          partition: "P1",
           type: "increment",
           payload: {},
           meta: { clientId: "C2", clientTs: 11 },
-          created: 11,
+          serverTs: 11,
+        }),
+        makeCommitted({
+          id: "evt-3",
+          committedId: 3,
+          partition: "P2",
+          type: "increment",
+          payload: {},
+          meta: { clientId: "C2", clientTs: 12 },
+          serverTs: 12,
         }),
       ],
-      nextCursor: 2,
+      nextCursor: 3,
     });
 
     await store.applyCommittedBatch({
       events: [
         makeCommitted({
           id: "evt-2",
-          partitions: ["P1", "P2"],
           committedId: 2,
+          partition: "P1",
           type: "increment",
           payload: {},
           meta: { clientId: "C2", clientTs: 11 },
-          created: 12,
+          serverTs: 13,
         }),
       ],
-      nextCursor: 2,
+      nextCursor: 3,
     });
 
     expect(
@@ -227,26 +247,29 @@ describe("src createInMemoryClientStore", () => {
           committedId: 1,
           type: "increment",
           payload: {},
-          created: 10,
+          serverTs: 10,
         }),
         makeCommitted({
           id: "evt-2",
-          partitions: ["P1", "P2"],
           committedId: 2,
+          partition: "P1",
           type: "increment",
           payload: {},
-          created: 11,
+          serverTs: 11,
+        }),
+        makeCommitted({
+          id: "evt-3",
+          committedId: 3,
+          partition: "P2",
+          type: "increment",
+          payload: {},
+          serverTs: 12,
         }),
       ],
-      nextCursor: 2,
+      nextCursor: 3,
     });
 
-    expect(
-      await store.loadMaterializedViews({
-        viewName: "counter",
-        partitions: ["P1", "P2"],
-      }),
-    ).toEqual({
+    expect(await loadViews(store, "counter", ["P1", "P2"])).toEqual({
       P1: { count: 2 },
       P2: { count: 1 },
     });

@@ -44,10 +44,17 @@ export const normalizeMeta = (
   return normalized;
 };
 
+export const normalizeClientTs = (value, { defaultClientTs } = {}) => {
+  return (
+    toFiniteNumberOrNull(value) ?? toFiniteNumberOrNull(defaultClientTs) ?? undefined
+  );
+};
+
 export const normalizeSubmitEventInput = (
   input,
   {
     defaultId,
+    defaultProjectId,
     defaultClientId,
     defaultClientTs,
   } = {},
@@ -74,12 +81,20 @@ export const normalizeSubmitEventInput = (
       : isNonEmptyString(defaultId)
         ? defaultId
         : undefined,
-    partitions: Array.isArray(input?.partitions) ? [...input.partitions] : [],
-    projectId: isNonEmptyString(input?.projectId) ? input.projectId : undefined,
+    partition: isNonEmptyString(input?.partition) ? input.partition : undefined,
+    projectId: isNonEmptyString(input?.projectId)
+      ? input.projectId
+      : isNonEmptyString(defaultProjectId)
+        ? defaultProjectId
+        : undefined,
     userId: isNonEmptyString(input?.userId) ? input.userId : undefined,
     type,
     schemaVersion,
     payload: payload === undefined ? undefined : structuredClone(payload),
+    clientTs: normalizeClientTs(input?.clientTs, {
+      defaultClientTs:
+        normalizeClientTs(input?.meta?.clientTs) ?? defaultClientTs,
+    }),
     meta: normalizeMeta(input?.meta, {
       defaultClientId,
       defaultClientTs,
@@ -90,16 +105,19 @@ export const normalizeSubmitEventInput = (
 export const buildCommittedEventFromDraft = ({
   draft,
   committedId,
-  created,
+  serverTs,
 }) => ({
   committedId,
   id: draft.id,
   projectId: draft.projectId,
   userId: draft.userId,
-  partitions: [...draft.partitions],
+  partition: draft.partition,
   type: draft.type,
   schemaVersion: draft.schemaVersion,
   payload: structuredClone(draft.payload),
-  meta: normalizeMeta(draft.meta),
-  created,
+  payloadCompression: draft.payloadCompression,
+  clientTs: normalizeClientTs(draft.clientTs, {
+    defaultClientTs: draft.meta?.clientTs,
+  }),
+  serverTs,
 });

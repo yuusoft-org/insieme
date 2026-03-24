@@ -23,43 +23,60 @@ afterEach(async () => {
 
 const makeDraft = ({
   id = "evt-1",
-  partitions = ["P1"],
+  projectId,
+  userId,
+  partition = "P1",
   type = "x",
   schemaVersion = 1,
   payload = { n: 1 },
   clientId = "C1",
   clientTs = 100,
+  metaExtras = {},
   createdAt = 100,
 } = {}) => ({
   id,
-  partitions,
+  projectId,
+  userId,
+  partition,
   type,
   schemaVersion,
   payload,
-  meta: { clientId, clientTs },
+  meta: { clientId, clientTs, ...metaExtras },
   createdAt,
 });
 
 const makeCommitted = ({
   id = "evt-1",
-  partitions = ["P1"],
+  partition = "P1",
+  projectId = "proj-1",
   committedId = 1,
   type = "x",
   schemaVersion = 1,
   payload = { n: 1 },
   clientId = "C1",
   clientTs = 10,
-  created = 10,
+  serverTs = 10,
 } = {}) => ({
   id,
-  partitions,
+  partition,
+  projectId,
   committedId,
   type,
   schemaVersion,
   payload,
   meta: { clientId, clientTs },
-  created,
+  serverTs,
 });
+
+const loadViews = async (store, viewName, partitions) =>
+  Object.fromEntries(
+    await Promise.all(
+      partitions.map(async (partition) => [
+        partition,
+        await store.loadMaterializedView({ viewName, partition }),
+      ]),
+    ),
+  );
 
 describe("src createIndexedDbClientStore", () => {
   it("rejects missing indexeddb implementations", () => {
@@ -79,20 +96,19 @@ describe("src createIndexedDbClientStore", () => {
       });
       await store.init();
 
-      await store.insertDraft({
-        id: "evt-1",
-        partitions: ["P1"],
-        type: "x",
-        payload: { n: 1 },
-        meta: { clientId: "C1", clientTs: 100 },
-        createdAt: 100,
-      });
+      await store.insertDraft(
+        makeDraft({
+          projectId: "proj-1",
+          userId: "u1",
+          metaExtras: { source: "ui" },
+        }),
+      );
       await store.applySubmitResult({
         result: {
           id: "evt-1",
           status: "committed",
           committedId: 5,
-          created: 500,
+          serverTs: 500,
         },
       });
       await store.applyCommittedBatch({ events: [], nextCursor: 5 });
@@ -104,9 +120,7 @@ describe("src createIndexedDbClientStore", () => {
       expect(committed[0]).toMatchObject({
         id: "evt-1",
         committedId: 5,
-        meta: {
-          clientId: "C1",
-        },
+        clientTs: 100,
       });
     }
 
@@ -123,6 +137,7 @@ describe("src createIndexedDbClientStore", () => {
       expect(committed[0]).toMatchObject({
         id: "evt-1",
         committedId: 5,
+        clientTs: 100,
       });
     }
   });
@@ -170,7 +185,7 @@ describe("src createIndexedDbClientStore", () => {
 
     await expect(
       store.applyCommittedBatch({
-        events: [makeCommitted({ committedId: 2, created: 11 })],
+        events: [makeCommitted({ committedId: 2, serverTs: 11 })],
       }),
     ).rejects.toThrow("committed event invariant violation");
   });
@@ -195,7 +210,7 @@ describe("src createIndexedDbClientStore", () => {
           makeCommitted({
             id: "evt-2",
             payload: { n: 2 },
-            created: 11,
+            serverTs: 11,
           }),
         ],
       }),
@@ -230,22 +245,25 @@ describe("src createIndexedDbClientStore", () => {
         }),
         makeCommitted({
           id: "evt-2",
-          partitions: ["P1", "P2"],
           committedId: 2,
+          partition: "P1",
           type: "increment",
           payload: {},
-          created: 11,
+          serverTs: 11,
+        }),
+        makeCommitted({
+          id: "evt-3",
+          committedId: 3,
+          partition: "P2",
+          type: "increment",
+          payload: {},
+          serverTs: 12,
         }),
       ],
-      nextCursor: 2,
+      nextCursor: 3,
     });
 
-    expect(
-      await store.loadMaterializedViews({
-        viewName: "counter",
-        partitions: ["P1", "P2"],
-      }),
-    ).toEqual({
+    expect(await loadViews(store, "counter", ["P1", "P2"])).toEqual({
       P1: { count: 2 },
       P2: { count: 1 },
     });
@@ -293,17 +311,25 @@ describe("src createIndexedDbClientStore", () => {
             type: "increment",
             payload: {},
           }),
-          makeCommitted({
-            id: "evt-2",
-            partitions: ["P1", "P2"],
-            committedId: 2,
-            type: "increment",
-            payload: {},
-            created: 11,
-          }),
-        ],
-        nextCursor: 2,
-      });
+        makeCommitted({
+          id: "evt-2",
+          committedId: 2,
+          partition: "P1",
+          type: "increment",
+          payload: {},
+          serverTs: 11,
+        }),
+        makeCommitted({
+          id: "evt-3",
+          committedId: 3,
+          partition: "P2",
+          type: "increment",
+          payload: {},
+          serverTs: 12,
+        }),
+      ],
+      nextCursor: 3,
+    });
     }
 
     {
@@ -324,12 +350,7 @@ describe("src createIndexedDbClientStore", () => {
       });
       await store.init();
 
-      expect(
-        await store.loadMaterializedViews({
-          viewName: "counter",
-          partitions: ["P1", "P2"],
-        }),
-      ).toEqual({
+      expect(await loadViews(store, "counter", ["P1", "P2"])).toEqual({
         P1: { count: 2 },
         P2: { count: 1 },
       });
@@ -361,11 +382,11 @@ describe("src createIndexedDbClientStore", () => {
     for (let index = 1; index <= 150; index += 1) {
       events.push(makeCommitted({
         id: `evt-${index}`,
-        partitions: index % 3 === 0 ? ["P1", "P2"] : index % 2 === 0 ? ["P2"] : ["P1"],
+        partition: index % 2 === 0 ? "P2" : "P1",
         committedId: index,
         type: "increment",
         payload: {},
-        created: index,
+        serverTs: index,
       }));
     }
 
@@ -392,14 +413,9 @@ describe("src createIndexedDbClientStore", () => {
     });
     await secondStore.init();
 
-    expect(
-      await secondStore.loadMaterializedViews({
-        viewName: "counter",
-        partitions: ["P1", "P2"],
-      }),
-    ).toEqual({
-      P1: { count: 100 },
-      P2: { count: 100 },
+    expect(await loadViews(secondStore, "counter", ["P1", "P2"])).toEqual({
+      P1: { count: 75 },
+      P2: { count: 75 },
     });
   });
 
@@ -484,17 +500,25 @@ describe("src createIndexedDbClientStore", () => {
             type: "increment",
             payload: {},
           }),
-          makeCommitted({
-            id: "evt-2",
-            partitions: ["P1", "P2"],
-            committedId: 2,
-            type: "increment",
-            payload: {},
-            created: 11,
-          }),
-        ],
-        nextCursor: 2,
-      });
+        makeCommitted({
+          id: "evt-2",
+          committedId: 2,
+          partition: "P1",
+          type: "increment",
+          payload: {},
+          serverTs: 11,
+        }),
+        makeCommitted({
+          id: "evt-3",
+          committedId: 3,
+          partition: "P2",
+          type: "increment",
+          payload: {},
+          serverTs: 12,
+        }),
+      ],
+      nextCursor: 3,
+    });
 
       expect(
         await store.loadMaterializedView({
@@ -503,10 +527,11 @@ describe("src createIndexedDbClientStore", () => {
         }),
       ).toEqual({ count: 2 });
       await store.flushMaterializedViews();
-      expect(await store._debug.getCursor()).toBe(2);
+      expect(await store._debug.getCursor()).toBe(3);
       expect((await store._debug.getCommitted()).map((event) => event.id)).toEqual([
         "evt-1",
         "evt-2",
+        "evt-3",
       ]);
 
       await store.evictMaterializedView({
@@ -532,12 +557,7 @@ describe("src createIndexedDbClientStore", () => {
       });
       await store.init();
 
-      expect(
-        await store.loadMaterializedViews({
-          viewName: "counter",
-          partitions: ["P1", "P2"],
-        }),
-      ).toEqual({
+      expect(await loadViews(store, "counter", ["P1", "P2"])).toEqual({
         P1: { count: 2 },
         P2: { count: 1 },
       });

@@ -26,7 +26,8 @@ Required ordering for accepted items:
 ## Sync / Catch-Up
 
 - Client sends `sync` with `sinceCommittedId` (exclusive).
-- Server returns events with `committedId > sinceCommittedId` intersecting requested partitions.
+- Client also includes the active `projectId`.
+- Server returns events with `committedId > sinceCommittedId` for that project.
 - Paging uses `limit` + `hasMore`.
 - Client continues paging until `hasMore=false`.
 - Server **MUST** use a fixed per-cycle upper bound (`syncToCommittedId`) captured at the first page so paging converges to completion.

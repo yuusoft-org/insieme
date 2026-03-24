@@ -22,11 +22,11 @@ const client = createCoreSyncClient({
   store,
   token: "<jwt-from-auth-service>",
   clientId: "device-c1",
-  partitions: ["workspace-1"],
+  projectId: "workspace-1",
   onEvent: ({ type, payload }) => {
     if (type === "rejected") {
       if (payload.reason === "validation_failed") showFormErrors(payload.errors);
-      if (payload.reason === "forbidden") console.warn("No permission for target partition/resource");
+      if (payload.reason === "forbidden") console.warn("No permission for target project/resource");
     }
   },
 });
@@ -34,7 +34,7 @@ const client = createCoreSyncClient({
 await client.start();
 
 await client.submitEvent({
-  partitions: ["workspace-1"],
+  partition: "workspace-1",
   projectId: "workspace-1",
   type: "todo.created",
   payload: {

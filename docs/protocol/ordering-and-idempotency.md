@@ -23,12 +23,13 @@ Equality input is:
 
 ```yaml
 canonical_input:
-  partitions: <normalized partition set>
-  projectId: <optional project id>
+  partition: <single partition>
+  projectId: <project id>
   userId: <optional user id>
   type: <event type>
+  schemaVersion: <positive integer>
   payload: <event payload>
-  meta: <event metadata>
+  meta: <event metadata, excluding clientId>
 ```
 
 Rules:
@@ -39,8 +40,8 @@ Rules:
 
 Canonicalization algorithm (required):
 
-1. Normalize `partitions` as a set sorted lexicographically (ascending, code-point order).
-2. Build `canonical_input = { partitions: normalizedPartitions, projectId, userId, type, payload, meta }`.
+1. Normalize `meta` and remove `meta.clientId` from the equality input.
+2. Build `canonical_input = { partition, projectId, userId, type, schemaVersion, payload, meta }`.
 3. Serialize `canonical_input` using deep key-sorted JSON:
    - object keys sorted lexicographically (ascending),
    - arrays preserve order,

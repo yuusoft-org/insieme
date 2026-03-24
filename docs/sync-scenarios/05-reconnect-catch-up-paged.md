@@ -11,7 +11,7 @@ Verify paged sync catch-up and simplified broadcast behavior during active sync.
 
 ## Preconditions
 - C1 durable cursor is `120`.
-- Server has committed events `121..125` for `P1`.
+- Server has committed events `121..125` for project `P1`.
 - Sync page size is `2`.
 
 ## Steps
@@ -23,7 +23,7 @@ Verify paged sync catch-up and simplified broadcast behavior during active sync.
 type: sync
 protocolVersion: "1.0"
 payload:
-  partitions: [P1]
+  projectId: P1
   sinceCommittedId: 120
   limit: 2
 ```
@@ -33,24 +33,26 @@ payload:
 type: sync_response
 protocolVersion: "1.0"
 payload:
-  partitions: [P1]
+  projectId: P1
   events:
     - committedId: 121
       id: evt-121
-      partitions: [P1]
+      partition: P1
+      projectId: P1
       type: explorer.folderCreated
       schemaVersion: 1
       payload: { id: A }
       meta: { clientId: C2, clientTs: 1738451201000 }
-      created: 1738451202000
+      serverTs: 1738451202000
     - committedId: 122
       id: evt-122
-      partitions: [P1]
+      partition: P1
+      projectId: P1
       type: explorer.folderCreated
       schemaVersion: 1
       payload: { id: B }
       meta: { clientId: C2, clientTs: 1738451203000 }
-      created: 1738451204000
+      serverTs: 1738451204000
   nextSinceCommittedId: 122
   hasMore: true
   syncToCommittedId: 125

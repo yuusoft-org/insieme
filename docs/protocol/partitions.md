@@ -1,34 +1,31 @@
-# Partitions
+# Projects & Partitions
 
-This document defines the minimal partition model for submit, sync, and broadcast.
+This document defines the project-scoped partition model for submit, sync, and broadcast.
 
 Normative keywords in this document are to be interpreted as described in RFC 2119: `MUST`, `MUST NOT`, `SHOULD`, `SHOULD NOT`, `MAY`.
 
+## Project Scope
+
+- Each sync connection is bound to exactly one `projectId`.
+- `connect.payload.projectId` **MUST** be a non-empty string.
+- `sync.payload.projectId` **MUST** equal the authenticated connection project.
+- Submitted events **MUST** include `projectId`, and it **MUST** equal the authenticated connection project.
+
 ## Partition Shape
 
-- `partitions` **MUST** be a non-empty array of strings.
-- Each partition entry **MUST** be non-empty.
-- Duplicate partition values in one event **MUST** be rejected with `validation_failed`.
-- Partition order is not semantically significant. Server **MUST** normalize accepted partition sets to deterministic lexicographic order.
+- `partition` **MUST** be a non-empty string.
+- Each committed event carries exactly one `partition`.
+- If the application needs to fan out one logical change to multiple partitions, it **MUST** submit multiple events.
 
 ## Authorization
 
 - Subscription/delivery behavior is not an authorization grant.
-- Server **MUST** authorize partition access on every `submit_events` and `sync` request.
-- Submit authorization is all-of: client must be authorized for every partition in the submitted event.
-- If any requested sync partition is unauthorized, server **MUST** reject sync with `forbidden`.
+- Server **MUST** authorize project access before activating the connection.
+- After connect, server **MUST** reject submit or sync requests whose `projectId` does not match the authenticated session.
+- Application-level partition checks may still exist, but they are outside the core protocol contract.
 
 ## Sync Scope
 
-- `sync.payload.partitions` defines both:
-  - which partitions are returned in catch-up,
-  - which partitions receive subsequent broadcasts for that connection.
-- Server replaces the connection's active partition scope on each successful `sync` request.
-
-## Multi-Partition Events
-
-For `partitions: ["P1", "P2"]`:
-
-- event is visible in both partition views,
-- broadcast is delivered to connections whose active partition scope intersects the event partitions,
-- per-partition ordering is the global `committedId` subsequence.
+- Sync catch-up and broadcast scope are project-wide.
+- Within that project scope, each committed event still carries its own `partition`.
+- Broadcast is delivered to other active connections for the same project, except while a connection is in an active sync paging cycle.

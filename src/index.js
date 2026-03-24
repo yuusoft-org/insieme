@@ -8,7 +8,6 @@ export {
   commandToSyncEvent,
   committedSyncEventToCommand,
   validateCommandSubmitItem,
-  projectIdFromPartitions,
 } from "./command-profile.js";
 export {
   parsePartitionScope,
@@ -17,7 +16,7 @@ export {
   requireSingleScopeId,
   buildScopePartition,
 } from "./partition-scope.js";
-export { authorizeSingleScopeId } from "./authz-helpers.js";
+export { authorizeProjectId, authorizeSingleScopeId } from "./authz-helpers.js";
 export { createInMemorySyncStore } from "./in-memory-sync-store.js";
 export { createInMemoryClientStore } from "./in-memory-client-store.js";
 export {
@@ -37,11 +36,6 @@ export {
 export { createPersistedCursorClientStore } from "./persisted-cursor-client-store.js";
 export { createCommandSyncSession } from "./command-sync-session.js";
 export { initializeStreamIfEmpty } from "./stream-initializer.js";
-export {
-  deepSortKeys,
-  normalizePartitionSet,
-  canonicalizeSubmitItem,
-  intersectsPartitions,
-} from "./canonicalize.js";
+export { deepSortKeys, canonicalizeSubmitItem } from "./canonicalize.js";
 export { createReducer } from "./reducer.js";
 export { createMaterializedViewRuntime } from "./materialized-view-runtime.js";

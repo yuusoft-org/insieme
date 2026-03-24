@@ -1,8 +1,8 @@
 # JavaScript Interface (Client + Backend)
 
-This file defines a minimal JS API surface aligned with the simplified core protocol.
+This file defines the minimal JS API surface aligned with the current core protocol.
 
-- functions/factories only,
+- factories/functions only,
 - storage and transport are pluggable,
 - wire semantics are normative in `docs/protocol/*.md`.
 
@@ -12,13 +12,13 @@ This file defines a minimal JS API surface aligned with the simplified core prot
 /**
  * @typedef {Object} SubmitItem
  * @property {string} id
- * @property {string[]} partitions
- * @property {string} [projectId]
+ * @property {string} partition
+ * @property {string} projectId
  * @property {string} [userId]
  * @property {string} type
  * @property {number} schemaVersion
  * @property {object} payload
- * @property {{ clientId: string, clientTs: number, [key: string]: any }} meta
+ * @property {{ clientId?: string, clientTs?: number, [key: string]: any }} meta
  * @property {number} createdAt
  */
 
@@ -26,14 +26,14 @@ This file defines a minimal JS API surface aligned with the simplified core prot
  * @typedef {Object} CommittedEvent
  * @property {number} committedId
  * @property {string} id
- * @property {string[]} partitions
- * @property {string} [projectId]
+ * @property {string} partition
+ * @property {string} projectId
  * @property {string} [userId]
  * @property {string} type
  * @property {number} schemaVersion
  * @property {object} payload
- * @property {{ clientId: string, clientTs: number, [key: string]: any }} meta
- * @property {number} created
+ * @property {{ clientId?: string, clientTs?: number, [key: string]: any }} meta
+ * @property {number} serverTs
  */
 ```
 
@@ -66,7 +66,7 @@ This file defines a minimal JS API surface aligned with the simplified core prot
 export function createOfflineTransport(options) {}
 ```
 
-### Factory
+### Sync Client Factory
 
 ```js
 /**
@@ -86,14 +86,13 @@ export function createOfflineTransport(options) {}
  *   applySubmitResult: (input: { result: object }) => Promise<void>,
  *   applyCommittedBatch: (input: { events: CommittedEvent[], nextCursor?: number }) => Promise<void>,
  *   loadMaterializedView?: (input: { viewName: string, partition: string }) => Promise<unknown>,
- *   loadMaterializedViews?: (input: { viewName: string, partitions: string[] }) => Promise<Record<string, unknown>>,
  *   evictMaterializedView?: (input: { viewName: string, partition: string }) => Promise<void>,
  *   invalidateMaterializedView?: (input: { viewName: string, partition: string }) => Promise<void>,
  *   flushMaterializedViews?: () => Promise<void>
  * }} deps.store
  * @param {string} deps.token
  * @param {string} deps.clientId
- * @param {string[]} deps.partitions
+ * @param {string} deps.projectId
  * @param {() => number} [deps.now]
  * @param {() => string} [deps.uuid]
  * @param {() => string} [deps.msgId]
@@ -119,17 +118,16 @@ export function createOfflineTransport(options) {}
 export function createSyncClient(deps) {}
 ```
 
-### API
+### Sync Client API
 
 ```js
 /**
  * @typedef {Object} SyncClient
  * @property {() => Promise<void>} start
  * @property {() => Promise<void>} stop
- * @property {(partitions: string[], options?: { sinceCommittedId?: number }) => Promise<void>} setPartitions
  * @property {(items: {
  *   id?: string,
- *   partitions: string[],
+ *   partition: string,
  *   projectId?: string,
  *   userId?: string,
  *   type: string,
@@ -139,7 +137,7 @@ export function createSyncClient(deps) {}
  * }[]) => Promise<string[]>} submitEvents
  * @property {(item: {
  *   id?: string,
- *   partitions: string[],
+ *   partition: string,
  *   projectId?: string,
  *   userId?: string,
  *   type: string,
@@ -157,7 +155,7 @@ export function createSyncClient(deps) {}
  *   reconnectInFlight: boolean,
  *   reconnectAttempts: number,
  *   connectedServerLastCommittedId: number | null,
- *   activePartitions: string[],
+ *   activeProjectId: string,
  *   lastError: null | { code?: string, message?: string, details?: object }
  * }} getStatus
  */
@@ -167,6 +165,7 @@ Client runtime events:
 
 - `connected`
 - `sync_page`
+- `synced`
 - `committed`
 - `rejected`
 - `not_processed`
@@ -196,7 +195,7 @@ Client runtime events:
 
 ## Backend Interface
 
-### Factory
+### Sync Server Factory
 
 ```js
 /**
@@ -205,12 +204,12 @@ Client runtime events:
  *   verifyToken: (token: string) => Promise<{ clientId: string, claims: object }>,
  *   validateSession?: (identity: { clientId: string, claims: object }) => Promise<boolean>
  * }} deps.auth
- * @param {{ authorizePartitions: (identity: object, partitions: string[]) => Promise<boolean> }} deps.authz
+ * @param {{ authorizeProject: (identity: object, projectId: string) => Promise<boolean> }} deps.authz
  * @param {{ validate: (item: SubmitItem, ctx: object) => Promise<void> }} deps.validation
  * @param {{
  *   commitOrGetExisting: (input: {
  *     id: string,
- *     partitions: string[],
+ *     partition: string,
  *     projectId?: string,
  *     userId?: string,
  *     type: string,
@@ -223,12 +222,12 @@ Client runtime events:
  *     committedEvent: CommittedEvent
  *   }>,
  *   listCommittedSince: (input: {
- *     partitions: string[],
+ *     projectId: string,
  *     sinceCommittedId: number,
  *     limit: number,
  *     syncToCommittedId?: number
  *   }) => Promise<{ events: CommittedEvent[], hasMore: boolean, nextSinceCommittedId: number }>,
- *   getMaxCommittedIdForPartitions: (input: { partitions: string[] }) => Promise<number>,
+ *   getMaxCommittedIdForProject: (input: { projectId: string }) => Promise<number>,
  *   getMaxCommittedId: () => Promise<number>
  * }} deps.store
  * @param {{ now: () => number }} deps.clock
@@ -245,7 +244,7 @@ Client runtime events:
 export function createSyncServer(deps) {}
 ```
 
-### API
+### Sync Server API
 
 ```js
 /**
@@ -270,31 +269,36 @@ export function createSyncServer(deps) {}
 - `createCommandSyncSession()` should populate/pass through `schemaVersion` when mapping commands to sync events.
 - Command session callers should use `submitCommands()` for both one-command and multi-command submits.
 - `submitEvent()` remains a thin wrapper over `submitEvents()`.
-- Client store methods that mutate committed/draft/cursor state should use single DB transactions when available, or equivalent idempotent/monotonic SQL semantics when transactional APIs are not available.
+- Client store methods that mutate committed/draft/cursor state should use single DB transactions when available, or equivalent idempotent/monotonic semantics when transactional APIs are not available.
+- A `createSyncClient(...)` instance is project-scoped. Reuse one store per project unless your store implementation explicitly namespaces cursors and drafts.
 - All behavior must match `docs/protocol/*.md`.
 - Client-generated `msgId` values should be stable per outbound message for traceability.
 - `meta` is open-ended JSON-safe metadata. The runtime reserves `meta.clientId` and `meta.clientTs` and may overwrite them.
 
 ## Built-in Store Adapters
 
-Runtime exports include two persistence families:
+Runtime exports include three persistence families:
 
+- In-memory:
+  - `createInMemoryClientStore(options?)`
+  - `createInMemorySyncStore(startCommittedId?)`
 - SQLite-style DB object (`exec`, `prepare`, optional `transaction`):
   - `createSqliteClientStore(db, options?)`
   - `createSqliteSyncStore(db, options?)`
-- LibSQL client (`execute({ sql, args? })`):
+- LibSQL client:
   - `createLibsqlClientStore(client, options?)`
   - `createLibsqlSyncStore(client, options?)`
+- IndexedDB:
+  - `createIndexedDbClientStore(options?)`
+  - `createIndexedDBClientStore(options?)`
 
 ## Optional Materialized Views
 
 Client store adapters may expose an optional materialized-view API:
 
 - factory option:
-  `materializedViews: [{ name, version?, initialState?, reduce, checkpoint? }]`
+  `materializedViews: [{ name, version?, initialState?, reduce, matchPartition?, checkpoint? }]`
 - runtime method: `loadMaterializedView({ viewName, partition })`
-- runtime method:
-  `loadMaterializedViews({ viewName, partitions }) => Record<string, unknown>`
 - runtime method: `evictMaterializedView({ viewName, partition })`
 - runtime method: `invalidateMaterializedView({ viewName, partition })`
 - runtime method: `flushMaterializedViews()`
@@ -314,20 +318,29 @@ Reducer contract:
 
 ```js
 reduce({
-  state,      // previous state for this (viewName, partition)
+  state,      // previous state for this (viewName, loaded partition)
   event,      // committed event record
-  partition,  // active partition being reduced
+  partition,  // loaded partition being reduced
 }) => nextState;
 ```
 
-The reducer runs only for newly inserted committed events (deduped replays are ignored).
+Optional partition matcher:
+
+```js
+matchPartition({
+  loadedPartition,
+  eventPartition,
+  event,
+}) => boolean;
+```
+
+The reducer runs only for newly inserted committed events that match the loaded partition.
 
 `reduce` is required for every materialized view definition.
 
 Read semantics:
 
 - `loadMaterializedView(...)` returns exact state for that partition at the local committed snapshot used by the read.
-- `loadMaterializedViews(...)` does the same for multiple partitions in one call.
 - `evictMaterializedView(...)` drops hot in-memory state only.
 - `invalidateMaterializedView(...)` drops hot state and the persisted checkpoint for that partition.
 - `flushMaterializedViews()` persists dirty checkpoints immediately.

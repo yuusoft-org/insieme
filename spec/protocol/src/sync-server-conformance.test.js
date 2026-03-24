@@ -32,7 +32,7 @@ const createServer = ({
   const resolvedStore = store || createInMemorySyncStore();
   const server = createSyncServer({
     auth: { verifyToken },
-    authz: { authorizePartitions: authorize },
+    authz: { authorizeProject: authorize },
     validation: { validate },
     store: resolvedStore,
     clock: { now: () => 1000 },
@@ -41,36 +41,42 @@ const createServer = ({
   return { server, store: resolvedStore };
 };
 
-const connectSession = async ({ session, clientId = "C1", token = "jwt" }) => {
+const connectSession = async ({
+  session,
+  clientId = "C1",
+  token = "jwt",
+  projectId = "proj-1",
+}) => {
   await session.receive({
     type: "connect",
     protocolVersion: "1.0",
-    payload: { token, clientId: clientId },
+    payload: { token, clientId, projectId },
   });
 };
 
 const syncSession = async ({
   session,
-  partitions = ["P1"],
+  projectId = "proj-1",
   since = 0,
   limit = 500,
 }) => {
   await session.receive({
     type: "sync",
     protocolVersion: "1.0",
-    payload: { partitions, sinceCommittedId: since, limit },
+    payload: { projectId, sinceCommittedId: since, limit },
   });
 };
 
 const submitSession = async ({
   session,
   id,
-  partitions = ["P1"],
+  partition = "P1",
   clientId = "C1",
   type = "x",
   schemaVersion = 1,
   payload = {},
   meta,
+  projectId = "proj-1",
 }) => {
   await session.receive({
     type: "submit_events",
@@ -79,7 +85,8 @@ const submitSession = async ({
       events: [
         {
           id,
-          partitions,
+          partition,
+          projectId,
           type,
           schemaVersion,
           payload,
@@ -113,7 +120,7 @@ describe("src createSyncServer conformance", () => {
     await s1.receive({
       type: "connect",
       protocolVersion: "9.9",
-      payload: { token: "jwt", clientId: "C1" },
+      payload: { token: "jwt", clientId: "C1", projectId: "proj-1" },
     });
 
     expect(c1.sent[0]).toMatchObject({
@@ -157,15 +164,13 @@ describe("src createSyncServer conformance", () => {
     expect(c1.closed).toBe(true);
   });
 
-  it("rejects unauthorized sync with forbidden and keeps session open [SC-18]", async () => {
-    const { server } = createServer({
-      authorize: async (_identity, partitions) => partitions[0] !== "P-DENIED",
-    });
+  it("rejects sync for a mismatched project and keeps session open [SC-18]", async () => {
+    const { server } = createServer();
     const c1 = createConnectionTransport("c1");
     const s1 = server.attachConnection(c1);
 
     await connectSession({ session: s1 });
-    await syncSession({ session: s1, partitions: ["P-DENIED"] });
+    await syncSession({ session: s1, projectId: "proj-2" });
 
     const forbidden = c1.sent.find(
       (message) =>
@@ -176,12 +181,16 @@ describe("src createSyncServer conformance", () => {
   });
 
   it("rejects unauthorized submit as forbidden result [SC-18]", async () => {
-    const { server } = createServer({ authorize: async () => false });
+    let allowProject = true;
+    const { server } = createServer({
+      authorize: async () => allowProject,
+    });
     const c1 = createConnectionTransport("c1");
     const s1 = server.attachConnection(c1);
 
     await connectSession({ session: s1 });
     await syncSession({ session: s1 });
+    allowProject = false;
     await submitSession({ session: s1, id: "evt-1" });
 
     const result = c1.sent.find(
@@ -248,11 +257,11 @@ describe("src createSyncServer conformance", () => {
     const s2 = server.attachConnection(c2);
 
     await connectSession({ session: s1, clientId: "C1", token: "jwt-c1" });
-    await submitSession({ session: s1, id: "evt-1", partitions: ["P1"] });
-    await submitSession({ session: s1, id: "evt-2", partitions: ["P1"] });
+    await submitSession({ session: s1, id: "evt-1", partition: "P1" });
+    await submitSession({ session: s1, id: "evt-2", partition: "P1" });
 
     await connectSession({ session: s2, clientId: "C2", token: "jwt-c2" });
-    await syncSession({ session: s2, partitions: ["P1"], since: 0, limit: 1 });
+    await syncSession({ session: s2, since: 0, limit: 1 });
 
     const firstSyncPage = c2.sent.find(
       (message) =>
@@ -265,14 +274,14 @@ describe("src createSyncServer conformance", () => {
     ]);
     expect(firstSyncPage.payload.hasMore).toBe(true);
 
-    await submitSession({ session: s1, id: "evt-3", partitions: ["P1"] });
+    await submitSession({ session: s1, id: "evt-3", partition: "P1" });
 
     const broadcastsDuringSync = c2.sent.filter(
       (message) => message.type === "event_broadcast",
     );
     expect(broadcastsDuringSync).toHaveLength(0);
 
-    await syncSession({ session: s2, partitions: ["P1"], since: 1, limit: 1 });
+    await syncSession({ session: s2, since: 1, limit: 1 });
 
     const syncResponses = c2.sent.filter(
       (message) => message.type === "sync_response",
@@ -284,7 +293,7 @@ describe("src createSyncServer conformance", () => {
     expect(syncResponses[1].payload.hasMore).toBe(false);
     expect(syncResponses[1].payload.nextSinceCommittedId).toBe(2);
 
-    await syncSession({ session: s2, partitions: ["P1"], since: 2, limit: 10 });
+    await syncSession({ session: s2, since: 2, limit: 10 });
 
     const finalSync = c2.sent[c2.sent.length - 1];
     expect(finalSync).toMatchObject({
@@ -299,7 +308,7 @@ describe("src createSyncServer conformance", () => {
     ]);
   });
 
-  it("broadcasts only to sessions whose active partitions intersect [SC-04]", async () => {
+  it("broadcasts only to sessions on the same active project [SC-04]", async () => {
     const { server } = createServer({
       verifyToken: async (token) => ({
         clientId: token.toUpperCase(),
@@ -316,15 +325,20 @@ describe("src createSyncServer conformance", () => {
 
     await connectSession({ session: s1, clientId: "JWT-C1", token: "jwt-c1" });
     await connectSession({ session: s2, clientId: "JWT-C2", token: "jwt-c2" });
-    await connectSession({ session: s3, clientId: "JWT-C3", token: "jwt-c3" });
+    await connectSession({
+      session: s3,
+      clientId: "JWT-C3",
+      token: "jwt-c3",
+      projectId: "proj-2",
+    });
 
-    await syncSession({ session: s2, partitions: ["P2"] });
-    await syncSession({ session: s3, partitions: ["P3"] });
+    await syncSession({ session: s2 });
+    await syncSession({ session: s3, projectId: "proj-2" });
 
     await submitSession({
       session: s1,
       id: "evt-100",
-      partitions: ["P1", "P2"],
+      partition: "P2",
       clientId: "JWT-C1",
     });
 

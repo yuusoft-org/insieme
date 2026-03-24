@@ -14,11 +14,6 @@ const normalizeChunkSize = (value) => {
   return value;
 };
 
-const toUniquePartitions = (partitions = []) =>
-  [...new Set(partitions)].filter(
-    (partition) => typeof partition === "string" && partition.length > 0,
-  );
-
 const toUniqueSortedKeys = (keys = []) => [...new Set(keys)].sort();
 
 const createHotEntry = ({
@@ -102,6 +97,13 @@ export const createMaterializedViewRuntime = ({
   };
 
   const toLockKey = (viewName, partition) => `${viewName}::${partition}`;
+
+  const definitionMatchesPartition = (definition, loadedPartition, event) =>
+    definition.matchesPartition({
+      loadedPartition,
+      eventPartition: event?.partition,
+      event,
+    });
 
   const acquireLock = async (lockKey) => {
     const previousTail = lockTails.get(lockKey) || Promise.resolve();
@@ -204,60 +206,47 @@ export const createMaterializedViewRuntime = ({
     }
   };
 
-  const hydrateEntries = async ({
+  const hydrateEntry = async ({
     definition,
-    partitions,
+    partition,
     targetCommittedId,
   }) => {
-    const uniquePartitions = toUniquePartitions(partitions);
     const hotEntries = getHotEntries(definition.name);
-    const entries = new Map();
-    let minCommittedId;
+    let entry = hotEntries.get(partition);
+    if (!entry) {
+      let checkpoint;
+      if (typeof loadCheckpoint === "function") {
+        checkpoint = await loadCheckpoint({
+          viewName: definition.name,
+          partition,
+        });
+      }
 
-    for (const partition of uniquePartitions) {
-      let entry = hotEntries.get(partition);
-      if (!entry) {
-        let checkpoint;
-        if (typeof loadCheckpoint === "function") {
-          checkpoint = await loadCheckpoint({
+      if (checkpoint && checkpoint.viewVersion !== definition.version) {
+        if (typeof deleteCheckpoint === "function") {
+          await deleteCheckpoint({
             viewName: definition.name,
             partition,
           });
         }
-
-        if (checkpoint && checkpoint.viewVersion !== definition.version) {
-          if (typeof deleteCheckpoint === "function") {
-            await deleteCheckpoint({
-              viewName: definition.name,
-              partition,
-            });
-          }
-          checkpoint = undefined;
-        }
-
-        entry = createHotEntry({
-          state: checkpoint
-            ? checkpoint.value
-            : createMaterializedViewInitialState(definition, partition),
-          lastCommittedId: checkpoint?.lastCommittedId ?? 0,
-          persistedLastCommittedId: checkpoint?.lastCommittedId ?? 0,
-          updatedAt: checkpoint?.updatedAt ?? 0,
-        });
-        hotEntries.set(partition, entry);
+        checkpoint = undefined;
       }
 
-      entries.set(partition, entry);
-      if (
-        targetCommittedId > entry.lastCommittedId &&
-        (minCommittedId === undefined || entry.lastCommittedId < minCommittedId)
-      ) {
-        minCommittedId = entry.lastCommittedId;
-      }
+      entry = createHotEntry({
+        state: checkpoint
+          ? checkpoint.value
+          : createMaterializedViewInitialState(definition, partition),
+        lastCommittedId: checkpoint?.lastCommittedId ?? 0,
+        persistedLastCommittedId: checkpoint?.lastCommittedId ?? 0,
+        updatedAt: checkpoint?.updatedAt ?? 0,
+      });
+      hotEntries.set(partition, entry);
     }
 
-    if (minCommittedId === undefined) {
-      return entries;
-    }
+    const minCommittedId =
+      targetCommittedId > entry.lastCommittedId ? entry.lastCommittedId : undefined;
+
+    if (minCommittedId === undefined) return entry;
 
     let cursor = minCommittedId;
     while (cursor < targetCommittedId) {
@@ -268,19 +257,13 @@ export const createMaterializedViewRuntime = ({
       if (!events || events.length === 0) break;
 
       for (const event of events) {
-        for (const partition of event.partitions || []) {
-          const entry = entries.get(partition);
-          if (!entry || event.committedId <= entry.lastCommittedId) {
-            continue;
-          }
-          entry.state = applyMaterializedViewReducer(
-            definition,
-            entry.state,
-            event,
-            partition,
-          );
+        if (
+          definitionMatchesPartition(definition, partition, event) &&
+          event.committedId > entry.lastCommittedId
+        ) {
+          entry.state = applyMaterializedViewReducer(definition, entry.state, event, partition);
           entry.lastCommittedId = event.committedId;
-          entry.updatedAt = event.created || now();
+          entry.updatedAt = event.serverTs || now();
           entry.dirtyEventCount += 1;
         }
         cursor = event.committedId;
@@ -289,11 +272,8 @@ export const createMaterializedViewRuntime = ({
       if (events.length < normalizedChunkSize) break;
     }
 
-    for (const [partition, entry] of entries) {
-      await scheduleFlush(definition, partition, entry);
-    }
-
-    return entries;
+    await scheduleFlush(definition, partition, entry);
+    return entry;
   };
 
   return {
@@ -303,74 +283,55 @@ export const createMaterializedViewRuntime = ({
       const definition = getDefinition(viewName);
       return withLocks([toLockKey(viewName, partition)], async () => {
         const targetCommittedId = await getLatestCommittedId();
-        const entries = await hydrateEntries({
+        const entry = await hydrateEntry({
           definition,
-          partitions: [partition],
+          partition,
           targetCommittedId,
         });
-        return cloneMaterializedViewValue(entries.get(partition)?.state);
-      });
-    },
-
-    loadMaterializedViews: async ({ viewName, partitions }) => {
-      assertHealthy();
-      if (!Array.isArray(partitions)) {
-        throw new Error("loadMaterializedViews requires partitions array");
-      }
-      const uniquePartitions = toUniquePartitions(partitions);
-      const definition = getDefinition(viewName);
-      const lockKeys = uniquePartitions.map((partition) =>
-        toLockKey(viewName, partition),
-      );
-      return withLocks(lockKeys, async () => {
-        const targetCommittedId = await getLatestCommittedId();
-        const entries = await hydrateEntries({
-          definition,
-          partitions: uniquePartitions,
-          targetCommittedId,
-        });
-        const result = Object.create(null);
-        for (const partition of uniquePartitions) {
-          result[partition] = cloneMaterializedViewValue(
-            entries.get(partition)?.state,
-          );
-        }
-        return result;
+        return cloneMaterializedViewValue(entry?.state);
       });
     },
 
     onCommittedEvent: async (event) => {
       assertHealthy();
-      if (!event || !Array.isArray(event.partitions) || event.partitions.length === 0) {
+      if (
+        !event ||
+        typeof event.partition !== "string" ||
+        event.partition.length === 0
+      ) {
         return;
       }
 
-      const uniquePartitions = toUniquePartitions(event.partitions);
       const lockKeys = [];
       for (const definition of normalizedDefinitions || []) {
-        for (const partition of uniquePartitions) {
-          lockKeys.push(toLockKey(definition.name, partition));
+        const hotEntries = getHotEntries(definition.name);
+        for (const loadedPartition of hotEntries.keys()) {
+          if (definitionMatchesPartition(definition, loadedPartition, event)) {
+            lockKeys.push(toLockKey(definition.name, loadedPartition));
+          }
         }
       }
 
       await withLocks(lockKeys, async () => {
         for (const definition of normalizedDefinitions || []) {
           const hotEntries = getHotEntries(definition.name);
-          for (const partition of uniquePartitions) {
-            const entry = hotEntries.get(partition);
-            if (!entry || event.committedId <= entry.lastCommittedId) {
+          for (const [loadedPartition, entry] of hotEntries) {
+            if (
+              !definitionMatchesPartition(definition, loadedPartition, event) ||
+              event.committedId <= entry.lastCommittedId
+            ) {
               continue;
             }
             entry.state = applyMaterializedViewReducer(
               definition,
               entry.state,
               event,
-              partition,
+              loadedPartition,
             );
             entry.lastCommittedId = event.committedId;
-            entry.updatedAt = event.created || now();
+            entry.updatedAt = event.serverTs || now();
             entry.dirtyEventCount += 1;
-            await scheduleFlush(definition, partition, entry);
+            await scheduleFlush(definition, loadedPartition, entry);
           }
         }
       });
@@ -407,6 +368,18 @@ export const createMaterializedViewRuntime = ({
           });
         }
       });
+    },
+
+    flushMaterializedView: async ({ viewName, partition }) => {
+      assertHealthy();
+      assertPartition(partition, "flushMaterializedView");
+      const definition = getDefinition(viewName);
+      await withLocks([toLockKey(viewName, partition)], async () => {
+        const entry = getHotEntries(definition.name).get(partition);
+        if (!entry) return;
+        await flushEntry(definition, partition, entry);
+      });
+      assertHealthy();
     },
 
     flushMaterializedViews: async () => {

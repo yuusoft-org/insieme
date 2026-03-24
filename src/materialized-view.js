@@ -70,7 +70,7 @@ const normalizeCheckpoint = (checkpoint, index) => {
 
 /**
  * @param {unknown} definitions
- * @returns {{ name: string, version: string, reduce: ({ state: unknown, event: object, partition: string }) => unknown, createInitialState: (partition: string) => unknown }[]}
+ * @returns {{ name: string, version: string, reduce: ({ state: unknown, event: object, partition: string }) => unknown, createInitialState: (partition: string) => unknown, matchesPartition: ({ loadedPartition: string, eventPartition: string, event: object }) => boolean }[]}
  */
 export const normalizeMaterializedViewDefinitions = (definitions) => {
   if (definitions === undefined || definitions === null) return [];
@@ -103,11 +103,25 @@ export const normalizeMaterializedViewDefinitions = (definitions) => {
       );
     }
 
+    if (
+      entry.matchPartition !== undefined &&
+      typeof entry.matchPartition !== "function"
+    ) {
+      throw new Error(
+        `materializedViews[${index}].matchPartition must be a function when provided`,
+      );
+    }
+
     return {
       name: entry.name,
       version: normalizeVersion(entry.version),
       reduce: entry.reduce,
       createInitialState: toStateFactory(entry),
+      matchesPartition:
+        typeof entry.matchPartition === "function"
+          ? entry.matchPartition
+          : ({ loadedPartition, eventPartition }) =>
+              loadedPartition === eventPartition,
       checkpoint: normalizeCheckpoint(entry.checkpoint, index),
     };
   });

@@ -2,31 +2,16 @@ import {
   cloneObject,
   isNonEmptyString,
   isObject,
+  normalizeClientTs,
   normalizeMeta,
   toFiniteNumberOrNull,
   toPositiveIntegerOrNull,
 } from "./event-record.js";
-import { extractScopeId } from "./partition-scope.js";
-
-const toUniqueNonEmptyStrings = (values = []) =>
-  [...new Set(values.filter((value) => isNonEmptyString(value)))];
-
 const failValidation = (message, details = {}) => {
   const error = new Error(message);
   error.code = "validation_failed";
   error.details = details;
   throw error;
-};
-
-/**
- * @param {string[]} partitions
- */
-export const projectIdFromPartitions = (partitions = []) => {
-  for (const partition of partitions) {
-    const projectId = extractScopeId(partition, "project");
-    if (projectId) return projectId;
-  }
-  return null;
 };
 
 /**
@@ -57,6 +42,9 @@ export const commandToSyncEvent = (
   }
 
   return {
+    partition: isNonEmptyString(command?.partition)
+      ? command.partition
+      : undefined,
     projectId: command.projectId,
     userId: command?.actor?.userId,
     type: command.type,
@@ -69,6 +57,9 @@ export const commandToSyncEvent = (
       defaultClientId: command?.actor?.clientId,
       defaultClientTs: command?.clientTs,
     }),
+    clientTs: normalizeClientTs(command?.clientTs, {
+      defaultClientTs: command?.clientTs,
+    }),
   };
 };
 
@@ -79,12 +70,12 @@ export const commandToSyncEvent = (
  *   id: string,
  *   projectId?: string,
  *   userId?: string,
- *   partitions?: string[],
+ *   partition?: string,
  *   type?: string,
  *   schemaVersion?: number,
  *   payload?: object,
  *   meta?: object,
- *   created?: number,
+ *   serverTs?: number,
  * }} committedEvent
  */
 export const committedSyncEventToCommand = (committedEvent) => {
@@ -97,23 +88,23 @@ export const committedSyncEventToCommand = (committedEvent) => {
     return null;
   }
 
-  const partitions = toUniqueNonEmptyStrings(
-    Array.isArray(committedEvent?.partitions) ? committedEvent.partitions : [],
-  );
-  const resolvedProjectId =
-    committedEvent?.projectId || projectIdFromPartitions(partitions);
+  const partition = isNonEmptyString(committedEvent?.partition)
+    ? committedEvent.partition
+    : undefined;
   const meta = normalizeMeta(committedEvent?.meta);
-  const fallbackClientTs = toFiniteNumberOrNull(committedEvent?.created);
+  const fallbackClientTs =
+    normalizeClientTs(committedEvent?.clientTs) ??
+    toFiniteNumberOrNull(committedEvent?.serverTs);
 
-  return {
+  const normalizedCommand = {
     id: committedEvent.id,
-    projectId: resolvedProjectId,
-    partition: partitions[0],
-    partitions,
+    projectId: isNonEmptyString(committedEvent?.projectId)
+      ? committedEvent.projectId
+      : undefined,
+    partition,
     type: committedEvent.type,
     schemaVersion: committedEvent.schemaVersion,
     payload: structuredClone(committedEvent.payload),
-    meta: structuredClone(meta),
     actor: {
       userId: isNonEmptyString(committedEvent?.userId)
         ? committedEvent.userId
@@ -122,6 +113,12 @@ export const committedSyncEventToCommand = (committedEvent) => {
     },
     clientTs: toFiniteNumberOrNull(meta.clientTs) ?? fallbackClientTs,
   };
+
+  if (Object.keys(meta).length > 0) {
+    normalizedCommand.meta = structuredClone(meta);
+  }
+
+  return normalizedCommand;
 };
 
 /**
@@ -129,7 +126,7 @@ export const committedSyncEventToCommand = (committedEvent) => {
  *
  * @param {{
  *   id?: string,
- *   partitions?: string[],
+ *   partition?: string,
  *   projectId?: string,
  *   userId?: string,
  *   type?: string,
@@ -142,13 +139,8 @@ export const validateCommandSubmitItem = (item) => {
   if (!isObject(item)) {
     failValidation("submit item is required");
   }
-  if (!Array.isArray(item.partitions) || item.partitions.length === 0) {
-    failValidation("partitions are required");
-  }
-
-  const partitions = toUniqueNonEmptyStrings(item.partitions);
-  if (partitions.length === 0) {
-    failValidation("partitions must include at least one non-empty string");
+  if (!isNonEmptyString(item.partition)) {
+    failValidation("item.partition is required");
   }
 
   if (!isNonEmptyString(item.id)) {
@@ -167,8 +159,7 @@ export const validateCommandSubmitItem = (item) => {
     failValidation("item.userId must be a non-empty string when provided");
   }
 
-  const projectId = item.projectId || projectIdFromPartitions(partitions);
-  if (!isNonEmptyString(projectId)) {
+  if (!isNonEmptyString(item.projectId)) {
     failValidation("item.projectId is required");
   }
 
@@ -183,9 +174,9 @@ export const validateCommandSubmitItem = (item) => {
   return {
     commandId: item.id,
     type: item.type,
-    projectId,
+    projectId: item.projectId,
     userId: item.userId,
-    partitions,
+    partition: item.partition,
     schemaVersion: item.schemaVersion,
     meta,
   };

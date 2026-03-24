@@ -12,10 +12,10 @@ const toNonNegativeIntegerOrNull = (value) => {
  *   syncClient: {
  *     syncNow: (options?: object) => Promise<void>,
  *     getStatus?: () => { connectedServerLastCommittedId?: number | null },
- *     submitEvent: (input: { partitions: string[], event: object }) => Promise<string>,
+ *     submitEvent: (input: { partition: string, event: object }) => Promise<string>,
  *     flushDrafts?: () => Promise<void>,
  *   },
- *   seedEvents?: { partitions: string[], event: object }[],
+ *   seedEvents?: { partition: string, event: object }[],
  *   syncOptions?: object,
  *   logger?: (entry: object) => void,
  * }} input
@@ -71,13 +71,18 @@ export const initializeStreamIfEmpty = async ({
   }
 
   for (const entry of seedEvents) {
-    if (!entry || !Array.isArray(entry.partitions) || !entry.event) {
+    if (
+      !entry ||
+      typeof entry.partition !== "string" ||
+      entry.partition.length === 0 ||
+      !entry.event
+    ) {
       throw new Error(
-        "initializeStreamIfEmpty: each seed event needs partitions and event",
+        "initializeStreamIfEmpty: each seed event needs partition and event",
       );
     }
     await syncClient.submitEvent({
-      partitions: entry.partitions,
+      partition: entry.partition,
       event: entry.event,
     });
   }

@@ -18,7 +18,7 @@ const client = createCoreSyncClient({
   store,
   token: "<jwt-from-auth-service>",
   clientId: "device-c1",
-  partitions: ["workspace-1"],
+  projectId: "workspace-1",
   onEvent: ({ type, payload }) => {
     if (type === "sync_page") {
       console.log("applied sync page", {

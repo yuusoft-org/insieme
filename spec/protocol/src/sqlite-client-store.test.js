@@ -26,43 +26,60 @@ afterEach(() => {
 const describeSqlite = hasNodeSqlite ? describe : describe.skip;
 const makeDraft = ({
   id = "evt-1",
-  partitions = ["P1"],
+  projectId,
+  userId,
+  partition = "P1",
   type = "x",
   schemaVersion = 1,
   payload = { n: 1 },
   clientId = "C1",
   clientTs = 100,
+  metaExtras = {},
   createdAt = 100,
 } = {}) => ({
   id,
-  partitions,
+  projectId,
+  userId,
+  partition,
   type,
   schemaVersion,
   payload,
-  meta: { clientId, clientTs },
+  meta: { clientId, clientTs, ...metaExtras },
   createdAt,
 });
 
 const makeCommitted = ({
   id = "evt-1",
-  partitions = ["P1"],
+  partition = "P1",
+  projectId = "proj-1",
   committedId = 1,
   type = "x",
   schemaVersion = 1,
   payload = { n: 1 },
   clientId = "C1",
   clientTs = 10,
-  created = 10,
+  serverTs = 10,
 } = {}) => ({
   id,
-  partitions,
+  partition,
+  projectId,
   committedId,
   type,
   schemaVersion,
   payload,
   meta: { clientId, clientTs },
-  created,
+  serverTs,
 });
+
+const loadViews = async (store, viewName, partitions) =>
+  Object.fromEntries(
+    await Promise.all(
+      partitions.map(async (partition) => [
+        partition,
+        await store.loadMaterializedView({ viewName, partition }),
+      ]),
+    ),
+  );
 
 describeSqlite("src createSqliteClientStore", () => {
   it("runs migrations and sets schema version", async () => {
@@ -72,7 +89,34 @@ describeSqlite("src createSqliteClientStore", () => {
     await store.init();
 
     const row = db._raw.prepare("PRAGMA user_version").get();
-    expect(row.user_version).toBe(2);
+    expect(row.user_version).toBe(6);
+    const draftProject = db._raw
+      .prepare("SELECT type FROM pragma_table_info('local_drafts') WHERE name = 'project_id'")
+      .get();
+    const draftUser = db._raw
+      .prepare("SELECT type FROM pragma_table_info('local_drafts') WHERE name = 'user_id'")
+      .get();
+    const draftPayload = db._raw
+      .prepare("SELECT type FROM pragma_table_info('local_drafts') WHERE name = 'payload'")
+      .get();
+    const draftMeta = db._raw
+      .prepare("SELECT type FROM pragma_table_info('local_drafts') WHERE name = 'meta'")
+      .get();
+    const committedPayload = db._raw
+      .prepare(
+        "SELECT type FROM pragma_table_info('committed_events') WHERE name = 'payload'",
+      )
+      .get();
+    expect(draftProject).toBe(undefined);
+    expect(draftUser).toBe(undefined);
+    expect(draftPayload.type).toBe("BLOB");
+    expect(draftMeta).toBe(undefined);
+    expect(committedPayload.type).toBe("BLOB");
+    expect(
+      db._raw
+        .prepare("SELECT type FROM pragma_table_info('committed_events') WHERE name = 'meta'")
+        .get(),
+    ).toBe(undefined);
 
     db.close();
   });
@@ -85,14 +129,20 @@ describeSqlite("src createSqliteClientStore", () => {
       const store = createSqliteClientStore(db);
       await store.init();
 
-      await store.insertDraft(makeDraft());
+      await store.insertDraft(
+        makeDraft({
+          projectId: "proj-1",
+          userId: "u1",
+          metaExtras: { source: "ui" },
+        }),
+      );
 
       await store.applySubmitResult({
         result: {
           id: "evt-1",
           status: "committed",
           committedId: 5,
-          created: 500,
+          serverTs: 500,
         },
       });
 
@@ -100,6 +150,13 @@ describeSqlite("src createSqliteClientStore", () => {
       await store.applyCommittedBatch({ events: [], nextCursor: 2 });
 
       expect(await store.loadCursor()).toBe(5);
+      expect(await store._debug.getCommitted()).toEqual([
+        expect.objectContaining({
+          id: "evt-1",
+          committedId: 5,
+          clientTs: 100,
+        }),
+      ]);
       db.close();
     }
 
@@ -110,20 +167,68 @@ describeSqlite("src createSqliteClientStore", () => {
 
       expect(await store.loadCursor()).toBe(5);
 
-      const committed = db._raw
-        .prepare(
-          "SELECT id, committed_id FROM committed_events ORDER BY committed_id",
-        )
-        .all();
-      expect(committed).toEqual([
-        {
+      expect(await store._debug.getCommitted()).toEqual([
+        expect.objectContaining({
           id: "evt-1",
-          committed_id: 5,
-        },
+          committedId: 5,
+          clientTs: 100,
+        }),
       ]);
 
       db.close();
     }
+  });
+
+  it("fails fast on older on-disk schema versions", async () => {
+    const db = createSqliteDb(":memory:");
+    db.exec(`
+      PRAGMA user_version=5;
+      CREATE TABLE local_drafts (
+        draft_clock INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT NOT NULL UNIQUE,
+        partition TEXT NOT NULL,
+        type TEXT NOT NULL,
+        schema_version INTEGER NOT NULL,
+        payload BLOB NOT NULL,
+        payload_compression TEXT DEFAULT NULL,
+        client_ts INTEGER NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE TABLE committed_events (
+        committed_id INTEGER PRIMARY KEY,
+        id TEXT NOT NULL UNIQUE,
+        project_id TEXT,
+        user_id TEXT,
+        partition TEXT NOT NULL,
+        type TEXT NOT NULL,
+        schema_version INTEGER NOT NULL,
+        payload BLOB NOT NULL,
+        payload_compression TEXT DEFAULT NULL,
+        client_ts INTEGER NOT NULL,
+        server_ts INTEGER NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE TABLE app_state (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+      CREATE TABLE materialized_view_state (
+        view_name TEXT NOT NULL,
+        partition TEXT NOT NULL,
+        view_version TEXT NOT NULL,
+        last_committed_id INTEGER NOT NULL,
+        value TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY(view_name, partition)
+      );
+    `);
+    const store = createSqliteClientStore(db);
+
+    await expect(store.init()).rejects.toThrow(
+      "Client store requires reset for schema version 5; runtime expects 6",
+    );
+
+    db.close();
   });
 
   it("rejects conflicting duplicate committed rows", async () => {
@@ -138,7 +243,7 @@ describeSqlite("src createSqliteClientStore", () => {
 
     await expect(
       store.applyCommittedBatch({
-        events: [makeCommitted({ committedId: 9, created: 11, clientTs: 11 })],
+        events: [makeCommitted({ committedId: 9, serverTs: 11, clientTs: 11 })],
       }),
     ).rejects.toThrow("committed event invariant violation");
 
@@ -161,7 +266,7 @@ describeSqlite("src createSqliteClientStore", () => {
           makeCommitted({
             id: "evt-2",
             payload: { n: 2 },
-            created: 11,
+            serverTs: 11,
             clientTs: 11,
           }),
         ],
@@ -193,18 +298,27 @@ describeSqlite("src createSqliteClientStore", () => {
 
       await store.applyCommittedBatch({
         events: [
-          makeCommitted({ type: "increment", payload: {}, created: 10, clientTs: 10 }),
+          makeCommitted({ type: "increment", payload: {}, serverTs: 10, clientTs: 10 }),
           makeCommitted({
             id: "evt-2",
-            partitions: ["P1", "P2"],
             committedId: 2,
+            partition: "P1",
             type: "increment",
             payload: {},
-            created: 11,
+            serverTs: 11,
             clientTs: 11,
           }),
+          makeCommitted({
+            id: "evt-3",
+            committedId: 3,
+            partition: "P2",
+            type: "increment",
+            payload: {},
+            serverTs: 12,
+            clientTs: 12,
+          }),
         ],
-        nextCursor: 2,
+        nextCursor: 3,
       });
 
       db.close();
@@ -265,19 +379,14 @@ describeSqlite("src createSqliteClientStore", () => {
     });
     await store.init();
 
-    await store.applyCommittedBatch({
-      events: [
-        makeCommitted({ type: "increment", payload: {}, created: 10, clientTs: 10 }),
-      ],
+      await store.applyCommittedBatch({
+        events: [
+          makeCommitted({ type: "increment", payload: {}, serverTs: 10, clientTs: 10 }),
+        ],
       nextCursor: 1,
     });
 
-    expect(
-      await store.loadMaterializedViews({
-        viewName: "counter",
-        partitions: ["P1"],
-      }),
-    ).toEqual({
+    expect(await loadViews(store, "counter", ["P1"])).toEqual({
       P1: { count: 1 },
     });
 
@@ -338,12 +447,12 @@ describeSqlite("src createSqliteClientStore", () => {
     });
     await store.init();
 
-    await store.applyCommittedBatch({
-      events: [
-        makeCommitted({ type: "increment", payload: {}, created: 10, clientTs: 10 }),
-      ],
-      nextCursor: 1,
-    });
+      await store.applyCommittedBatch({
+        events: [
+          makeCommitted({ type: "increment", payload: {}, serverTs: 10, clientTs: 10 }),
+        ],
+        nextCursor: 1,
+      });
 
     await store.evictMaterializedView({
       viewName: "counter",
@@ -381,18 +490,27 @@ describeSqlite("src createSqliteClientStore", () => {
 
       await store.applyCommittedBatch({
         events: [
-          makeCommitted({ type: "increment", payload: {}, created: 10, clientTs: 10 }),
+          makeCommitted({ type: "increment", payload: {}, serverTs: 10, clientTs: 10 }),
           makeCommitted({
             id: "evt-2",
-            partitions: ["P1", "P2"],
             committedId: 2,
+            partition: "P1",
             type: "increment",
             payload: {},
-            created: 11,
+            serverTs: 11,
             clientTs: 11,
           }),
+          makeCommitted({
+            id: "evt-3",
+            committedId: 3,
+            partition: "P2",
+            type: "increment",
+            payload: {},
+            serverTs: 12,
+            clientTs: 12,
+          }),
         ],
-        nextCursor: 2,
+        nextCursor: 3,
       });
 
       expect(
@@ -420,12 +538,7 @@ describeSqlite("src createSqliteClientStore", () => {
       });
       await store.init();
 
-      expect(
-        await store.loadMaterializedViews({
-          viewName: "counter",
-          partitions: ["P1", "P2"],
-        }),
-      ).toEqual({
+      expect(await loadViews(store, "counter", ["P1", "P2"])).toEqual({
         P1: { count: 2 },
         P2: { count: 1 },
       });
@@ -460,7 +573,7 @@ describeSqlite("src createSqliteClientStore", () => {
             committedId: cycle,
             type: "increment",
             payload: {},
-            created: cycle,
+            serverTs: cycle,
             clientTs: cycle,
           }),
         ],

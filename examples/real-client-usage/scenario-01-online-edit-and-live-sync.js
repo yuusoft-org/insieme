@@ -20,7 +20,7 @@ const client = createCoreSyncClient({
   store,
   token: "<jwt-from-auth-service>",
   clientId: "device-c1",
-  partitions: ["workspace-1"],
+  projectId: "workspace-1",
   onEvent: ({ type, payload }) => {
     if (type === "connected") console.log("connected", payload);
     if (type === "synced") console.log("synced", payload.cursor);
@@ -34,7 +34,7 @@ const client = createCoreSyncClient({
 await client.start();
 
 await client.submitEvent({
-  partitions: ["workspace-1"],
+  partition: "workspace-1",
   projectId: "workspace-1",
   type: "explorer.folderCreated",
   payload: {

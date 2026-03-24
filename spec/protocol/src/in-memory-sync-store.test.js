@@ -3,7 +3,7 @@ import { createInMemorySyncStore } from "../../../src/index.js";
 
 const makeSubmit = (overrides = {}) => ({
   id: "evt-1",
-  partitions: ["P1"],
+  partition: "P1",
   projectId: "proj-1",
   userId: "u1",
   type: "x",
@@ -22,14 +22,12 @@ describe("src createInMemorySyncStore", () => {
 
     const first = await store.commitOrGetExisting(
       makeSubmit({
-        partitions: ["P2", "P1"],
         payload: { a: 1, b: 2 },
       }),
     );
 
     const second = await store.commitOrGetExisting(
       makeSubmit({
-        partitions: ["P1", "P2"],
         payload: { b: 2, a: 1 },
         now: 200,
       }),
@@ -68,14 +66,14 @@ describe("src createInMemorySyncStore", () => {
     );
 
     const first = await store.listCommittedSince({
-      partitions: ["P1"],
+      projectId: "proj-1",
       sinceCommittedId: 0,
       limit: 1,
       syncToCommittedId: 2,
     });
 
     const second = await store.listCommittedSince({
-      partitions: ["P1"],
+      projectId: "proj-1",
       sinceCommittedId: first.nextSinceCommittedId,
       limit: 10,
       syncToCommittedId: 2,
@@ -89,27 +87,38 @@ describe("src createInMemorySyncStore", () => {
     expect(second.nextSinceCommittedId).toBe(2);
   });
 
-  it("returns partition-scoped max committed id", async () => {
+  it("returns project-scoped max committed id", async () => {
     const store = createInMemorySyncStore();
 
     await store.commitOrGetExisting(
-      makeSubmit({ id: "evt-p1-1", partitions: ["P1"], payload: { n: 1 } }),
+      makeSubmit({ id: "evt-p1-1", projectId: "proj-1", payload: { n: 1 } }),
     );
     await store.commitOrGetExisting(
-      makeSubmit({ id: "evt-p2-1", partitions: ["P2"], payload: { n: 2 }, now: 2 }),
+      makeSubmit({
+        id: "evt-p2-1",
+        projectId: "proj-2",
+        partition: "P2",
+        payload: { n: 2 },
+        now: 2,
+      }),
     );
     await store.commitOrGetExisting(
-      makeSubmit({ id: "evt-p1-2", partitions: ["P1"], payload: { n: 3 }, now: 3 }),
+      makeSubmit({
+        id: "evt-p1-2",
+        projectId: "proj-1",
+        payload: { n: 3 },
+        now: 3,
+      }),
     );
 
     await expect(
-      store.getMaxCommittedIdForPartitions({ partitions: ["P1"] }),
+      store.getMaxCommittedIdForProject({ projectId: "proj-1" }),
     ).resolves.toBe(3);
     await expect(
-      store.getMaxCommittedIdForPartitions({ partitions: ["P2"] }),
+      store.getMaxCommittedIdForProject({ projectId: "proj-2" }),
     ).resolves.toBe(2);
     await expect(
-      store.getMaxCommittedIdForPartitions({ partitions: ["P9"] }),
+      store.getMaxCommittedIdForProject({ projectId: "proj-9" }),
     ).resolves.toBe(0);
   });
 });

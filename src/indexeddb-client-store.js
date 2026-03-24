@@ -1,9 +1,12 @@
 import { canonicalizeSubmitItem } from "./canonicalize.js";
-import { buildCommittedEventFromDraft, normalizeMeta } from "./event-record.js";
+import {
+  buildCommittedEventFromDraft,
+  normalizeClientTs,
+} from "./event-record.js";
 import { normalizeMaterializedViewDefinitions } from "./materialized-view.js";
 import { createMaterializedViewRuntime } from "./materialized-view-runtime.js";
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 8;
 const DEFAULT_DB_NAME = "insieme-client";
 const META_STORE = "meta";
 const DRAFT_STORE = "drafts";
@@ -149,37 +152,34 @@ const openDatabase = ({ indexedDB, dbName }) =>
 const parseDraftRow = (row) => ({
   draftClock: parseIntSafe(row.draft_clock, 0),
   id: row.id,
-  partitions: [...row.partitions],
-  projectId: row.project_id || undefined,
-  userId: row.user_id || undefined,
+  partition: row.partition,
   type: row.type,
   schemaVersion: parseIntSafe(row.schema_version, 0),
   payload: structuredClone(row.payload),
-  meta: normalizeMeta(row.meta),
+  payloadCompression: row.payload_compression || undefined,
+  clientTs: parseIntSafe(row.client_ts, 0),
   createdAt: parseIntSafe(row.created_at, 0),
 });
 
 const serializeDraftRow = ({
   draftClock,
   id,
-  partitions,
-  projectId,
-  userId,
+  partition,
   type,
   schemaVersion,
   payload,
-  meta,
+  payloadCompression,
+  clientTs,
   createdAt,
 }) => ({
   draft_clock: draftClock,
   id,
-  partitions: [...partitions],
-  project_id: projectId,
-  user_id: userId,
+  partition,
   type,
   schema_version: schemaVersion,
   payload: structuredClone(payload),
-  meta: normalizeMeta(meta),
+  payload_compression: payloadCompression,
+  client_ts: parseIntSafe(clientTs, 0),
   created_at: createdAt,
 });
 
@@ -188,12 +188,14 @@ const parseCommittedRow = (row) => ({
   id: row.id,
   projectId: row.project_id || undefined,
   userId: row.user_id || undefined,
-  partitions: [...row.partitions],
+  partition: row.partition,
   type: row.type,
   schemaVersion: parseIntSafe(row.schema_version, 0),
   payload: structuredClone(row.payload),
-  meta: normalizeMeta(row.meta),
-  created: parseIntSafe(row.created, 0),
+  payloadCompression: row.payload_compression || undefined,
+  clientTs: parseIntSafe(row.client_ts, 0),
+  serverTs: parseIntSafe(row.server_ts, 0),
+  createdAt: parseIntSafe(row.created_at, 0),
 });
 
 const serializeCommittedRow = ({
@@ -201,34 +203,44 @@ const serializeCommittedRow = ({
   id,
   projectId,
   userId,
-  partitions,
+  partition,
   type,
   schemaVersion,
   payload,
-  meta,
-  created,
+  clientTs,
+  payloadCompression,
+  serverTs,
+  createdAt,
 }) => ({
   committed_id: committedId,
   id,
   project_id: projectId,
   user_id: userId,
-  partitions: [...partitions],
+  partition,
   type,
   schema_version: schemaVersion,
   payload: structuredClone(payload),
-  meta: normalizeMeta(meta),
-  created,
+  payload_compression: payloadCompression,
+  client_ts: parseIntSafe(clientTs, 0),
+  server_ts: serverTs,
+  created_at: createdAt,
+});
+
+const normalizeCommittedEvent = (event) => ({
+  ...event,
+  payload: structuredClone(event.payload),
+  clientTs: normalizeClientTs(event.clientTs, {
+    defaultClientTs: event.meta?.clientTs,
+  }),
 });
 
 const toComparisonKey = (event) =>
   canonicalizeSubmitItem({
-    partitions: event.partitions,
-    projectId: event.projectId,
-    userId: event.userId,
+    partition: event.partition,
     type: event.type,
     schemaVersion: event.schemaVersion,
     payload: event.payload,
-    meta: event.meta,
+    clientTs: normalizeClientTs(event.clientTs),
   });
 
 export const createIndexedDbClientStore = ({
@@ -403,7 +415,12 @@ export const createIndexedDbClientStore = ({
       );
     }
 
-    committedStore.add(serializeCommittedRow(event));
+    committedStore.add(
+      serializeCommittedRow({
+        ...event,
+        createdAt: event.createdAt ?? Date.now(),
+      }),
+    );
     return true;
   };
 
@@ -435,13 +452,14 @@ export const createIndexedDbClientStore = ({
             draftStore.add(serializeDraftRow({
               id: item.id,
               draftClock,
-              partitions: [...item.partitions],
-              projectId: item.projectId,
-              userId: item.userId,
+              partition: item.partition,
               type: item.type,
               schemaVersion: item.schemaVersion,
               payload: structuredClone(item.payload),
-              meta: normalizeMeta(item.meta),
+              payloadCompression: item.payloadCompression ?? null,
+              clientTs: normalizeClientTs(item.clientTs, {
+                defaultClientTs: item.meta?.clientTs,
+              }),
               createdAt: item.createdAt,
             }));
             draftClock += 1;
@@ -454,13 +472,13 @@ export const createIndexedDbClientStore = ({
 
     insertDraft: async ({
       id,
-      partitions,
-      projectId,
-      userId,
+      partition,
       type,
       schemaVersion,
       payload,
+      clientTs,
       meta,
+      payloadCompression,
       createdAt,
     }) => {
       await withTransaction(
@@ -478,13 +496,14 @@ export const createIndexedDbClientStore = ({
           draftStore.add(serializeDraftRow({
             id,
             draftClock,
-            partitions: [...partitions],
-            projectId,
-            userId,
+            partition,
             type,
             schemaVersion,
             payload: structuredClone(payload),
-            meta: normalizeMeta(meta),
+            payloadCompression: payloadCompression ?? null,
+            clientTs: normalizeClientTs(clientTs, {
+              defaultClientTs: meta?.clientTs,
+            }),
             createdAt,
           }));
           await saveMetaInt(metaStore, NEXT_DRAFT_CLOCK_KEY, draftClock + 1);
@@ -517,11 +536,14 @@ export const createIndexedDbClientStore = ({
           let insertedEvent;
 
           if (result.status === "committed" && draft) {
-            const committed = buildCommittedEventFromDraft({
-              draft,
-              committedId: result.committedId,
-              created: result.created,
-            });
+            const committed = normalizeCommittedEvent(
+              buildCommittedEventFromDraft({
+                draft,
+                committedId: result.committedId,
+                serverTs: result.serverTs,
+              }),
+            );
+            committed.createdAt = Date.now();
             const inserted = await assertCommittedInvariant(
               committedStore,
               committedIdIndex,
@@ -556,13 +578,14 @@ export const createIndexedDbClientStore = ({
           const inserted = [];
 
           for (const event of events) {
+            const committed = normalizeCommittedEvent(event);
             const wasInserted = await assertCommittedInvariant(
               committedStore,
               committedIdIndex,
-              event,
+              committed,
             );
             if (wasInserted) {
-              inserted.push(event);
+              inserted.push(committed);
             }
             draftStore.delete(event.id);
           }
@@ -591,14 +614,6 @@ export const createIndexedDbClientStore = ({
       return materializedViewRuntime.loadMaterializedView({
         viewName,
         partition,
-      });
-    },
-
-    loadMaterializedViews: async ({ viewName, partitions }) => {
-      await ensureInitialized();
-      return materializedViewRuntime.loadMaterializedViews({
-        viewName,
-        partitions,
       });
     },
 

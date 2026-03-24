@@ -55,6 +55,7 @@ const syncStore = createLibsqlSyncStore(serverDb);
 
 ```js
 import {
+  createOfflineTransport,
   createInMemoryClientStore,
   createInMemorySyncStore,
   createSyncClient,
@@ -67,7 +68,7 @@ const server = createSyncServer({
     verifyToken: async () => ({ clientId: "C1", claims: {} }),
   },
   authz: {
-    authorizePartitions: async () => true,
+    authorizeProject: async () => true,
   },
   validation: {
     validate: async () => {},
@@ -83,7 +84,7 @@ const client = createSyncClient({
   store: clientStore,
   token: "jwt",
   clientId: "C1",
-  partitions: ["workspace-1"],
+  projectId: "workspace-1",
 });
 
 await client.start();
@@ -151,6 +152,9 @@ Operational guidance:
 
 Server runtime also supports optional inbound guardrails via `limits` (message rate and envelope size caps) for defense-in-depth reliability.
 For deployments that can re-check token/session validity on every active request, provide `auth.validateSession`.
+
+Each `createSyncClient(...)` instance is project-scoped. If your app needs to
+sync more than one project, create a separate client/store instance per project.
 
 ## Protocol Docs
 

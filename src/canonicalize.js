@@ -1,5 +1,6 @@
 import {
   isNonEmptyString,
+  normalizeClientTs,
   normalizeMeta,
   toPositiveIntegerOrNull,
 } from "./event-record.js";
@@ -30,63 +31,41 @@ export const deepSortKeys = (value) => {
 };
 
 /**
- * @param {string[]} partitions
- * @returns {string[]}
- */
-export const normalizePartitionSet = (partitions) => {
-  const sorted = [...partitions].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-  const unique = [];
-  for (const value of sorted) {
-    if (unique.length === 0 || unique[unique.length - 1] !== value) {
-      unique.push(value);
-    }
-  }
-  return unique;
-};
-
-/**
  * @param {{
- *   partitions?: string[],
+ *   partition?: string,
  *   projectId?: string,
  *   userId?: string,
  *   type?: string,
  *   schemaVersion?: number,
  *   payload?: object,
+ *   clientTs?: number,
  *   meta?: object,
  * }} input
  * @returns {string}
  */
 export const canonicalizeSubmitItem = ({
-  partitions,
+  partition,
   projectId,
   userId,
   type,
   schemaVersion,
   payload,
+  clientTs,
   meta,
 }) => {
+  const normalizedMeta = normalizeMeta(meta, {
+    defaultClientTs: normalizeClientTs(clientTs),
+  });
+  delete normalizedMeta.clientId;
+
   const canonicalInput = {
-    partitions: normalizePartitionSet(partitions),
+    partition: isNonEmptyString(partition) ? partition : undefined,
     projectId: isNonEmptyString(projectId) ? projectId : undefined,
     userId: isNonEmptyString(userId) ? userId : undefined,
     type: isNonEmptyString(type) ? type : undefined,
     schemaVersion: toPositiveIntegerOrNull(schemaVersion) ?? undefined,
     payload: deepSortKeys(payload),
-    meta: deepSortKeys(normalizeMeta(meta)),
+    meta: deepSortKeys(normalizedMeta),
   };
   return JSON.stringify(canonicalInput);
-};
-
-/**
- * @param {string[]} left
- * @param {string[]} right
- * @returns {boolean}
- */
-export const intersectsPartitions = (left, right) => {
-  if (left.length === 0 || right.length === 0) return false;
-  const rightSet = new Set(right);
-  for (const value of left) {
-    if (rightSet.has(value)) return true;
-  }
-  return false;
 };

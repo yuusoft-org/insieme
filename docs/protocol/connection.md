@@ -29,6 +29,7 @@ protocolVersion: "1.0"
 payload:
   token: jwt
   clientId: client-123
+  projectId: workspace-1
 ```
 
 ### Server -> Client: `connected`
@@ -38,20 +39,23 @@ type: connected
 protocolVersion: "1.0"
 payload:
   clientId: client-123
-  globalLastCommittedId: 1700
+  projectId: workspace-1
+  projectLastCommittedId: 1700
 ```
 
 Field semantics:
 
-- `globalLastCommittedId` is the server high-watermark at handshake time.
+- `projectId` is the authenticated project scope for this connection.
+- `projectLastCommittedId` is the project high-watermark at handshake time.
 - Client uses this value to decide whether sync is needed.
 
 ## Auth Rules
 
 - Server validates JWT signature and expiry.
 - The authenticated `clientId` **MUST** match `connect.payload.clientId`.
+- Server **MUST** authorize `connect.payload.projectId` before activating the session.
 - Authenticated connection identity is authoritative for all later requests.
-- Partition authorization **MUST** be checked for both submit and sync.
+- Later `submit_events` and `sync` requests **MUST** use the same `projectId` as the authenticated session.
 - If token expires during a connection, server **MUST** send `auth_failed` and close.
 - Implementations that can validate session state per message **SHOULD** do so before handling active requests.
 
@@ -63,7 +67,7 @@ In `active` state, supported requests are:
 - `sync`
 
 Invalid shape -> `bad_request` (keep open).
-Unauthorized partition scope -> `forbidden` (keep open).
+Unauthorized or mismatched project scope -> `forbidden` (keep open).
 Server inbound safety limit breach -> `rate_limited` (close).
 
 ## Reconnect

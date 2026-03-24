@@ -1,5 +1,8 @@
 import { canonicalizeSubmitItem } from "./canonicalize.js";
-import { buildCommittedEventFromDraft, normalizeMeta } from "./event-record.js";
+import {
+  buildCommittedEventFromDraft,
+  normalizeClientTs,
+} from "./event-record.js";
 import { normalizeMaterializedViewDefinitions } from "./materialized-view.js";
 import { createMaterializedViewRuntime } from "./materialized-view-runtime.js";
 
@@ -14,13 +17,13 @@ const sortDrafts = (left, right) => {
  * In-memory client store implementing the simplified client storage interface.
  */
 export const createInMemoryClientStore = ({ materializedViews } = {}) => {
-  /** @type {{ draftClock: number, id: string, partitions: string[], projectId?: string, userId?: string, type: string, schemaVersion: number, payload: object, meta: object, createdAt: number }[]} */
+  /** @type {{ draftClock: number, id: string, partition: string, projectId?: string, userId?: string, type: string, schemaVersion: number, payload: object, clientTs: number, createdAt: number }[]} */
   const drafts = [];
 
-  /** @type {{ committedId: number, id: string, projectId?: string, userId?: string, partitions: string[], type: string, schemaVersion: number, payload: object, meta: object, created: number }[]} */
+  /** @type {{ committedId: number, id: string, projectId?: string, userId?: string, partition: string, type: string, schemaVersion: number, payload: object, clientTs: number, serverTs: number, createdAt?: number }[]} */
   const committed = [];
 
-  /** @type {Map<string, { comparisonKey: string, committedEvent: { committedId: number, id: string, projectId?: string, userId?: string, partitions: string[], type: string, schemaVersion: number, payload: object, meta: object, created: number } }>} */
+  /** @type {Map<string, { comparisonKey: string, committedEvent: { committedId: number, id: string, projectId?: string, userId?: string, partition: string, type: string, schemaVersion: number, payload: object, clientTs: number, serverTs: number, createdAt?: number } }>} */
   const committedById = new Map();
 
   const materializedViewDefinitions =
@@ -45,23 +48,25 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
     if (index >= 0) drafts.splice(index, 1);
   };
 
+  const normalizeCommittedEvent = (event) => ({
+    ...event,
+    payload: structuredClone(event.payload),
+    clientTs: normalizeClientTs(event.clientTs, {
+      defaultClientTs: event.meta?.clientTs,
+    }),
+  });
+
   const toComparisonKey = (event) =>
     canonicalizeSubmitItem({
-      partitions: event.partitions,
-      projectId: event.projectId,
-      userId: event.userId,
+      partition: event.partition,
       type: event.type,
       schemaVersion: event.schemaVersion,
       payload: event.payload,
-      meta: event.meta,
+      clientTs: normalizeClientTs(event.clientTs),
     });
 
   const upsertCommitted = (event) => {
-    const normalizedEvent = {
-      ...event,
-      payload: structuredClone(event.payload),
-      meta: normalizeMeta(event.meta),
-    };
+    const normalizedEvent = normalizeCommittedEvent(event);
     const existing = committedById.get(normalizedEvent.id);
     const comparisonKey = toComparisonKey(normalizedEvent);
     if (existing) {
@@ -95,12 +100,13 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
       const nextDrafts = items.map(
         ({
           id,
-          partitions,
+          partition,
           projectId,
           userId,
           type,
           schemaVersion,
           payload,
+          clientTs,
           meta,
           createdAt,
         }) => {
@@ -116,13 +122,15 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
           return {
             draftClock: nextDraftClock,
             id,
-            partitions: [...partitions],
+            partition,
             projectId,
             userId,
             type,
             schemaVersion,
             payload: structuredClone(payload),
-            meta: normalizeMeta(meta),
+            clientTs: normalizeClientTs(clientTs, {
+              defaultClientTs: meta?.clientTs,
+            }),
             createdAt,
           };
         },
@@ -136,12 +144,13 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
 
     insertDraft: async ({
       id,
-      partitions,
+      partition,
       projectId,
       userId,
       type,
       schemaVersion,
       payload,
+      clientTs,
       meta,
       createdAt,
     }) => {
@@ -153,13 +162,15 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
       drafts.push({
         draftClock: nextDraftClock,
         id,
-        partitions: [...partitions],
+        partition,
         projectId,
         userId,
         type,
         schemaVersion,
         payload: structuredClone(payload),
-        meta: normalizeMeta(meta),
+        clientTs: normalizeClientTs(clientTs, {
+          defaultClientTs: meta?.clientTs,
+        }),
         createdAt,
       });
       nextDraftClock += 1;
@@ -171,11 +182,13 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
       if (result.status === "committed") {
         const draft = drafts.find((entry) => entry.id === result.id);
         if (draft) {
-          const committedEvent = buildCommittedEventFromDraft({
-            draft,
-            committedId: result.committedId,
-            created: result.created,
-          });
+          const committedEvent = normalizeCommittedEvent(
+            buildCommittedEventFromDraft({
+              draft,
+              committedId: result.committedId,
+              serverTs: result.serverTs,
+            }),
+          );
           if (upsertCommitted(committedEvent)) {
             await materializedViewRuntime.onCommittedEvent(committedEvent);
           }
@@ -191,9 +204,10 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
 
     applyCommittedBatch: async ({ events, nextCursor }) => {
       for (const event of events) {
-        const inserted = upsertCommitted(event);
+        const committedEvent = normalizeCommittedEvent(event);
+        const inserted = upsertCommitted(committedEvent);
         if (inserted) {
-          await materializedViewRuntime.onCommittedEvent(event);
+          await materializedViewRuntime.onCommittedEvent(committedEvent);
         }
         removeDraftById(event.id);
       }
@@ -207,12 +221,6 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
         partition,
       });
     },
-
-    loadMaterializedViews: async ({ viewName, partitions }) =>
-      materializedViewRuntime.loadMaterializedViews({
-        viewName,
-        partitions,
-      }),
 
     evictMaterializedView: async ({ viewName, partition }) =>
       materializedViewRuntime.evictMaterializedView({

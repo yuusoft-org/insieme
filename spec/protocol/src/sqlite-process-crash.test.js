@@ -46,7 +46,8 @@ describeSqlite("src sqlite process crash safety", () => {
 
     const retry = await store.commitOrGetExisting({
       id: "evt-proc-1",
-      partitions: ["P1"],
+      partition: "P1",
+      projectId: "proj-1",
       type: "x",
       schemaVersion: 1,
       payload: { n: 1 },

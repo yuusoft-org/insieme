@@ -31,12 +31,16 @@ const client = createCoreSyncClient({
   store,
   token,
   clientId,
-  partitions: ["workspace-1"],
+  projectId: "workspace-1",
   onEvent: ({ type, payload }) => {
     // update UI/reactive state
   },
 });
 
 await client.start();
-await client.submitEvent({ partitions: ["workspace-1"], event });
+await client.submitEvent({
+  partition: "workspace-1",
+  projectId: "workspace-1",
+  ...event,
+});
 ```

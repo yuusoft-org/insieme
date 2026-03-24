@@ -10,8 +10,8 @@ This document defines the minimal client-side draft lifecycle for offline-first 
 - Insert into `local_drafts` with:
   - `id`
   - `draftClock` (storage-assigned monotonic order key)
-  - `partitions`
-  - `projectId` / `userId` when applicable
+  - `partition`
+  - project-scoped identity metadata as required by your app
   - `type`
   - `schemaVersion`
   - `payload`
@@ -67,7 +67,7 @@ On `event_broadcast` or `sync_response.events`:
 
 - Retries use the same event `id`.
 - Server dedupes by `id`.
-- Retry equality includes normalized `partitions`, `projectId`, `userId`, `type`, `schemaVersion`, `payload`, and `meta`.
+- Retry equality includes normalized `partition`, `projectId`, `userId`, `type`, `schemaVersion`, `payload`, and `meta`.
 - Batch retry still preserves the underlying draft order. If one item fails, later `not_processed` drafts stay queued for a later retry.
 - Client apply path must be idempotent:
   - repeated committed insert -> no duplicate,
@@ -76,5 +76,5 @@ On `event_broadcast` or `sync_response.events`:
 ## Startup / Recovery
 
 - Restore durable committed cursor.
-- Run `sync` until `hasMore=false`.
+- Run `sync` for the active project until `hasMore=false`.
 - Retry remaining local drafts in `(draftClock, id)` order, in one or more bounded submit batches.

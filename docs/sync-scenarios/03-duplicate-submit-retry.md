@@ -26,7 +26,7 @@ protocolVersion: "1.0"
 payload:
   events:
     - id: evt-uuid-1
-      partitions: [P1]
+      partition: P1
       projectId: P1
       userId: U1
       type: explorer.folderCreated
@@ -48,7 +48,7 @@ payload:
     - id: evt-uuid-1
       status: committed
       committedId: 101
-      created: 1738451205000
+      serverTs: 1738451205000
 ```
 
 ## Assertions
