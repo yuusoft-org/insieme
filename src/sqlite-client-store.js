@@ -40,8 +40,6 @@ const parseIntSafe = (value) => {
 const toComparisonKey = (event) =>
   canonicalizeSubmitItem({
     partition: event.partition,
-    projectId: event.projectId,
-    userId: event.userId,
     type: event.type,
     schemaVersion: event.schemaVersion,
     payload: event.payload,
@@ -61,7 +59,7 @@ const getTableColumnType = (db, tableName, columnName) => {
 
 const parseDraftMeta = (row) => {
   const defaultClientTs = parseIntSafe(row.client_ts);
-  return normalizeMeta(JSON.parse(row.meta), {
+  return normalizeMeta(undefined, {
     defaultClientTs,
   });
 };
@@ -146,14 +144,11 @@ export const createSqliteClientStore = (
       CREATE TABLE IF NOT EXISTS local_drafts (
         draft_clock INTEGER PRIMARY KEY AUTOINCREMENT,
         id TEXT NOT NULL UNIQUE,
-        project_id TEXT,
-        user_id TEXT,
         partition TEXT NOT NULL,
         type TEXT NOT NULL,
         schema_version INTEGER NOT NULL,
         payload BLOB NOT NULL,
         payload_compression TEXT DEFAULT NULL,
-        meta TEXT NOT NULL,
         client_ts INTEGER NOT NULL,
         created_at INTEGER NOT NULL
       );
@@ -214,9 +209,9 @@ export const createSqliteClientStore = (
 
     if (
       !hasDraftPartition ||
-      !hasDraftProjectId ||
-      !hasDraftUserId ||
-      !hasDraftMeta ||
+      hasDraftProjectId ||
+      hasDraftUserId ||
+      hasDraftMeta ||
       !hasCommittedPartition ||
       !hasCommittedServerTs ||
       draftPayloadType !== "BLOB" ||
@@ -256,8 +251,6 @@ export const createSqliteClientStore = (
   const parseDraft = (row) => ({
     draftClock: row.draft_clock,
     id: row.id,
-    projectId: row.project_id || undefined,
-    userId: row.user_id || undefined,
     partition: row.partition,
     type: row.type,
     schemaVersion: parseIntSafe(row.schema_version),
@@ -337,37 +330,31 @@ export const createSqliteClientStore = (
     insertDraftStmt = db.prepare(`
       INSERT INTO local_drafts(
         id,
-        project_id,
-        user_id,
         partition,
         type,
         schema_version,
         payload,
         payload_compression,
-        meta,
         client_ts,
         created_at
       ) VALUES(
         @id,
-        @project_id,
-        @user_id,
         @partition,
         @type,
         @schema_version,
         @payload,
         @payload_compression,
-        @meta,
         @client_ts,
         @created_at
       )
     `);
     listDraftsStmt = db.prepare(`
-      SELECT draft_clock, id, project_id, user_id, partition, type, schema_version, payload, payload_compression, meta, client_ts, created_at
+      SELECT draft_clock, id, partition, type, schema_version, payload, payload_compression, client_ts, created_at
       FROM local_drafts
       ORDER BY draft_clock ASC, id ASC
     `);
     getDraftByIdStmt = db.prepare(`
-      SELECT draft_clock, id, project_id, user_id, partition, type, schema_version, payload, payload_compression, meta, client_ts, created_at
+      SELECT draft_clock, id, partition, type, schema_version, payload, payload_compression, client_ts, created_at
       FROM local_drafts
       WHERE id = @id
     `);
@@ -463,14 +450,11 @@ export const createSqliteClientStore = (
       for (const item of items) {
         insertDraftStmt.run({
           id: item.id,
-          project_id: item.projectId ?? null,
-          user_id: item.userId ?? null,
           partition: item.partition,
           type: item.type,
           schema_version: item.schemaVersion,
           payload: serializePayload(item.payload),
           payload_compression: item.payloadCompression ?? null,
-          meta: JSON.stringify(normalizeMeta(item.meta)),
           client_ts: parseIntSafe(item.meta?.clientTs),
           created_at: item.createdAt,
         });
@@ -639,8 +623,6 @@ export const createSqliteClientStore = (
 
     insertDraft: async ({
       id,
-      projectId,
-      userId,
       partition,
       type,
       schemaVersion,
@@ -652,14 +634,11 @@ export const createSqliteClientStore = (
       ensureInitialized();
       insertDraftStmt.run({
         id,
-        project_id: projectId ?? null,
-        user_id: userId ?? null,
         partition,
         type,
         schema_version: schemaVersion,
         payload: serializePayload(payload),
         payload_compression: payloadCompression ?? null,
-        meta: JSON.stringify(normalizeMeta(meta)),
         client_ts: parseIntSafe(meta?.clientTs),
         created_at: createdAt,
       });

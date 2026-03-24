@@ -107,10 +107,10 @@ describeSqlite("src createSqliteClientStore", () => {
         "SELECT type FROM pragma_table_info('committed_events') WHERE name = 'payload'",
       )
       .get();
-    expect(draftProject.type).toBe("TEXT");
-    expect(draftUser.type).toBe("TEXT");
+    expect(draftProject).toBe(undefined);
+    expect(draftUser).toBe(undefined);
     expect(draftPayload.type).toBe("BLOB");
-    expect(draftMeta.type).toBe("TEXT");
+    expect(draftMeta).toBe(undefined);
     expect(committedPayload.type).toBe("BLOB");
     expect(
       db._raw
@@ -154,8 +154,6 @@ describeSqlite("src createSqliteClientStore", () => {
         expect.objectContaining({
           id: "evt-1",
           committedId: 5,
-          projectId: "proj-1",
-          userId: "u1",
           meta: {
             clientTs: 100,
           },
@@ -175,8 +173,6 @@ describeSqlite("src createSqliteClientStore", () => {
         expect.objectContaining({
           id: "evt-1",
           committedId: 5,
-          projectId: "proj-1",
-          userId: "u1",
           meta: {
             clientTs: 100,
           },

@@ -25,7 +25,7 @@ const createTransaction = async (db, fn) => {
 };
 
 const parseStoredMeta = (row) =>
-  normalizeMeta(JSON.parse(row.meta), {
+  normalizeMeta(undefined, {
     defaultClientTs: parseIntSafe(row.client_ts, 0),
   });
 
@@ -37,8 +37,6 @@ const normalizeCommittedMeta = (meta) =>
 const parseDraft = (row) => ({
   draftClock: parseIntSafe(row.draft_clock, 0),
   id: row.id,
-  projectId: row.project_id || undefined,
-  userId: row.user_id || undefined,
   partition: row.partition,
   type: row.type,
   schemaVersion: parseIntSafe(row.schema_version, 0),
@@ -77,8 +75,6 @@ const encodeMaterializedValue = (value) =>
 const toComparisonKey = (event) =>
   canonicalizeSubmitItem({
     partition: event.partition,
-    projectId: event.projectId,
-    userId: event.userId,
     type: event.type,
     schemaVersion: event.schemaVersion,
     payload: event.payload,
@@ -139,14 +135,11 @@ export const createLibsqlClientStore = (
       CREATE TABLE IF NOT EXISTS local_drafts (
         draft_clock INTEGER PRIMARY KEY AUTOINCREMENT,
         id TEXT NOT NULL UNIQUE,
-        project_id TEXT,
-        user_id TEXT,
         partition TEXT NOT NULL,
         type TEXT NOT NULL,
         schema_version INTEGER NOT NULL,
         payload BLOB NOT NULL,
         payload_compression TEXT DEFAULT NULL,
-        meta TEXT NOT NULL,
         client_ts INTEGER NOT NULL,
         created_at INTEGER NOT NULL
       );
@@ -218,9 +211,9 @@ export const createLibsqlClientStore = (
 
     if (
       !hasDraftPartition ||
-      !hasDraftProjectId ||
-      !hasDraftUserId ||
-      !hasDraftMeta ||
+      hasDraftProjectId ||
+      hasDraftUserId ||
+      hasDraftMeta ||
       !hasCommittedPartition ||
       !hasCommittedServerTs ||
       draftPayloadType !== "BLOB" ||
@@ -446,8 +439,6 @@ export const createLibsqlClientStore = (
 
     insertDraft: async ({
       id,
-      projectId,
-      userId,
       partition,
       type,
       schemaVersion,
@@ -461,29 +452,23 @@ export const createLibsqlClientStore = (
         `
           INSERT INTO local_drafts(
             id,
-            project_id,
-            user_id,
             partition,
             type,
             schema_version,
             payload,
             payload_compression,
-            meta,
             client_ts,
             created_at
           )
-          VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES(?, ?, ?, ?, ?, ?, ?, ?)
         `,
         [
           id,
-          projectId ?? null,
-          userId ?? null,
           partition,
           type,
           schemaVersion,
           serializePayload(payload),
           payloadCompression ?? null,
-          JSON.stringify(normalizeMeta(meta)),
           parseIntSafe(meta?.clientTs, 0),
           createdAt,
         ],
@@ -498,29 +483,23 @@ export const createLibsqlClientStore = (
             `
               INSERT INTO local_drafts(
                 id,
-                project_id,
-                user_id,
                 partition,
                 type,
                 schema_version,
                 payload,
                 payload_compression,
-                meta,
                 client_ts,
                 created_at
               )
-              VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              VALUES(?, ?, ?, ?, ?, ?, ?, ?)
             `,
             [
               item.id,
-              item.projectId ?? null,
-              item.userId ?? null,
               item.partition,
               item.type,
               item.schemaVersion,
               serializePayload(item.payload),
               item.payloadCompression ?? null,
-              JSON.stringify(normalizeMeta(item.meta)),
               parseIntSafe(item.meta?.clientTs, 0),
               item.createdAt,
             ],
@@ -532,7 +511,7 @@ export const createLibsqlClientStore = (
     loadDraftsOrdered: async () => {
       await ensureInitialized();
       const rows = await db.queryAll(`
-        SELECT draft_clock, id, project_id, user_id, partition, type, schema_version, payload, payload_compression, meta, client_ts, created_at
+        SELECT draft_clock, id, partition, type, schema_version, payload, payload_compression, client_ts, created_at
         FROM local_drafts
         ORDER BY draft_clock ASC, id ASC
       `);
@@ -546,7 +525,7 @@ export const createLibsqlClientStore = (
       if (result.status === "committed") {
         const draft = await db.queryOne(
           `
-            SELECT draft_clock, id, project_id, user_id, partition, type, schema_version, payload, payload_compression, meta, client_ts, created_at
+            SELECT draft_clock, id, partition, type, schema_version, payload, payload_compression, client_ts, created_at
             FROM local_drafts
             WHERE id = ?
           `,
@@ -702,7 +681,7 @@ export const createLibsqlClientStore = (
       getDrafts: async () => {
         await ensureInitialized();
         const rows = await db.queryAll(`
-          SELECT draft_clock, id, project_id, user_id, partition, type, schema_version, payload, payload_compression, meta, client_ts, created_at
+          SELECT draft_clock, id, partition, type, schema_version, payload, payload_compression, client_ts, created_at
           FROM local_drafts
           ORDER BY draft_clock ASC, id ASC
         `);

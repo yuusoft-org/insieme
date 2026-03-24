@@ -3,7 +3,7 @@ import { buildCommittedEventFromDraft, normalizeMeta } from "./event-record.js";
 import { normalizeMaterializedViewDefinitions } from "./materialized-view.js";
 import { createMaterializedViewRuntime } from "./materialized-view-runtime.js";
 
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 8;
 const DEFAULT_DB_NAME = "insieme-client";
 const META_STORE = "meta";
 const DRAFT_STORE = "drafts";
@@ -149,14 +149,12 @@ const openDatabase = ({ indexedDB, dbName }) =>
 const parseDraftRow = (row) => ({
   draftClock: parseIntSafe(row.draft_clock, 0),
   id: row.id,
-  projectId: row.project_id || undefined,
-  userId: row.user_id || undefined,
   partition: row.partition,
   type: row.type,
   schemaVersion: parseIntSafe(row.schema_version, 0),
   payload: structuredClone(row.payload),
   payloadCompression: row.payload_compression || undefined,
-  meta: normalizeMeta(row.meta, {
+  meta: normalizeMeta(undefined, {
     defaultClientTs: parseIntSafe(row.client_ts, 0),
   }),
   createdAt: parseIntSafe(row.created_at, 0),
@@ -170,8 +168,6 @@ const normalizeCommittedMeta = (meta) =>
 const serializeDraftRow = ({
   draftClock,
   id,
-  projectId,
-  userId,
   partition,
   type,
   schemaVersion,
@@ -182,15 +178,12 @@ const serializeDraftRow = ({
 }) => ({
   draft_clock: draftClock,
   id,
-  project_id: projectId,
-  user_id: userId,
   partition,
   type,
   schema_version: schemaVersion,
   payload: structuredClone(payload),
   payload_compression: payloadCompression,
   client_ts: parseIntSafe(meta?.clientTs, 0),
-  meta: normalizeMeta(meta),
   created_at: createdAt,
 });
 
@@ -248,8 +241,6 @@ const normalizeCommittedEvent = (event) => ({
 const toComparisonKey = (event) =>
   canonicalizeSubmitItem({
     partition: event.partition,
-    projectId: event.projectId,
-    userId: event.userId,
     type: event.type,
     schemaVersion: event.schemaVersion,
     payload: event.payload,

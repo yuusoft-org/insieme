@@ -62,8 +62,6 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
   const toComparisonKey = (event) =>
     canonicalizeSubmitItem({
       partition: event.partition,
-      projectId: event.projectId,
-      userId: event.userId,
       type: event.type,
       schemaVersion: event.schemaVersion,
       payload: event.payload,
