@@ -32,14 +32,10 @@ jobs:
       # Setup Bun
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.2.2
-
-      # Install kanbatte globally
-      - name: Install kanbatte
-        run: npm i -g kanbatte
+          bun-version: 1.2.15
 
       - name: Build task site
-        run: kanbatte task build
+        run: bunx kanbatte task build
 
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4

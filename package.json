@@ -16,6 +16,7 @@
     "url": "git+https://github.com/yuusoft-org/insieme.git"
   },
   "homepage": "https://github.com/yuusoft-org/insieme#readme",
+  "packageManager": "bun@1.2.15",
   "type": "module",
   "main": "./src/client.js",
   "types": "./types/client.d.ts",
@@ -65,7 +66,7 @@
     "test:ci": "node tasks/validate-test-stack.js && node tasks/validate-scenario-coverage.js && vitest --run",
     "types": "tsc --noEmit",
     "build:types": "tsc -p tsconfig.json",
-    "prepare": "npm run build:types"
+    "prepare": "bun run build:types"
   },
   "lint-staged": {
     "src/**/*.{js}": [
