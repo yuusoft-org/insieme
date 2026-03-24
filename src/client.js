@@ -2,29 +2,6 @@ export { createSyncClient } from "./sync-client.js";
 export { createOfflineTransport } from "./offline-transport.js";
 export { createBrowserWebSocketTransport } from "./browser-websocket-transport.js";
 export { createInMemoryClientStore } from "./in-memory-client-store.js";
-export {
-  createLibsqlClientStore,
-  createLibsqlStore,
-} from "./libsql-client-store.js";
-export {
-  createIndexedDbClientStore,
-  createIndexedDBClientStore,
-} from "./indexeddb-client-store.js";
-export {
-  commandToSyncEvent,
-  committedSyncEventToCommand,
-  validateCommandSubmitItem,
-} from "./command-profile.js";
-export {
-  parsePartitionScope,
-  extractScopeId,
-  extractScopeIds,
-  requireSingleScopeId,
-  buildScopePartition,
-} from "./partition-scope.js";
-export { createPersistedCursorClientStore } from "./persisted-cursor-client-store.js";
-export { createCommandSyncSession } from "./command-sync-session.js";
-export { initializeStreamIfEmpty } from "./stream-initializer.js";
-export { deepSortKeys, canonicalizeSubmitItem } from "./canonicalize.js";
+export { createLibsqlClientStore } from "./libsql-client-store.js";
+export { createIndexedDbClientStore } from "./indexeddb-client-store.js";
 export { createReducer } from "./reducer.js";
-export { createMaterializedViewRuntime } from "./materialized-view-runtime.js";

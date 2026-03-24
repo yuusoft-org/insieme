@@ -5,33 +5,36 @@ import * as browser from "insieme/browser";
 import * as nodeEntrypoint from "insieme/node";
 import * as server from "insieme/server";
 
+const CLIENT_EXPORTS = [
+  "createBrowserWebSocketTransport",
+  "createInMemoryClientStore",
+  "createIndexedDbClientStore",
+  "createLibsqlClientStore",
+  "createOfflineTransport",
+  "createReducer",
+  "createSyncClient",
+].sort();
+
+const NODE_EXPORTS = [
+  ...CLIENT_EXPORTS,
+  "attachWsConnection",
+  "createInMemorySyncStore",
+  "createLibsqlSyncStore",
+  "createSqliteClientStore",
+  "createSqliteSyncStore",
+  "createSyncServer",
+  "createWsServerRuntime",
+].sort();
+
 describe("package exports", () => {
-  it("keeps the root, client, and browser entrypoints aligned", () => {
-    expect(Object.keys(root).sort()).toEqual(Object.keys(client).sort());
-    expect(Object.keys(browser).sort()).toEqual(Object.keys(client).sort());
-    expect(root.createSyncClient).toBe(client.createSyncClient);
-    expect(browser.createOfflineTransport).toBe(client.createOfflineTransport);
+  it("publishes only the supported client surface", () => {
+    expect(Object.keys(root).sort()).toEqual(CLIENT_EXPORTS);
+    expect(Object.keys(client).sort()).toEqual(CLIENT_EXPORTS);
+    expect(Object.keys(browser).sort()).toEqual(CLIENT_EXPORTS);
   });
 
-  it("does not leak node-only helpers into the portable client surface", () => {
-    expect("createSyncServer" in root).toBe(false);
-    expect("createSqliteClientStore" in root).toBe(false);
-    expect("createSqliteSyncStore" in root).toBe(false);
-    expect("createInMemorySyncStore" in root).toBe(false);
-    expect("authorizeProjectId" in root).toBe(false);
-  });
-
-  it("keeps the node and server entrypoints aligned", () => {
-    expect(Object.keys(nodeEntrypoint).sort()).toEqual(
-      Object.keys(server).sort(),
-    );
-    expect(nodeEntrypoint.createSyncServer).toBe(server.createSyncServer);
-    expect(nodeEntrypoint.createSqliteClientStore).toBe(
-      server.createSqliteClientStore,
-    );
-    expect(nodeEntrypoint.createSqliteSyncStore).toBe(
-      server.createSqliteSyncStore,
-    );
-    expect(nodeEntrypoint.authorizeProjectId).toBe(server.authorizeProjectId);
+  it("publishes only the supported node surface", () => {
+    expect(Object.keys(nodeEntrypoint).sort()).toEqual(NODE_EXPORTS);
+    expect(Object.keys(server).sort()).toEqual(NODE_EXPORTS);
   });
 });

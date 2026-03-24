@@ -24,36 +24,21 @@ Portable client surface:
 - `createBrowserWebSocketTransport`
 - `createInMemoryClientStore`
 - `createIndexedDbClientStore`
-- `createIndexedDBClientStore`
 - `createLibsqlClientStore`
-- `createLibsqlStore`
-- `createPersistedCursorClientStore`
-- `createCommandSyncSession`
-- `initializeStreamIfEmpty`
 - `createReducer`
-- `createMaterializedViewRuntime`
-- `commandToSyncEvent`
-- `committedSyncEventToCommand`
-- `validateCommandSubmitItem`
-- `parsePartitionScope`
-- `extractScopeId`
-- `extractScopeIds`
-- `requireSingleScopeId`
-- `buildScopePartition`
-- `deepSortKeys`
-- `canonicalizeSubmitItem`
 
 Not included:
 
-- `createSyncServer`
-- `createWsServerRuntime`
-- `attachWsConnection`
 - `createInMemorySyncStore`
 - `createSqliteClientStore`
 - `createSqliteSyncStore`
 - `createLibsqlSyncStore`
-- `authorizeProjectId`
-- `authorizeSingleScopeId`
+- `createSyncServer`
+- `attachWsConnection`
+- `createWsServerRuntime`
+
+Lower-level protocol/profile/canonicalization helpers are intentionally not part
+of the supported package API.
 
 ## `insieme/browser`
 
@@ -68,11 +53,8 @@ Node-only surface. This includes everything from `insieme/client`, plus:
 - `createSyncServer`
 - `attachWsConnection`
 - `createWsServerRuntime`
-- `authorizeProjectId`
-- `authorizeSingleScopeId`
 - `createInMemorySyncStore`
 - `createSqliteClientStore`
-- `createSqliteStore`
 - `createSqliteSyncStore`
 - `createLibsqlSyncStore`
 

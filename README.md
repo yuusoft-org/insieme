@@ -20,10 +20,10 @@ Use the package entry point that matches your runtime.
 
 | Import path | Use for | Includes |
 | --- | --- | --- |
-| `insieme` | Portable client surface. Alias of `insieme/client`. | `createSyncClient`, offline transport, browser transport, in-memory/IndexedDB/LibSQL client stores, reducers, command helpers |
+| `insieme` | Portable client surface. Alias of `insieme/client`. | `createSyncClient`, client transports, client stores, `createReducer` |
 | `insieme/client` | Explicit client-only imports. | Same surface as `insieme` |
 | `insieme/browser` | Browser-explicit imports. | Same surface as `insieme/client` |
-| `insieme/node` | Node-only client + server work. | Everything in `insieme/client`, plus `createSyncServer`, WebSocket server helpers, SQLite adapters, sync stores, authz helpers |
+| `insieme/node` | Node-only client + server work. | Everything in `insieme/client`, plus `createSyncServer`, WS server helpers, and Node persistence adapters |
 | `insieme/server` | Backward-compatible server alias. | Same surface as `insieme/node` |
 
 Quick rule:
@@ -95,7 +95,7 @@ const server = createSyncServer({
 Client-side stores:
 
 - `createInMemoryClientStore()` from `insieme/client` for tests and dev.
-- `createIndexedDbClientStore()` / `createIndexedDBClientStore()` from `insieme/client` for browser persistence.
+- `createIndexedDbClientStore()` from `insieme/client` for browser persistence.
 - `createLibsqlClientStore(client)` from `insieme/client` for `@libsql/client`.
 - `createSqliteClientStore(db)` from `insieme/node` for `better-sqlite3` style SQLite APIs.
 
@@ -160,9 +160,8 @@ Duplicate committed deliveries are ignored by the built-in stores.
 - `createSyncServer`: authoritative server runtime (`attachConnection`, `shutdown`).
 - `createOfflineTransport`: local-first transport that buffers submits until an online transport is attached.
 - `createBrowserWebSocketTransport`: browser `WebSocket` transport adapter.
-- `createCommandSyncSession`: command-focused wrapper around the sync client.
+- `attachWsConnection` / `createWsServerRuntime`: Node WebSocket bridge helpers for the server runtime.
 - `createReducer`: event-type dispatcher for replay and materialized-view reducers.
-- `authorizeProjectId` / `authorizeSingleScopeId`: helpers for project and partition authorization.
 
 ## Docs
 
