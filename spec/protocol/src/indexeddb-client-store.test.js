@@ -23,20 +23,25 @@ afterEach(async () => {
 
 const makeDraft = ({
   id = "evt-1",
+  projectId,
+  userId,
   partition = "P1",
   type = "x",
   schemaVersion = 1,
   payload = { n: 1 },
   clientId = "C1",
   clientTs = 100,
+  metaExtras = {},
   createdAt = 100,
 } = {}) => ({
   id,
+  projectId,
+  userId,
   partition,
   type,
   schemaVersion,
   payload,
-  meta: { clientId, clientTs },
+  meta: { clientId, clientTs, ...metaExtras },
   createdAt,
 });
 
@@ -91,14 +96,13 @@ describe("src createIndexedDbClientStore", () => {
       });
       await store.init();
 
-      await store.insertDraft({
-        id: "evt-1",
-        partition: "P1",
-        type: "x",
-        payload: { n: 1 },
-        meta: { clientId: "C1", clientTs: 100 },
-        createdAt: 100,
-      });
+      await store.insertDraft(
+        makeDraft({
+          projectId: "proj-1",
+          userId: "u1",
+          metaExtras: { source: "ui" },
+        }),
+      );
       await store.applySubmitResult({
         result: {
           id: "evt-1",
@@ -116,8 +120,12 @@ describe("src createIndexedDbClientStore", () => {
       expect(committed[0]).toMatchObject({
         id: "evt-1",
         committedId: 5,
+        projectId: "proj-1",
+        userId: "u1",
         meta: {
+          clientId: "C1",
           clientTs: 100,
+          source: "ui",
         },
       });
     }
@@ -135,6 +143,13 @@ describe("src createIndexedDbClientStore", () => {
       expect(committed[0]).toMatchObject({
         id: "evt-1",
         committedId: 5,
+        projectId: "proj-1",
+        userId: "u1",
+        meta: {
+          clientId: "C1",
+          clientTs: 100,
+          source: "ui",
+        },
       });
     }
   });

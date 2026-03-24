@@ -105,6 +105,7 @@ export const buildCommittedEventFromDraft = ({
   type: draft.type,
   schemaVersion: draft.schemaVersion,
   payload: structuredClone(draft.payload),
+  payloadCompression: draft.payloadCompression,
   meta: normalizeMeta(draft.meta),
   serverTs,
 });

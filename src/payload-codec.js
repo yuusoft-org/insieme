@@ -7,17 +7,8 @@ const isByteNumber = (value) =>
   value >= 0 &&
   value <= 255;
 
-const toUint8Array = (value) => {
-  if (value instanceof Uint8Array) {
-    return value;
-  }
-  if (value instanceof ArrayBuffer) {
-    return new Uint8Array(value);
-  }
-  if (ArrayBuffer.isView(value)) {
-    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-  }
-  if (Array.isArray(value)) {
+const toSerializedBytes = (value) => {
+  if (Array.isArray(value) && value.every(isByteNumber)) {
     return Uint8Array.from(value);
   }
   if (
@@ -37,6 +28,23 @@ const toUint8Array = (value) => {
   ) {
     return Uint8Array.from(value.bytes);
   }
+  return null;
+};
+
+const toUint8Array = (value) => {
+  if (value instanceof Uint8Array) {
+    return value;
+  }
+  if (value instanceof ArrayBuffer) {
+    return new Uint8Array(value);
+  }
+  if (ArrayBuffer.isView(value)) {
+    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  }
+  const serializedBytes = toSerializedBytes(value);
+  if (serializedBytes) {
+    return serializedBytes;
+  }
   if (value && typeof value === "object" && !Array.isArray(value)) {
     const keys = Object.keys(value);
     if (
@@ -55,26 +63,6 @@ const toUint8Array = (value) => {
   throw new Error("payload must be stored as text or bytes");
 };
 
-const decodePossiblySerializedBytes = (value) => {
-  if (typeof value !== "string") {
-    return null;
-  }
-
-  let parsed;
-  try {
-    parsed = JSON.parse(value);
-  } catch {
-    return null;
-  }
-
-  try {
-    const bytes = toUint8Array(parsed);
-    return JSON.parse(decoder.decode(bytes));
-  } catch {
-    return null;
-  }
-};
-
 export const serializePayload = (value) => {
   const json = JSON.stringify(value);
   if (json === undefined) {
@@ -87,10 +75,6 @@ export const serializePayload = (value) => {
 
 export const deserializePayload = (value) => {
   if (typeof value === "string") {
-    const decodedBytesValue = decodePossiblySerializedBytes(value);
-    if (decodedBytesValue !== null) {
-      return decodedBytesValue;
-    }
     return JSON.parse(value);
   }
   return JSON.parse(decoder.decode(toUint8Array(value)));

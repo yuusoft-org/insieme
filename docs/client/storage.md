@@ -16,11 +16,14 @@ This document defines the minimal client-side storage model.
 CREATE TABLE local_drafts (
   draft_clock INTEGER PRIMARY KEY AUTOINCREMENT,
   id TEXT NOT NULL UNIQUE,
+  project_id TEXT,
+  user_id TEXT,
   partition TEXT NOT NULL,
   type TEXT NOT NULL,
   schema_version INTEGER NOT NULL,
-  payload TEXT NOT NULL,            -- JSON object
+  payload BLOB NOT NULL,            -- JSON encoded as bytes
   payload_compression TEXT DEFAULT NULL,
+  meta TEXT NOT NULL,               -- full JSON metadata object
   client_ts INTEGER NOT NULL,
   created_at INTEGER NOT NULL
 );
@@ -33,8 +36,9 @@ CREATE TABLE committed_events (
   partition TEXT NOT NULL,
   type TEXT NOT NULL,
   schema_version INTEGER NOT NULL,
-  payload TEXT NOT NULL,            -- JSON object
+  payload BLOB NOT NULL,            -- JSON encoded as bytes
   payload_compression TEXT DEFAULT NULL,
+  meta TEXT NOT NULL,               -- full JSON metadata object
   client_ts INTEGER NOT NULL,
   server_ts INTEGER NOT NULL,
   created_at INTEGER NOT NULL
@@ -53,10 +57,12 @@ Notes:
 - `schema_version` is required and mirrors public JS `schemaVersion`.
 - Each draft/committed row stores exactly one `partition`.
 - Built-in client stores are typically used per project, so the durable cursor is project-scoped by store instance.
-- `client_ts` is the persisted form of `meta.clientTs`. Custom stores may persist richer draft metadata when needed.
+- `client_ts` remains a denormalized access column for `meta.clientTs`.
+- Built-in SQL adapters persist full `meta` on both drafts and committed rows.
+- Draft rows may also persist `project_id` and `user_id` so submit-result promotion does not lose identity.
 - Public JS objects use camelCase; SQL adapters persist snake_case columns internally.
 - `draft_clock` and `committed_id` primary keys already provide ordered access paths in SQLite/LibSQL.
-- This rollout is intentionally not backward compatible with rows that predate `schemaVersion`; adapters may require reset or explicit backfill before opening legacy data.
+- Built-in adapters only support the current on-disk schema version. Older databases must be reset before opening.
 - Reference adapters:
   - `src/sqlite-client-store.js` (`createSqliteClientStore`)
   - `src/libsql-client-store.js` (`createLibsqlClientStore`)

@@ -190,4 +190,16 @@ describeLibsql("src createLibsqlSyncStore", () => {
 
     db.close();
   });
+
+  it("fails fast on older on-disk schema versions", async () => {
+    const db = createLibsqlClient(":memory:");
+    await db.execute("PRAGMA user_version=3;");
+    const store = createLibsqlSyncStore(db);
+
+    await expect(store.init()).rejects.toThrow(
+      "Sync store requires reset for schema version 3; runtime expects 4",
+    );
+
+    db.close();
+  });
 });

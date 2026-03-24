@@ -45,12 +45,14 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
     if (index >= 0) drafts.splice(index, 1);
   };
 
-const toComparisonKey = (event) =>
-  canonicalizeSubmitItem({
-    partition: event.partition,
-    type: event.type,
-    schemaVersion: event.schemaVersion,
-    payload: event.payload,
+  const toComparisonKey = (event) =>
+    canonicalizeSubmitItem({
+      partition: event.partition,
+      projectId: event.projectId,
+      userId: event.userId,
+      type: event.type,
+      schemaVersion: event.schemaVersion,
+      payload: event.payload,
       meta: event.meta,
     });
 

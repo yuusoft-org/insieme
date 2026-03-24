@@ -190,4 +190,16 @@ describeSqlite("src createSqliteSyncStore", () => {
 
     db.close();
   });
+
+  it("fails fast on older on-disk schema versions", async () => {
+    const db = createSqliteDb(":memory:");
+    db.exec("PRAGMA user_version=3;");
+    const store = createSqliteSyncStore(db);
+
+    await expect(store.init()).rejects.toThrow(
+      "Sync store requires reset for schema version 3; runtime expects 4",
+    );
+
+    db.close();
+  });
 });

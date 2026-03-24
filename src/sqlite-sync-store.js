@@ -86,73 +86,60 @@ export const createSqliteSyncStore = (
     db.exec(`PRAGMA user_version=${version};`);
   };
 
-  const migrations = [
-    () => {
-      db.exec(`
-        CREATE TABLE IF NOT EXISTS committed_events (
-          committed_id INTEGER PRIMARY KEY AUTOINCREMENT,
-          id TEXT NOT NULL UNIQUE,
-          project_id TEXT NOT NULL,
-          user_id TEXT,
-          partition TEXT NOT NULL,
-          type TEXT NOT NULL,
-          schema_version INTEGER NOT NULL,
-          payload BLOB NOT NULL,
-          payload_compression TEXT DEFAULT NULL,
-          client_ts INTEGER NOT NULL,
-          server_ts INTEGER NOT NULL,
-          created_at INTEGER NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS committed_events_project_committed_idx
-          ON committed_events(project_id, committed_id);
-      `);
-    },
-    () => {
-      if (!tableHasColumn(db, "committed_events", "partition")) {
-        throw new Error(
-          "Sync store requires reset for the singular-partition schema",
-        );
-      }
-    },
-    () => {
-      if (
-        tableHasColumn(db, "committed_events", "partitions") ||
-        tableHasColumn(db, "committed_events", "meta")
-      ) {
-        throw new Error(
-          "Sync store legacy committed_events table is incompatible; reset required",
-        );
-      }
-    },
-    () => {
-      const payloadType = getTableColumnType(db, "committed_events", "payload");
-      if (payloadType !== "BLOB") {
-        throw new Error("Sync store requires reset for blob payload storage");
-      }
-    },
-  ];
+  const createSchema = () => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS committed_events (
+        committed_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT NOT NULL UNIQUE,
+        project_id TEXT NOT NULL,
+        user_id TEXT,
+        partition TEXT NOT NULL,
+        type TEXT NOT NULL,
+        schema_version INTEGER NOT NULL,
+        payload BLOB NOT NULL,
+        payload_compression TEXT DEFAULT NULL,
+        client_ts INTEGER NOT NULL,
+        server_ts INTEGER NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS committed_events_project_committed_idx
+        ON committed_events(project_id, committed_id);
+    `);
+  };
 
-  const runMigrations = () => {
-    let current = getUserVersion();
+  const validateSchema = () => {
+    const hasPartition = tableHasColumn(db, "committed_events", "partition");
+    const payloadType = getTableColumnType(db, "committed_events", "payload");
+    if (!hasPartition || payloadType !== "BLOB") {
+      throw new Error("Sync store schema is incompatible; reset required");
+    }
+  };
+
+  const initializeSchema = () => {
+    const current = getUserVersion();
     if (current > SCHEMA_VERSION) {
       throw new Error(
         `Unsupported schema version ${current}; runtime supports up to ${SCHEMA_VERSION}`,
       );
     }
 
-    for (let next = current + 1; next <= SCHEMA_VERSION; next += 1) {
-      const migrate = migrations[next - 1];
-      if (typeof migrate !== "function") {
-        throw new Error(`Missing migration for schema version ${next}`);
-      }
-
-      const migrationTxn = createTransaction(db, () => {
-        migrate();
-        setUserVersion(next);
+    if (current === 0) {
+      const initializeTxn = createTransaction(db, () => {
+        createSchema();
+        validateSchema();
+        setUserVersion(SCHEMA_VERSION);
       });
-      migrationTxn();
-      current = next;
+      initializeTxn();
+      return;
     }
+
+    if (current !== SCHEMA_VERSION) {
+      throw new Error(
+        `Sync store requires reset for schema version ${current}; runtime expects ${SCHEMA_VERSION}`,
+      );
+    }
+
+    validateSchema();
   };
 
   const parseCommittedRow = (row) => ({
@@ -333,7 +320,7 @@ export const createSqliteSyncStore = (
   const ensureInitialized = () => {
     if (initialized) return;
     runPragmas();
-    runMigrations();
+    initializeSchema();
     prepareStatements();
     initialized = true;
   };

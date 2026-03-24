@@ -78,69 +78,63 @@ export const createLibsqlSyncStore = (
     await db.execute(`PRAGMA user_version=${version};`);
   };
 
-  const runMigrations = async () => {
-    let current = await getUserVersion();
+  const createSchema = async () => {
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS committed_events (
+        committed_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT NOT NULL UNIQUE,
+        project_id TEXT NOT NULL,
+        user_id TEXT,
+        partition TEXT NOT NULL,
+        type TEXT NOT NULL,
+        schema_version INTEGER NOT NULL,
+        payload BLOB NOT NULL,
+        payload_compression TEXT DEFAULT NULL,
+        client_ts INTEGER NOT NULL,
+        server_ts INTEGER NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+    `);
+    await db.execute(`
+      CREATE INDEX IF NOT EXISTS committed_events_project_committed_idx
+      ON committed_events(project_id, committed_id);
+    `);
+  };
+
+  const validateSchema = async () => {
+    const hasPartition = await tableHasColumn(db, "committed_events", "partition");
+    const payloadType = await getTableColumnType(
+      db,
+      "committed_events",
+      "payload",
+    );
+    if (!hasPartition || payloadType !== "BLOB") {
+      throw new Error("Sync store schema is incompatible; reset required");
+    }
+  };
+
+  const initializeSchema = async () => {
+    const current = await getUserVersion();
     if (current > SCHEMA_VERSION) {
       throw new Error(
         `Unsupported schema version ${current}; runtime supports up to ${SCHEMA_VERSION}`,
       );
     }
 
-    for (let next = current + 1; next <= SCHEMA_VERSION; next += 1) {
-      if (next === 1) {
-        await db.execute(`
-          CREATE TABLE IF NOT EXISTS committed_events (
-            committed_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            id TEXT NOT NULL UNIQUE,
-            project_id TEXT NOT NULL,
-            user_id TEXT,
-            partition TEXT NOT NULL,
-            type TEXT NOT NULL,
-            schema_version INTEGER NOT NULL,
-            payload BLOB NOT NULL,
-            payload_compression TEXT DEFAULT NULL,
-            client_ts INTEGER NOT NULL,
-            server_ts INTEGER NOT NULL,
-            created_at INTEGER NOT NULL
-          );
-        `);
-        await db.execute(`
-          CREATE INDEX IF NOT EXISTS committed_events_project_committed_idx
-          ON committed_events(project_id, committed_id);
-        `);
-      } else if (next === 2) {
-        if (!(await tableHasColumn(db, "committed_events", "partition"))) {
-          throw new Error(
-            "Sync store requires reset for the singular-partition schema",
-          );
-        }
-      } else if (next === 3) {
-        const hasLegacyPartitions = await tableHasColumn(
-          db,
-          "committed_events",
-          "partitions",
-        );
-        const hasLegacyMeta = await tableHasColumn(db, "committed_events", "meta");
-        if (hasLegacyPartitions || hasLegacyMeta) {
-          throw new Error(
-            "Sync store legacy committed_events table is incompatible; reset required",
-          );
-        }
-      } else if (next === 4) {
-        const payloadType = await getTableColumnType(
-          db,
-          "committed_events",
-          "payload",
-        );
-        if (payloadType !== "BLOB") {
-          throw new Error("Sync store requires reset for blob payload storage");
-        }
-      } else {
-        throw new Error(`Missing migration for schema version ${next}`);
-      }
-      await setUserVersion(next);
-      current = next;
+    if (current === 0) {
+      await createSchema();
+      await validateSchema();
+      await setUserVersion(SCHEMA_VERSION);
+      return;
     }
+
+    if (current !== SCHEMA_VERSION) {
+      throw new Error(
+        `Sync store requires reset for schema version ${current}; runtime expects ${SCHEMA_VERSION}`,
+      );
+    }
+
+    await validateSchema();
   };
 
   const getById = async (id) =>
@@ -192,7 +186,7 @@ export const createLibsqlSyncStore = (
 
     initPromise = (async () => {
       await runPragmas();
-      await runMigrations();
+      await initializeSchema();
       initialized = true;
     })();
 

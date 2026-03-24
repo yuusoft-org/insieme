@@ -5,7 +5,7 @@ import { createMaterializedViewRuntime } from "./materialized-view-runtime.js";
 import { createLibsqlDriver, parseIntSafe } from "./libsql-driver.js";
 import { deserializePayload, serializePayload } from "./payload-codec.js";
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 const DEFAULT_MATERIALIZED_BACKFILL_CHUNK_SIZE = 512;
 
 const createTransaction = async (db, fn) => {
@@ -24,17 +24,22 @@ const createTransaction = async (db, fn) => {
   }
 };
 
+const parseStoredMeta = (row) =>
+  normalizeMeta(JSON.parse(row.meta), {
+    defaultClientTs: parseIntSafe(row.client_ts, 0),
+  });
+
 const parseDraft = (row) => ({
   draftClock: parseIntSafe(row.draft_clock, 0),
   id: row.id,
+  projectId: row.project_id || undefined,
+  userId: row.user_id || undefined,
   partition: row.partition,
   type: row.type,
   schemaVersion: parseIntSafe(row.schema_version, 0),
   payload: deserializePayload(row.payload),
   payloadCompression: row.payload_compression || undefined,
-  meta: normalizeMeta({
-    clientTs: parseIntSafe(row.client_ts, 0),
-  }),
+  meta: parseStoredMeta(row),
   createdAt: parseIntSafe(row.created_at, 0),
 });
 
@@ -48,9 +53,7 @@ const parseCommittedRow = (row) => ({
   schemaVersion: parseIntSafe(row.schema_version, 0),
   payload: deserializePayload(row.payload),
   payloadCompression: row.payload_compression || undefined,
-  meta: normalizeMeta({
-    clientTs: parseIntSafe(row.client_ts, 0),
-  }),
+  meta: parseStoredMeta(row),
   serverTs: parseIntSafe(row.server_ts, 0),
   createdAt: parseIntSafe(row.created_at, 0),
 });
@@ -61,6 +64,8 @@ const encodeMaterializedValue = (value) =>
 const toComparisonKey = (event) =>
   canonicalizeSubmitItem({
     partition: event.partition,
+    projectId: event.projectId,
+    userId: event.userId,
     type: event.type,
     schemaVersion: event.schemaVersion,
     payload: event.payload,
@@ -116,143 +121,139 @@ export const createLibsqlClientStore = (
     await db.execute(`PRAGMA user_version=${version};`);
   };
 
-  const migrations = [
-    async () => {
-      await db.execute(`
-        CREATE TABLE IF NOT EXISTS local_drafts (
-          draft_clock INTEGER PRIMARY KEY AUTOINCREMENT,
-          id TEXT NOT NULL UNIQUE,
-          partition TEXT NOT NULL,
-          type TEXT NOT NULL,
-          schema_version INTEGER NOT NULL,
-          payload BLOB NOT NULL,
-          payload_compression TEXT DEFAULT NULL,
-          client_ts INTEGER NOT NULL,
-          created_at INTEGER NOT NULL
-        );
-      `);
-      await db.execute(`
-        CREATE TABLE IF NOT EXISTS committed_events (
-          committed_id INTEGER PRIMARY KEY,
-          id TEXT NOT NULL UNIQUE,
-          project_id TEXT,
-          user_id TEXT,
-          partition TEXT NOT NULL,
-          type TEXT NOT NULL,
-          schema_version INTEGER NOT NULL,
-          payload BLOB NOT NULL,
-          payload_compression TEXT DEFAULT NULL,
-          client_ts INTEGER NOT NULL,
-          server_ts INTEGER NOT NULL,
-          created_at INTEGER NOT NULL
-        );
-      `);
-      await db.execute(`
-        CREATE TABLE IF NOT EXISTS app_state (
-          key TEXT PRIMARY KEY,
-          value TEXT NOT NULL
-        );
-      `);
-      await db.execute(`
-        CREATE TABLE IF NOT EXISTS materialized_view_state (
-          view_name TEXT NOT NULL,
-          partition TEXT NOT NULL,
-          view_version TEXT NOT NULL,
-          last_committed_id INTEGER NOT NULL,
-          value TEXT NOT NULL,
-          updated_at INTEGER NOT NULL,
-          PRIMARY KEY(view_name, partition)
-        );
-      `);
-    },
-    async () => {
-      const hasDraftPartition = await tableHasColumn(db, "local_drafts", "partition");
-      const hasCommittedPartition = await tableHasColumn(
-        db,
-        "committed_events",
-        "partition",
+  const createSchema = async () => {
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS local_drafts (
+        draft_clock INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT NOT NULL UNIQUE,
+        project_id TEXT,
+        user_id TEXT,
+        partition TEXT NOT NULL,
+        type TEXT NOT NULL,
+        schema_version INTEGER NOT NULL,
+        payload BLOB NOT NULL,
+        payload_compression TEXT DEFAULT NULL,
+        meta TEXT NOT NULL,
+        client_ts INTEGER NOT NULL,
+        created_at INTEGER NOT NULL
       );
-      const hasCommittedServerTs = await tableHasColumn(
-        db,
-        "committed_events",
-        "server_ts",
+    `);
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS committed_events (
+        committed_id INTEGER PRIMARY KEY,
+        id TEXT NOT NULL UNIQUE,
+        project_id TEXT,
+        user_id TEXT,
+        partition TEXT NOT NULL,
+        type TEXT NOT NULL,
+        schema_version INTEGER NOT NULL,
+        payload BLOB NOT NULL,
+        payload_compression TEXT DEFAULT NULL,
+        meta TEXT NOT NULL,
+        client_ts INTEGER NOT NULL,
+        server_ts INTEGER NOT NULL,
+        created_at INTEGER NOT NULL
       );
-      if (!hasDraftPartition || !hasCommittedPartition || !hasCommittedServerTs) {
-        throw new Error(
-          "Client store requires reset for the singular-partition schema",
-        );
-      }
-    },
-    async () => {
-      const hasLegacyDraftPartitions = await tableHasColumn(
-        db,
-        "local_drafts",
-        "partitions",
+    `);
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS app_state (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
       );
-      const hasLegacyDraftMeta = await tableHasColumn(db, "local_drafts", "meta");
-      const hasLegacyCommittedPartitions = await tableHasColumn(
-        db,
-        "committed_events",
-        "partitions",
+    `);
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS materialized_view_state (
+        view_name TEXT NOT NULL,
+        partition TEXT NOT NULL,
+        view_version TEXT NOT NULL,
+        last_committed_id INTEGER NOT NULL,
+        value TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY(view_name, partition)
       );
-      const hasLegacyCommittedMeta = await tableHasColumn(
-        db,
-        "committed_events",
-        "meta",
-      );
-      if (
-        hasLegacyDraftPartitions ||
-        hasLegacyDraftMeta ||
-        hasLegacyCommittedPartitions ||
-        hasLegacyCommittedMeta
-      ) {
-        throw new Error(
-          "Client store legacy collab tables are incompatible; reset required",
-        );
-      }
-    },
-    async () => {
-      const draftPayloadType = await getTableColumnType(
-        db,
-        "local_drafts",
-        "payload",
-      );
-      const committedPayloadType = await getTableColumnType(
-        db,
-        "committed_events",
-        "payload",
-      );
-      if (draftPayloadType !== "BLOB" || committedPayloadType !== "BLOB") {
-        throw new Error(
-          "Client store requires reset for blob payload storage",
-        );
-      }
-    },
-  ];
+    `);
+  };
 
-  const runMigrations = async () => {
-    let current = await getUserVersion();
+  const validateSchema = async () => {
+    const hasDraftPartition = await tableHasColumn(db, "local_drafts", "partition");
+    const hasDraftProjectId = await tableHasColumn(
+      db,
+      "local_drafts",
+      "project_id",
+    );
+    const hasDraftUserId = await tableHasColumn(db, "local_drafts", "user_id");
+    const hasDraftMeta = await tableHasColumn(db, "local_drafts", "meta");
+    const hasCommittedPartition = await tableHasColumn(
+      db,
+      "committed_events",
+      "partition",
+    );
+    const hasCommittedServerTs = await tableHasColumn(
+      db,
+      "committed_events",
+      "server_ts",
+    );
+    const hasCommittedMeta = await tableHasColumn(
+      db,
+      "committed_events",
+      "meta",
+    );
+    const draftPayloadType = await getTableColumnType(
+      db,
+      "local_drafts",
+      "payload",
+    );
+    const committedPayloadType = await getTableColumnType(
+      db,
+      "committed_events",
+      "payload",
+    );
+
+    if (
+      !hasDraftPartition ||
+      !hasDraftProjectId ||
+      !hasDraftUserId ||
+      !hasDraftMeta ||
+      !hasCommittedPartition ||
+      !hasCommittedServerTs ||
+      !hasCommittedMeta ||
+      draftPayloadType !== "BLOB" ||
+      committedPayloadType !== "BLOB"
+    ) {
+      throw new Error("Client store schema is incompatible; reset required");
+    }
+  };
+
+  const initializeSchema = async () => {
+    const current = await getUserVersion();
     if (current > SCHEMA_VERSION) {
       throw new Error(
         `Unsupported schema version ${current}; runtime supports up to ${SCHEMA_VERSION}`,
       );
     }
 
-    for (let next = current + 1; next <= SCHEMA_VERSION; next += 1) {
-      const migrate = migrations[next - 1];
-      if (typeof migrate !== "function") {
-        throw new Error(`Missing migration for schema version ${next}`);
-      }
-      await migrate();
-      await setUserVersion(next);
-      current = next;
+    if (current === 0) {
+      await createTransaction(db, async () => {
+        await createSchema();
+        await validateSchema();
+        await setUserVersion(SCHEMA_VERSION);
+      });
+      return;
     }
+
+    if (current !== SCHEMA_VERSION) {
+      throw new Error(
+        `Client store requires reset for schema version ${current}; runtime expects ${SCHEMA_VERSION}`,
+      );
+    }
+
+    await validateSchema();
   };
 
   const assertCommittedInvariant = async (event) => {
     const byId = await db.queryOne(
       `
-        SELECT committed_id, id, project_id, user_id, partition, type, schema_version, payload, payload_compression, client_ts, server_ts, created_at
+        SELECT committed_id, id, project_id, user_id, partition, type, schema_version, payload, payload_compression, meta, client_ts, server_ts, created_at
         FROM committed_events
         WHERE id = ?
       `,
@@ -326,6 +327,7 @@ export const createLibsqlClientStore = (
               schema_version,
               payload,
               payload_compression,
+              meta,
               client_ts,
               server_ts,
               created_at
@@ -407,7 +409,7 @@ export const createLibsqlClientStore = (
 
     initPromise = (async () => {
       await runPragmas();
-      await runMigrations();
+      await initializeSchema();
       materializedViewRuntime = createRuntime();
       initialized = true;
     })();
@@ -439,6 +441,8 @@ export const createLibsqlClientStore = (
 
     insertDraft: async ({
       id,
+      projectId,
+      userId,
       partition,
       type,
       schemaVersion,
@@ -452,23 +456,29 @@ export const createLibsqlClientStore = (
         `
           INSERT INTO local_drafts(
             id,
+            project_id,
+            user_id,
             partition,
             type,
             schema_version,
             payload,
             payload_compression,
+            meta,
             client_ts,
             created_at
           )
-          VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
         [
           id,
+          projectId ?? null,
+          userId ?? null,
           partition,
           type,
           schemaVersion,
           serializePayload(payload),
           payloadCompression ?? null,
+          JSON.stringify(normalizeMeta(meta)),
           parseIntSafe(meta?.clientTs, 0),
           createdAt,
         ],
@@ -483,23 +493,29 @@ export const createLibsqlClientStore = (
             `
               INSERT INTO local_drafts(
                 id,
+                project_id,
+                user_id,
                 partition,
                 type,
                 schema_version,
                 payload,
                 payload_compression,
+                meta,
                 client_ts,
                 created_at
               )
-              VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+              VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `,
             [
               item.id,
+              item.projectId ?? null,
+              item.userId ?? null,
               item.partition,
               item.type,
               item.schemaVersion,
               serializePayload(item.payload),
               item.payloadCompression ?? null,
+              JSON.stringify(normalizeMeta(item.meta)),
               parseIntSafe(item.meta?.clientTs, 0),
               item.createdAt,
             ],
@@ -511,7 +527,7 @@ export const createLibsqlClientStore = (
     loadDraftsOrdered: async () => {
       await ensureInitialized();
       const rows = await db.queryAll(`
-        SELECT draft_clock, id, partition, type, schema_version, payload, payload_compression, client_ts, created_at
+        SELECT draft_clock, id, project_id, user_id, partition, type, schema_version, payload, payload_compression, meta, client_ts, created_at
         FROM local_drafts
         ORDER BY draft_clock ASC, id ASC
       `);
@@ -525,7 +541,7 @@ export const createLibsqlClientStore = (
       if (result.status === "committed") {
         const draft = await db.queryOne(
           `
-            SELECT draft_clock, id, partition, type, schema_version, payload, payload_compression, client_ts, created_at
+            SELECT draft_clock, id, project_id, user_id, partition, type, schema_version, payload, payload_compression, meta, client_ts, created_at
             FROM local_drafts
             WHERE id = ?
           `,
@@ -545,16 +561,17 @@ export const createLibsqlClientStore = (
                 committed_id,
                 id,
                 project_id,
-                user_id,
-                partition,
-                type,
-                schema_version,
-                payload,
+              user_id,
+              partition,
+              type,
+              schema_version,
+              payload,
               payload_compression,
+              meta,
               client_ts,
               server_ts,
               created_at
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `,
             [
               nextCommittedEvent.committedId,
@@ -566,6 +583,7 @@ export const createLibsqlClientStore = (
               nextCommittedEvent.schemaVersion,
               serializePayload(nextCommittedEvent.payload),
               nextCommittedEvent.payloadCompression ?? null,
+              JSON.stringify(normalizeMeta(nextCommittedEvent.meta)),
               parseIntSafe(nextCommittedEvent.meta?.clientTs, 0),
               nextCommittedEvent.serverTs,
               Date.now(),
@@ -605,11 +623,12 @@ export const createLibsqlClientStore = (
               type,
               schema_version,
               payload,
-            payload_compression,
-            client_ts,
-            server_ts,
-            created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              payload_compression,
+              meta,
+              client_ts,
+              server_ts,
+              created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `,
           [
             event.committedId,
@@ -621,6 +640,7 @@ export const createLibsqlClientStore = (
             event.schemaVersion,
             serializePayload(event.payload),
             event.payloadCompression ?? null,
+            JSON.stringify(normalizeMeta(event.meta)),
             parseIntSafe(event.meta?.clientTs, 0),
             event.serverTs,
             event.createdAt ?? Date.now(),
@@ -682,7 +702,7 @@ export const createLibsqlClientStore = (
       getDrafts: async () => {
         await ensureInitialized();
         const rows = await db.queryAll(`
-          SELECT draft_clock, id, partition, type, schema_version, payload, payload_compression, client_ts, created_at
+          SELECT draft_clock, id, project_id, user_id, partition, type, schema_version, payload, payload_compression, meta, client_ts, created_at
           FROM local_drafts
           ORDER BY draft_clock ASC, id ASC
         `);
@@ -691,7 +711,7 @@ export const createLibsqlClientStore = (
       getCommitted: async () => {
         await ensureInitialized();
         const rows = await db.queryAll(`
-          SELECT committed_id, id, project_id, user_id, partition, type, schema_version, payload, payload_compression, client_ts, server_ts, created_at
+          SELECT committed_id, id, project_id, user_id, partition, type, schema_version, payload, payload_compression, meta, client_ts, server_ts, created_at
           FROM committed_events
           ORDER BY committed_id ASC
         `);

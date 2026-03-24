@@ -27,20 +27,25 @@ const describeLibsql = hasNodeLibsqlShim ? describe : describe.skip;
 
 const makeDraft = ({
   id = "evt-1",
+  projectId,
+  userId,
   partition = "P1",
   type = "x",
   schemaVersion = 1,
   payload = { n: 1 },
   clientId = "C1",
   clientTs = 100,
+  metaExtras = {},
   createdAt = 100,
 } = {}) => ({
   id,
+  projectId,
+  userId,
   partition,
   type,
   schemaVersion,
   payload,
-  meta: { clientId, clientTs },
+  meta: { clientId, clientTs, ...metaExtras },
   createdAt,
 });
 
@@ -94,17 +99,33 @@ describeLibsql("src createLibsqlClientStore", () => {
     await store.init();
 
     const row = db._raw.prepare("PRAGMA user_version").get();
-    expect(row.user_version).toBe(4);
+    expect(row.user_version).toBe(5);
+    const draftProject = db._raw
+      .prepare("SELECT type FROM pragma_table_info('local_drafts') WHERE name = 'project_id'")
+      .get();
+    const draftUser = db._raw
+      .prepare("SELECT type FROM pragma_table_info('local_drafts') WHERE name = 'user_id'")
+      .get();
     const draftPayload = db._raw
       .prepare("SELECT type FROM pragma_table_info('local_drafts') WHERE name = 'payload'")
+      .get();
+    const draftMeta = db._raw
+      .prepare("SELECT type FROM pragma_table_info('local_drafts') WHERE name = 'meta'")
       .get();
     const committedPayload = db._raw
       .prepare(
         "SELECT type FROM pragma_table_info('committed_events') WHERE name = 'payload'",
       )
       .get();
+    const committedMeta = db._raw
+      .prepare("SELECT type FROM pragma_table_info('committed_events') WHERE name = 'meta'")
+      .get();
+    expect(draftProject.type).toBe("TEXT");
+    expect(draftUser.type).toBe("TEXT");
     expect(draftPayload.type).toBe("BLOB");
+    expect(draftMeta.type).toBe("TEXT");
     expect(committedPayload.type).toBe("BLOB");
+    expect(committedMeta.type).toBe("TEXT");
 
     db.close();
   });
@@ -119,7 +140,7 @@ describeLibsql("src createLibsqlClientStore", () => {
     await Promise.all([store.init(), store.init()]);
 
     const row = db._raw.prepare("PRAGMA user_version").get();
-    expect(row.user_version).toBe(4);
+    expect(row.user_version).toBe(5);
 
     db.close();
   });
@@ -132,7 +153,13 @@ describeLibsql("src createLibsqlClientStore", () => {
       const store = createLibsqlClientStore(db);
       await store.init();
 
-      await store.insertDraft(makeDraft());
+      await store.insertDraft(
+        makeDraft({
+          projectId: "proj-1",
+          userId: "u1",
+          metaExtras: { source: "ui" },
+        }),
+      );
 
       await store.applySubmitResult({
         result: {
@@ -147,6 +174,19 @@ describeLibsql("src createLibsqlClientStore", () => {
       await store.applyCommittedBatch({ events: [], nextCursor: 2 });
 
       expect(await store.loadCursor()).toBe(5);
+      expect(await store._debug.getCommitted()).toEqual([
+        expect.objectContaining({
+          id: "evt-1",
+          committedId: 5,
+          projectId: "proj-1",
+          userId: "u1",
+          meta: {
+            clientId: "C1",
+            clientTs: 100,
+            source: "ui",
+          },
+        }),
+      ]);
       db.close();
     }
 
@@ -157,20 +197,74 @@ describeLibsql("src createLibsqlClientStore", () => {
 
       expect(await store.loadCursor()).toBe(5);
 
-      const committed = db._raw
-        .prepare(
-          "SELECT id, committed_id FROM committed_events ORDER BY committed_id",
-        )
-        .all();
-      expect(committed).toEqual([
-        {
+      expect(await store._debug.getCommitted()).toEqual([
+        expect.objectContaining({
           id: "evt-1",
-          committed_id: 5,
-        },
+          committedId: 5,
+          projectId: "proj-1",
+          userId: "u1",
+          meta: {
+            clientId: "C1",
+            clientTs: 100,
+            source: "ui",
+          },
+        }),
       ]);
 
       db.close();
     }
+  });
+
+  it("fails fast on older on-disk schema versions", async () => {
+    const db = createLibsqlClient(":memory:");
+    await db.execute(`
+      PRAGMA user_version=4;
+      CREATE TABLE local_drafts (
+        draft_clock INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT NOT NULL UNIQUE,
+        partition TEXT NOT NULL,
+        type TEXT NOT NULL,
+        schema_version INTEGER NOT NULL,
+        payload BLOB NOT NULL,
+        payload_compression TEXT DEFAULT NULL,
+        client_ts INTEGER NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE TABLE committed_events (
+        committed_id INTEGER PRIMARY KEY,
+        id TEXT NOT NULL UNIQUE,
+        project_id TEXT,
+        user_id TEXT,
+        partition TEXT NOT NULL,
+        type TEXT NOT NULL,
+        schema_version INTEGER NOT NULL,
+        payload BLOB NOT NULL,
+        payload_compression TEXT DEFAULT NULL,
+        client_ts INTEGER NOT NULL,
+        server_ts INTEGER NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE TABLE app_state (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+      CREATE TABLE materialized_view_state (
+        view_name TEXT NOT NULL,
+        partition TEXT NOT NULL,
+        view_version TEXT NOT NULL,
+        last_committed_id INTEGER NOT NULL,
+        value TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY(view_name, partition)
+      );
+    `);
+    const store = createLibsqlClientStore(db);
+
+    await expect(store.init()).rejects.toThrow(
+      "Client store requires reset for schema version 4; runtime expects 5",
+    );
+
+    db.close();
   });
 
   it("rejects conflicting duplicate committed rows", async () => {
