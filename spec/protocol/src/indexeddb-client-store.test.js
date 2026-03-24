@@ -123,9 +123,7 @@ describe("src createIndexedDbClientStore", () => {
         projectId: "proj-1",
         userId: "u1",
         meta: {
-          clientId: "C1",
           clientTs: 100,
-          source: "ui",
         },
       });
     }
@@ -146,9 +144,7 @@ describe("src createIndexedDbClientStore", () => {
         projectId: "proj-1",
         userId: "u1",
         meta: {
-          clientId: "C1",
           clientTs: 100,
-          source: "ui",
         },
       });
     }

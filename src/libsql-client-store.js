@@ -5,7 +5,7 @@ import { createMaterializedViewRuntime } from "./materialized-view-runtime.js";
 import { createLibsqlDriver, parseIntSafe } from "./libsql-driver.js";
 import { deserializePayload, serializePayload } from "./payload-codec.js";
 
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 const DEFAULT_MATERIALIZED_BACKFILL_CHUNK_SIZE = 512;
 
 const createTransaction = async (db, fn) => {
@@ -27,6 +27,11 @@ const createTransaction = async (db, fn) => {
 const parseStoredMeta = (row) =>
   normalizeMeta(JSON.parse(row.meta), {
     defaultClientTs: parseIntSafe(row.client_ts, 0),
+  });
+
+const normalizeCommittedMeta = (meta) =>
+  normalizeMeta({
+    clientTs: parseIntSafe(meta?.clientTs, 0),
   });
 
 const parseDraft = (row) => ({
@@ -53,9 +58,17 @@ const parseCommittedRow = (row) => ({
   schemaVersion: parseIntSafe(row.schema_version, 0),
   payload: deserializePayload(row.payload),
   payloadCompression: row.payload_compression || undefined,
-  meta: parseStoredMeta(row),
+  meta: normalizeCommittedMeta({
+    clientTs: row.client_ts,
+  }),
   serverTs: parseIntSafe(row.server_ts, 0),
   createdAt: parseIntSafe(row.created_at, 0),
+});
+
+const normalizeCommittedEvent = (event) => ({
+  ...event,
+  payload: structuredClone(event.payload),
+  meta: normalizeCommittedMeta(event.meta),
 });
 
 const encodeMaterializedValue = (value) =>
@@ -69,7 +82,7 @@ const toComparisonKey = (event) =>
     type: event.type,
     schemaVersion: event.schemaVersion,
     payload: event.payload,
-    meta: event.meta,
+    meta: normalizeCommittedMeta(event.meta),
   });
 
 const tableHasColumn = async (db, tableName, columnName) => {
@@ -149,7 +162,6 @@ export const createLibsqlClientStore = (
         schema_version INTEGER NOT NULL,
         payload BLOB NOT NULL,
         payload_compression TEXT DEFAULT NULL,
-        meta TEXT NOT NULL,
         client_ts INTEGER NOT NULL,
         server_ts INTEGER NOT NULL,
         created_at INTEGER NOT NULL
@@ -193,11 +205,6 @@ export const createLibsqlClientStore = (
       "committed_events",
       "server_ts",
     );
-    const hasCommittedMeta = await tableHasColumn(
-      db,
-      "committed_events",
-      "meta",
-    );
     const draftPayloadType = await getTableColumnType(
       db,
       "local_drafts",
@@ -216,7 +223,6 @@ export const createLibsqlClientStore = (
       !hasDraftMeta ||
       !hasCommittedPartition ||
       !hasCommittedServerTs ||
-      !hasCommittedMeta ||
       draftPayloadType !== "BLOB" ||
       committedPayloadType !== "BLOB"
     ) {
@@ -253,7 +259,7 @@ export const createLibsqlClientStore = (
   const assertCommittedInvariant = async (event) => {
     const byId = await db.queryOne(
       `
-        SELECT committed_id, id, project_id, user_id, partition, type, schema_version, payload, payload_compression, meta, client_ts, server_ts, created_at
+        SELECT committed_id, id, project_id, user_id, partition, type, schema_version, payload, payload_compression, client_ts, server_ts, created_at
         FROM committed_events
         WHERE id = ?
       `,
@@ -327,7 +333,6 @@ export const createLibsqlClientStore = (
               schema_version,
               payload,
               payload_compression,
-              meta,
               client_ts,
               server_ts,
               created_at
@@ -550,11 +555,13 @@ export const createLibsqlClientStore = (
 
         if (draft) {
           const parsedDraft = parseDraft(draft);
-          const nextCommittedEvent = buildCommittedEventFromDraft({
-            draft: parsedDraft,
-            committedId: result.committedId,
-            serverTs: result.serverTs,
-          });
+          const nextCommittedEvent = normalizeCommittedEvent(
+            buildCommittedEventFromDraft({
+              draft: parsedDraft,
+              committedId: result.committedId,
+              serverTs: result.serverTs,
+            }),
+          );
           const insertResult = await db.execute(
             `
               INSERT OR IGNORE INTO committed_events(
@@ -567,11 +574,10 @@ export const createLibsqlClientStore = (
               schema_version,
               payload,
               payload_compression,
-              meta,
               client_ts,
               server_ts,
               created_at
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `,
             [
               nextCommittedEvent.committedId,
@@ -583,7 +589,6 @@ export const createLibsqlClientStore = (
               nextCommittedEvent.schemaVersion,
               serializePayload(nextCommittedEvent.payload),
               nextCommittedEvent.payloadCompression ?? null,
-              JSON.stringify(normalizeMeta(nextCommittedEvent.meta)),
               parseIntSafe(nextCommittedEvent.meta?.clientTs, 0),
               nextCommittedEvent.serverTs,
               Date.now(),
@@ -612,6 +617,7 @@ export const createLibsqlClientStore = (
 
       const insertedEvents = [];
       for (const event of events) {
+        const committedRecord = normalizeCommittedEvent(event);
         const insertResult = await db.execute(
           `
             INSERT OR IGNORE INTO committed_events(
@@ -624,37 +630,31 @@ export const createLibsqlClientStore = (
               schema_version,
               payload,
               payload_compression,
-              meta,
               client_ts,
               server_ts,
               created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `,
           [
-            event.committedId,
-            event.id,
-            event.projectId ?? null,
-            event.userId ?? null,
-            event.partition,
-            event.type,
-            event.schemaVersion,
-            serializePayload(event.payload),
-            event.payloadCompression ?? null,
-            JSON.stringify(normalizeMeta(event.meta)),
-            parseIntSafe(event.meta?.clientTs, 0),
-            event.serverTs,
-            event.createdAt ?? Date.now(),
+            committedRecord.committedId,
+            committedRecord.id,
+            committedRecord.projectId ?? null,
+            committedRecord.userId ?? null,
+            committedRecord.partition,
+            committedRecord.type,
+            committedRecord.schemaVersion,
+            serializePayload(committedRecord.payload),
+            committedRecord.payloadCompression ?? null,
+            parseIntSafe(committedRecord.meta?.clientTs, 0),
+            committedRecord.serverTs,
+            committedRecord.createdAt ?? Date.now(),
           ],
         );
 
         if (db.rowsAffected(insertResult) === 0) {
-          await assertCommittedInvariant(event);
+          await assertCommittedInvariant(committedRecord);
         } else {
-          insertedEvents.push({
-            ...event,
-            payload: structuredClone(event.payload),
-            meta: normalizeMeta(event.meta),
-          });
+          insertedEvents.push(committedRecord);
         }
 
         await db.execute(`DELETE FROM local_drafts WHERE id = ?`, [event.id]);
@@ -711,7 +711,7 @@ export const createLibsqlClientStore = (
       getCommitted: async () => {
         await ensureInitialized();
         const rows = await db.queryAll(`
-          SELECT committed_id, id, project_id, user_id, partition, type, schema_version, payload, payload_compression, meta, client_ts, server_ts, created_at
+          SELECT committed_id, id, project_id, user_id, partition, type, schema_version, payload, payload_compression, client_ts, server_ts, created_at
           FROM committed_events
           ORDER BY committed_id ASC
         `);

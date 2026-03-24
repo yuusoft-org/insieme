@@ -99,7 +99,7 @@ describeLibsql("src createLibsqlClientStore", () => {
     await store.init();
 
     const row = db._raw.prepare("PRAGMA user_version").get();
-    expect(row.user_version).toBe(5);
+    expect(row.user_version).toBe(6);
     const draftProject = db._raw
       .prepare("SELECT type FROM pragma_table_info('local_drafts') WHERE name = 'project_id'")
       .get();
@@ -117,15 +117,16 @@ describeLibsql("src createLibsqlClientStore", () => {
         "SELECT type FROM pragma_table_info('committed_events') WHERE name = 'payload'",
       )
       .get();
-    const committedMeta = db._raw
-      .prepare("SELECT type FROM pragma_table_info('committed_events') WHERE name = 'meta'")
-      .get();
     expect(draftProject.type).toBe("TEXT");
     expect(draftUser.type).toBe("TEXT");
     expect(draftPayload.type).toBe("BLOB");
     expect(draftMeta.type).toBe("TEXT");
     expect(committedPayload.type).toBe("BLOB");
-    expect(committedMeta.type).toBe("TEXT");
+    expect(
+      db._raw
+        .prepare("SELECT type FROM pragma_table_info('committed_events') WHERE name = 'meta'")
+        .get(),
+    ).toBe(undefined);
 
     db.close();
   });
@@ -140,7 +141,7 @@ describeLibsql("src createLibsqlClientStore", () => {
     await Promise.all([store.init(), store.init()]);
 
     const row = db._raw.prepare("PRAGMA user_version").get();
-    expect(row.user_version).toBe(5);
+    expect(row.user_version).toBe(6);
 
     db.close();
   });
@@ -181,9 +182,7 @@ describeLibsql("src createLibsqlClientStore", () => {
           projectId: "proj-1",
           userId: "u1",
           meta: {
-            clientId: "C1",
             clientTs: 100,
-            source: "ui",
           },
         }),
       ]);
@@ -204,9 +203,7 @@ describeLibsql("src createLibsqlClientStore", () => {
           projectId: "proj-1",
           userId: "u1",
           meta: {
-            clientId: "C1",
             clientTs: 100,
-            source: "ui",
           },
         }),
       ]);
@@ -218,7 +215,7 @@ describeLibsql("src createLibsqlClientStore", () => {
   it("fails fast on older on-disk schema versions", async () => {
     const db = createLibsqlClient(":memory:");
     await db.execute(`
-      PRAGMA user_version=4;
+      PRAGMA user_version=5;
       CREATE TABLE local_drafts (
         draft_clock INTEGER PRIMARY KEY AUTOINCREMENT,
         id TEXT NOT NULL UNIQUE,
@@ -261,7 +258,7 @@ describeLibsql("src createLibsqlClientStore", () => {
     const store = createLibsqlClientStore(db);
 
     await expect(store.init()).rejects.toThrow(
-      "Client store requires reset for schema version 4; runtime expects 5",
+      "Client store requires reset for schema version 5; runtime expects 6",
     );
 
     db.close();

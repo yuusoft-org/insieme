@@ -45,6 +45,20 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
     if (index >= 0) drafts.splice(index, 1);
   };
 
+  const normalizeCommittedMeta = (meta) =>
+    normalizeMeta({
+      clientTs:
+        typeof meta?.clientTs === "number" && Number.isFinite(meta.clientTs)
+          ? meta.clientTs
+          : 0,
+    });
+
+  const normalizeCommittedEvent = (event) => ({
+    ...event,
+    payload: structuredClone(event.payload),
+    meta: normalizeCommittedMeta(event.meta),
+  });
+
   const toComparisonKey = (event) =>
     canonicalizeSubmitItem({
       partition: event.partition,
@@ -53,15 +67,11 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
       type: event.type,
       schemaVersion: event.schemaVersion,
       payload: event.payload,
-      meta: event.meta,
+      meta: normalizeCommittedMeta(event.meta),
     });
 
   const upsertCommitted = (event) => {
-    const normalizedEvent = {
-      ...event,
-      payload: structuredClone(event.payload),
-      meta: normalizeMeta(event.meta),
-    };
+    const normalizedEvent = normalizeCommittedEvent(event);
     const existing = committedById.get(normalizedEvent.id);
     const comparisonKey = toComparisonKey(normalizedEvent);
     if (existing) {
@@ -171,11 +181,13 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
       if (result.status === "committed") {
         const draft = drafts.find((entry) => entry.id === result.id);
         if (draft) {
-          const committedEvent = buildCommittedEventFromDraft({
-            draft,
-            committedId: result.committedId,
-            serverTs: result.serverTs,
-          });
+          const committedEvent = normalizeCommittedEvent(
+            buildCommittedEventFromDraft({
+              draft,
+              committedId: result.committedId,
+              serverTs: result.serverTs,
+            }),
+          );
           if (upsertCommitted(committedEvent)) {
             await materializedViewRuntime.onCommittedEvent(committedEvent);
           }
@@ -191,9 +203,10 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
 
     applyCommittedBatch: async ({ events, nextCursor }) => {
       for (const event of events) {
-        const inserted = upsertCommitted(event);
+        const committedEvent = normalizeCommittedEvent(event);
+        const inserted = upsertCommitted(committedEvent);
         if (inserted) {
-          await materializedViewRuntime.onCommittedEvent(event);
+          await materializedViewRuntime.onCommittedEvent(committedEvent);
         }
         removeDraftById(event.id);
       }

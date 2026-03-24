@@ -3,7 +3,7 @@ import { buildCommittedEventFromDraft, normalizeMeta } from "./event-record.js";
 import { normalizeMaterializedViewDefinitions } from "./materialized-view.js";
 import { createMaterializedViewRuntime } from "./materialized-view-runtime.js";
 
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 const DEFAULT_DB_NAME = "insieme-client";
 const META_STORE = "meta";
 const DRAFT_STORE = "drafts";
@@ -162,6 +162,11 @@ const parseDraftRow = (row) => ({
   createdAt: parseIntSafe(row.created_at, 0),
 });
 
+const normalizeCommittedMeta = (meta) =>
+  normalizeMeta({
+    clientTs: parseIntSafe(meta?.clientTs, 0),
+  });
+
 const serializeDraftRow = ({
   draftClock,
   id,
@@ -199,8 +204,8 @@ const parseCommittedRow = (row) => ({
   schemaVersion: parseIntSafe(row.schema_version, 0),
   payload: structuredClone(row.payload),
   payloadCompression: row.payload_compression || undefined,
-  meta: normalizeMeta(row.meta, {
-    defaultClientTs: parseIntSafe(row.client_ts, 0),
+  meta: normalizeCommittedMeta({
+    clientTs: row.client_ts,
   }),
   serverTs: parseIntSafe(row.server_ts, 0),
   createdAt: parseIntSafe(row.created_at, 0),
@@ -230,9 +235,14 @@ const serializeCommittedRow = ({
   payload: structuredClone(payload),
   payload_compression: payloadCompression,
   client_ts: parseIntSafe(meta?.clientTs, 0),
-  meta: normalizeMeta(meta),
   server_ts: serverTs,
   created_at: createdAt,
+});
+
+const normalizeCommittedEvent = (event) => ({
+  ...event,
+  payload: structuredClone(event.payload),
+  meta: normalizeCommittedMeta(event.meta),
 });
 
 const toComparisonKey = (event) =>
@@ -243,7 +253,7 @@ const toComparisonKey = (event) =>
     type: event.type,
     schemaVersion: event.schemaVersion,
     payload: event.payload,
-    meta: event.meta,
+    meta: normalizeCommittedMeta(event.meta),
   });
 
 export const createIndexedDbClientStore = ({
@@ -540,11 +550,13 @@ export const createIndexedDbClientStore = ({
           let insertedEvent;
 
           if (result.status === "committed" && draft) {
-            const committed = buildCommittedEventFromDraft({
-              draft,
-              committedId: result.committedId,
-              serverTs: result.serverTs,
-            });
+            const committed = normalizeCommittedEvent(
+              buildCommittedEventFromDraft({
+                draft,
+                committedId: result.committedId,
+                serverTs: result.serverTs,
+              }),
+            );
             committed.createdAt = Date.now();
             const inserted = await assertCommittedInvariant(
               committedStore,
@@ -580,13 +592,14 @@ export const createIndexedDbClientStore = ({
           const inserted = [];
 
           for (const event of events) {
+            const committed = normalizeCommittedEvent(event);
             const wasInserted = await assertCommittedInvariant(
               committedStore,
               committedIdIndex,
-              event,
+              committed,
             );
             if (wasInserted) {
-              inserted.push(event);
+              inserted.push(committed);
             }
             draftStore.delete(event.id);
           }

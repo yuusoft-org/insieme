@@ -38,7 +38,6 @@ CREATE TABLE committed_events (
   schema_version INTEGER NOT NULL,
   payload BLOB NOT NULL,            -- JSON encoded as bytes
   payload_compression TEXT DEFAULT NULL,
-  meta TEXT NOT NULL,               -- full JSON metadata object
   client_ts INTEGER NOT NULL,
   server_ts INTEGER NOT NULL,
   created_at INTEGER NOT NULL
@@ -58,7 +57,8 @@ Notes:
 - Each draft/committed row stores exactly one `partition`.
 - Built-in client stores are typically used per project, so the durable cursor is project-scoped by store instance.
 - `client_ts` remains a denormalized access column for `meta.clientTs`.
-- Built-in SQL adapters persist full `meta` on both drafts and committed rows.
+- Built-in client stores persist full `meta` on drafts.
+- Committed rows persist `client_ts` only; non-canonical draft metadata is not carried into the committed stream.
 - Draft rows may also persist `project_id` and `user_id` so submit-result promotion does not lose identity.
 - Public JS objects use camelCase; SQL adapters persist snake_case columns internally.
 - `draft_clock` and `committed_id` primary keys already provide ordered access paths in SQLite/LibSQL.
