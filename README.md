@@ -11,7 +11,7 @@ Node-only adapters.
 ## Install
 
 ```bash
-npm install insieme
+bun add insieme
 ```
 
 ## Entry Points
@@ -182,5 +182,5 @@ Production-style examples live in [`examples/real-client-usage`](./examples/real
 Run SQLite integrity checks:
 
 ```bash
-npm run ops:sqlite:integrity -- /path/to/client.db /path/to/server.db
+bun run ops:sqlite:integrity -- /path/to/client.db /path/to/server.db
 ```

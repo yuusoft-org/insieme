@@ -81,6 +81,25 @@ const createCounterView = () => ({
   }),
 });
 
+const createFailingLibsqlClient = ({
+  location = ":memory:",
+  shouldFail = () => false,
+  message = "forced libsql failure",
+} = {}) => {
+  const baseClient = createLibsqlClient(location);
+  return {
+    ...baseClient,
+    async execute(statement) {
+      const sql =
+        typeof statement === "string" ? statement : String(statement?.sql || "");
+      if (shouldFail(sql, statement)) {
+        throw new Error(message);
+      }
+      return baseClient.execute(statement);
+    },
+  };
+};
+
 const loadViews = async (store, viewName, partitions) =>
   Object.fromEntries(
     await Promise.all(
@@ -553,6 +572,84 @@ describeLibsql("src createLibsqlClientStore", () => {
     expect(
       db._raw.prepare("SELECT COUNT(*) AS count FROM committed_events").get().count,
     ).toBe(2);
+
+    db.close();
+  });
+
+  it("rolls back applySubmitResult when a later write fails", async () => {
+    const db = createFailingLibsqlClient({
+      shouldFail: (sql) => sql.includes("DELETE FROM local_drafts"),
+      message: "delete draft failed",
+    });
+    const store = createLibsqlClientStore(db);
+    await store.init();
+
+    await store.insertDraft(makeDraft({ id: "evt-rollback-submit" }));
+
+    await expect(
+      store.applySubmitResult({
+        result: {
+          id: "evt-rollback-submit",
+          status: "committed",
+          committedId: 1,
+          serverTs: 101,
+        },
+      }),
+    ).rejects.toThrow("delete draft failed");
+
+    expect(
+      db._raw.prepare("SELECT COUNT(*) AS count FROM committed_events").get().count,
+    ).toBe(0);
+    expect(
+      db._raw.prepare("SELECT COUNT(*) AS count FROM local_drafts").get().count,
+    ).toBe(1);
+
+    db.close();
+  });
+
+  it("rolls back applyCommittedBatch when cursor persistence fails", async () => {
+    const db = createFailingLibsqlClient({
+      shouldFail: (sql) =>
+        sql.includes("INSERT INTO app_state(key, value)") &&
+        sql.includes("ON CONFLICT(key) DO UPDATE"),
+      message: "cursor save failed",
+    });
+    const store = createLibsqlClientStore(db);
+    await store.init();
+
+    await store.insertDraft(
+      makeDraft({
+        id: "evt-rollback-batch",
+        createdAt: 100,
+        clientTs: 100,
+      }),
+    );
+
+    await expect(
+      store.applyCommittedBatch({
+        events: [
+          makeCommitted({
+            id: "evt-rollback-batch",
+            committedId: 1,
+            serverTs: 101,
+            clientTs: 100,
+          }),
+        ],
+        nextCursor: 1,
+      }),
+    ).rejects.toThrow("cursor save failed");
+
+    expect(
+      db._raw.prepare("SELECT COUNT(*) AS count FROM committed_events").get().count,
+    ).toBe(0);
+    expect(
+      db._raw.prepare("SELECT COUNT(*) AS count FROM local_drafts").get().count,
+    ).toBe(1);
+    expect(
+      db._raw
+        .prepare("SELECT value FROM app_state WHERE key = 'cursor_committed_id'")
+        .get(),
+    ).toBe(undefined);
 
     db.close();
   });

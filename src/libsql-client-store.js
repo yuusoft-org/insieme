@@ -524,71 +524,75 @@ export const createLibsqlClientStore = (
 
     applySubmitResult: async ({ result }) => {
       await ensureInitialized();
-      let committedEvent;
+      const committedEvent = await createTransaction(db, async () => {
+        let nextCommittedEvent;
 
-      if (result.status === "committed") {
-        const draft = await db.queryOne(
-          `
-            SELECT draft_clock, id, partition, type, schema_version, payload, payload_compression, client_ts, created_at
-            FROM local_drafts
-            WHERE id = ?
-          `,
-          [result.id],
-        );
-
-        if (draft) {
-          const parsedDraft = parseDraft(draft);
-          const nextCommittedEvent = normalizeCommittedEvent(
-            buildCommittedEventFromDraft({
-              draft: parsedDraft,
-              committedId: result.committedId,
-              serverTs: result.serverTs,
-            }),
-          );
-          const insertResult = await db.execute(
+        if (result.status === "committed") {
+          const draft = await db.queryOne(
             `
-              INSERT OR IGNORE INTO committed_events(
-                committed_id,
-                id,
-                project_id,
-              user_id,
-              partition,
-              type,
-              schema_version,
-              payload,
-              payload_compression,
-              client_ts,
-              server_ts,
-              created_at
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              SELECT draft_clock, id, partition, type, schema_version, payload, payload_compression, client_ts, created_at
+              FROM local_drafts
+              WHERE id = ?
             `,
-            [
-              nextCommittedEvent.committedId,
-              nextCommittedEvent.id,
-              nextCommittedEvent.projectId ?? null,
-              nextCommittedEvent.userId ?? null,
-              nextCommittedEvent.partition,
-              nextCommittedEvent.type,
-              nextCommittedEvent.schemaVersion,
-              serializePayload(nextCommittedEvent.payload),
-              nextCommittedEvent.payloadCompression ?? null,
-              parseIntSafe(nextCommittedEvent.clientTs, 0),
-              nextCommittedEvent.serverTs,
-              Date.now(),
-            ],
+            [result.id],
           );
 
-          if (db.rowsAffected(insertResult) === 0) {
-            await assertCommittedInvariant(nextCommittedEvent);
-          } else {
-            committedEvent = nextCommittedEvent;
+          if (draft) {
+            const parsedDraft = parseDraft(draft);
+            const normalizedCommittedEvent = normalizeCommittedEvent(
+              buildCommittedEventFromDraft({
+                draft: parsedDraft,
+                committedId: result.committedId,
+                serverTs: result.serverTs,
+              }),
+            );
+            const insertResult = await db.execute(
+              `
+                INSERT OR IGNORE INTO committed_events(
+                  committed_id,
+                  id,
+                  project_id,
+                  user_id,
+                  partition,
+                  type,
+                  schema_version,
+                  payload,
+                  payload_compression,
+                  client_ts,
+                  server_ts,
+                  created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              `,
+              [
+                normalizedCommittedEvent.committedId,
+                normalizedCommittedEvent.id,
+                normalizedCommittedEvent.projectId ?? null,
+                normalizedCommittedEvent.userId ?? null,
+                normalizedCommittedEvent.partition,
+                normalizedCommittedEvent.type,
+                normalizedCommittedEvent.schemaVersion,
+                serializePayload(normalizedCommittedEvent.payload),
+                normalizedCommittedEvent.payloadCompression ?? null,
+                parseIntSafe(normalizedCommittedEvent.clientTs, 0),
+                normalizedCommittedEvent.serverTs,
+                Date.now(),
+              ],
+            );
+
+            if (db.rowsAffected(insertResult) === 0) {
+              await assertCommittedInvariant(normalizedCommittedEvent);
+            } else {
+              nextCommittedEvent = normalizedCommittedEvent;
+            }
           }
+
+          await db.execute(`DELETE FROM local_drafts WHERE id = ?`, [result.id]);
+        } else if (result.status === "rejected") {
+          await db.execute(`DELETE FROM local_drafts WHERE id = ?`, [result.id]);
         }
 
-        await db.execute(`DELETE FROM local_drafts WHERE id = ?`, [result.id]);
-      } else if (result.status === "rejected") {
-        await db.execute(`DELETE FROM local_drafts WHERE id = ?`, [result.id]);
-      }
+        return nextCommittedEvent;
+      });
 
       if (committedEvent) {
         await materializedViewRuntime.onCommittedEvent(committedEvent);
@@ -597,55 +601,58 @@ export const createLibsqlClientStore = (
 
     applyCommittedBatch: async ({ events, nextCursor }) => {
       await ensureInitialized();
+      const insertedEvents = await createTransaction(db, async () => {
+        const nextInsertedEvents = [];
+        for (const event of events) {
+          const committedRecord = normalizeCommittedEvent(event);
+          const insertResult = await db.execute(
+            `
+              INSERT OR IGNORE INTO committed_events(
+                committed_id,
+                id,
+                project_id,
+                user_id,
+                partition,
+                type,
+                schema_version,
+                payload,
+                payload_compression,
+                client_ts,
+                server_ts,
+                created_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `,
+            [
+              committedRecord.committedId,
+              committedRecord.id,
+              committedRecord.projectId ?? null,
+              committedRecord.userId ?? null,
+              committedRecord.partition,
+              committedRecord.type,
+              committedRecord.schemaVersion,
+              serializePayload(committedRecord.payload),
+              committedRecord.payloadCompression ?? null,
+              parseIntSafe(committedRecord.clientTs, 0),
+              committedRecord.serverTs,
+              committedRecord.createdAt ?? Date.now(),
+            ],
+          );
 
-      const insertedEvents = [];
-      for (const event of events) {
-        const committedRecord = normalizeCommittedEvent(event);
-        const insertResult = await db.execute(
-          `
-            INSERT OR IGNORE INTO committed_events(
-              committed_id,
-              id,
-              project_id,
-              user_id,
-              partition,
-              type,
-              schema_version,
-              payload,
-              payload_compression,
-              client_ts,
-              server_ts,
-              created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `,
-          [
-            committedRecord.committedId,
-            committedRecord.id,
-            committedRecord.projectId ?? null,
-            committedRecord.userId ?? null,
-            committedRecord.partition,
-            committedRecord.type,
-            committedRecord.schemaVersion,
-            serializePayload(committedRecord.payload),
-            committedRecord.payloadCompression ?? null,
-            parseIntSafe(committedRecord.clientTs, 0),
-            committedRecord.serverTs,
-            committedRecord.createdAt ?? Date.now(),
-          ],
-        );
+          if (db.rowsAffected(insertResult) === 0) {
+            await assertCommittedInvariant(committedRecord);
+          } else {
+            nextInsertedEvents.push(committedRecord);
+          }
 
-        if (db.rowsAffected(insertResult) === 0) {
-          await assertCommittedInvariant(committedRecord);
-        } else {
-          insertedEvents.push(committedRecord);
+          await db.execute(`DELETE FROM local_drafts WHERE id = ?`, [event.id]);
         }
 
-        await db.execute(`DELETE FROM local_drafts WHERE id = ?`, [event.id]);
-      }
+        if (nextCursor !== undefined) {
+          await saveCursorMonotonic(nextCursor);
+        }
 
-      if (nextCursor !== undefined) {
-        await saveCursorMonotonic(nextCursor);
-      }
+        return nextInsertedEvents;
+      });
 
       for (const event of insertedEvents) {
         await materializedViewRuntime.onCommittedEvent(event);
