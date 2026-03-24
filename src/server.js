@@ -10,5 +10,15 @@ export { createSqliteClientStore } from "./sqlite-client-store.js";
 export { createSqliteSyncStore } from "./sqlite-sync-store.js";
 export { createLibsqlClientStore } from "./libsql-client-store.js";
 export { createLibsqlSyncStore } from "./libsql-sync-store.js";
-export { createIndexedDbClientStore } from "./indexeddb-client-store.js";
+export {
+  createIndexedDbClientStore,
+  createIndexedDBClientStore,
+} from "./indexeddb-client-store.js";
+export { createCommandSyncSession } from "./command-sync-session.js";
+export { createMaterializedViewRuntime } from "./materialized-view-runtime.js";
+export {
+  commandToSyncEvent,
+  committedSyncEventToCommand,
+  validateCommandSubmitItem,
+} from "./command-profile.js";
 export { createReducer } from "./reducer.js";

@@ -6,7 +6,10 @@ import * as server from "../../../src/server.js";
 import { createSyncClient } from "../../../src/sync-client.js";
 import { createSyncServer } from "../../../src/sync-server.js";
 import { createReducer } from "../../../src/reducer.js";
-import { createIndexedDbClientStore } from "../../../src/indexeddb-client-store.js";
+import {
+  createIndexedDbClientStore,
+  createIndexedDBClientStore,
+} from "../../../src/indexeddb-client-store.js";
 import { createLibsqlClientStore } from "../../../src/libsql-client-store.js";
 import { createOfflineTransport } from "../../../src/offline-transport.js";
 import { createBrowserWebSocketTransport } from "../../../src/browser-websocket-transport.js";
@@ -17,15 +20,28 @@ import { createSqliteSyncStore } from "../../../src/sqlite-sync-store.js";
 import { createLibsqlSyncStore } from "../../../src/libsql-sync-store.js";
 import { attachWsConnection } from "../../../src/ws-server-bridge.js";
 import { createWsServerRuntime } from "../../../src/ws-server-runtime.js";
+import { createCommandSyncSession } from "../../../src/command-sync-session.js";
+import { createMaterializedViewRuntime } from "../../../src/materialized-view-runtime.js";
+import {
+  commandToSyncEvent,
+  committedSyncEventToCommand,
+  validateCommandSubmitItem,
+} from "../../../src/command-profile.js";
 
 const CLIENT_EXPORTS = [
+  "commandToSyncEvent",
+  "committedSyncEventToCommand",
   "createBrowserWebSocketTransport",
+  "createCommandSyncSession",
+  "createIndexedDBClientStore",
   "createInMemoryClientStore",
   "createIndexedDbClientStore",
   "createLibsqlClientStore",
+  "createMaterializedViewRuntime",
   "createOfflineTransport",
   "createReducer",
   "createSyncClient",
+  "validateCommandSubmitItem",
 ].sort();
 
 const SERVER_EXPORTS = [
@@ -50,7 +66,17 @@ describe("public entrypoints", () => {
     expect(client.createInMemoryClientStore).toBe(createInMemoryClientStore);
     expect(client.createReducer).toBe(createReducer);
     expect(client.createIndexedDbClientStore).toBe(createIndexedDbClientStore);
+    expect(client.createIndexedDBClientStore).toBe(createIndexedDBClientStore);
     expect(client.createLibsqlClientStore).toBe(createLibsqlClientStore);
+    expect(client.createCommandSyncSession).toBe(createCommandSyncSession);
+    expect(client.createMaterializedViewRuntime).toBe(
+      createMaterializedViewRuntime,
+    );
+    expect(client.commandToSyncEvent).toBe(commandToSyncEvent);
+    expect(client.committedSyncEventToCommand).toBe(
+      committedSyncEventToCommand,
+    );
+    expect(client.validateCommandSubmitItem).toBe(validateCommandSubmitItem);
   });
 
   it("re-exports the client surface from the browser entrypoint", () => {
@@ -59,6 +85,9 @@ describe("public entrypoints", () => {
     expect(browser.createReducer).toBe(client.createReducer);
     expect(browser.createOfflineTransport).toBe(client.createOfflineTransport);
     expect(browser.createLibsqlClientStore).toBe(client.createLibsqlClientStore);
+    expect(browser.createCommandSyncSession).toBe(
+      client.createCommandSyncSession,
+    );
   });
 
   it("exports only the supported server and shared helpers from the server entrypoint", () => {
@@ -72,6 +101,16 @@ describe("public entrypoints", () => {
     expect(server.createWsServerRuntime).toBe(createWsServerRuntime);
     expect(server.createReducer).toBe(createReducer);
     expect(server.createIndexedDbClientStore).toBe(createIndexedDbClientStore);
+    expect(server.createIndexedDBClientStore).toBe(createIndexedDBClientStore);
+    expect(server.createCommandSyncSession).toBe(createCommandSyncSession);
+    expect(server.createMaterializedViewRuntime).toBe(
+      createMaterializedViewRuntime,
+    );
+    expect(server.commandToSyncEvent).toBe(commandToSyncEvent);
+    expect(server.committedSyncEventToCommand).toBe(
+      committedSyncEventToCommand,
+    );
+    expect(server.validateCommandSubmitItem).toBe(validateCommandSubmitItem);
   });
 
   it("re-exports the server surface from the node entrypoint", () => {
