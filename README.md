@@ -1,68 +1,80 @@
 # Insieme
 
 Insieme is an offline-first sync library built around an authoritative server.
+Clients create local drafts, submit them when transport is available, and
+converge on a server-ordered committed event stream.
 
-Core runtime exports live in `src` as the single implementation path.
+TypeScript declaration files are bundled with the package, and the published
+entry points are split by environment so browser-safe imports stay distinct from
+Node-only adapters.
 
 ## Install
 
 ```bash
-bun add insieme
+npm install insieme
 ```
 
-## Exports
+## Entry Points
 
-```js
-import {
-  createOfflineTransport,
-  createSyncClient,
-  createSyncServer,
-  createInMemoryClientStore,
-  createInMemorySyncStore,
-  createSqliteClientStore,
-  createSqliteSyncStore,
-  createLibsqlClientStore,
-  createLibsqlSyncStore,
-  createReducer,
-} from "insieme";
-```
+Use the package entry point that matches your runtime.
 
-- `createSyncClient`: client runtime (`connect -> sync -> submit/flush`).
-- `createSyncServer`: server session/protocol runtime.
-- `createOfflineTransport`: local transport for fully offline mode, with optional later online attachment.
-- `createInMemoryClientStore`: test/dev store for drafts + committed events.
-- `createInMemorySyncStore`: test/dev committed-log store for server.
-- `createSqliteClientStore`: SQLite adapter for the client store interface.
-- `createSqliteSyncStore`: SQLite adapter for authoritative server committed log.
-- `createLibsqlClientStore`: `@libsql/client` adapter for the client store interface.
-- `createLibsqlSyncStore`: `@libsql/client` adapter for authoritative server committed log.
-- `createReducer`: helper for dispatching committed events by `type`.
+| Import path | Use for | Includes |
+| --- | --- | --- |
+| `insieme` | Portable client surface. Alias of `insieme/client`. | `createSyncClient`, client transports, client stores, `createReducer` |
+| `insieme/client` | Explicit client-only imports. | Same surface as `insieme` |
+| `insieme/browser` | Browser-explicit imports. | Same surface as `insieme/client` |
+| `insieme/node` | Node-only client + server work. | Everything in `insieme/client`, plus `createSyncServer`, WS server helpers, and Node persistence adapters |
+| `insieme/server` | Backward-compatible server alias. | Same surface as `insieme/node` |
 
-## LibSQL Usage
+Quick rule:
 
-```js
-import { createClient } from "@libsql/client";
-import { createLibsqlClientStore, createLibsqlSyncStore } from "insieme";
+- Browser app: import from `insieme` or `insieme/client`.
+- Node client using SQLite: import from `insieme/node`.
+- Sync server: import from `insieme/node` or `insieme/server`.
 
-const clientDb = createClient({ url: "file:./insieme-client.db" });
-const serverDb = createClient({ url: "file:./insieme-server.db" });
-
-const clientStore = createLibsqlClientStore(clientDb);
-const syncStore = createLibsqlSyncStore(serverDb);
-```
-
-## Quick Start
+## Client Quick Start
 
 ```js
 import {
   createOfflineTransport,
   createInMemoryClientStore,
-  createInMemorySyncStore,
   createSyncClient,
-  createSyncServer,
-} from "insieme";
+} from "insieme/client";
+
+const clientStore = createInMemoryClientStore();
+const transport = createOfflineTransport();
+
+const client = createSyncClient({
+  transport,
+  store: clientStore,
+  token: "jwt",
+  clientId: "C1",
+  projectId: "workspace-1",
+});
+
+await client.start();
+
+await client.submitEvent({
+  partition: "workspace-1",
+  type: "counter.increment",
+  schemaVersion: 1,
+  payload: { amount: 1 },
+});
+```
+
+Attach a real transport later without replacing the client instance:
+
+```js
+await transport.setOnlineTransport(realWebSocketTransport);
+```
+
+## Server Quick Start
+
+```js
+import { createInMemorySyncStore, createSyncServer } from "insieme/node";
 
 const serverStore = createInMemorySyncStore();
+
 const server = createSyncServer({
   auth: {
     verifyToken: async () => ({ clientId: "C1", claims: {} }),
@@ -76,42 +88,44 @@ const server = createSyncServer({
   store: serverStore,
   clock: { now: () => Date.now() },
 });
-
-const clientStore = createInMemoryClientStore();
-const offlineTransport = createOfflineTransport();
-const client = createSyncClient({
-  transport: offlineTransport,
-  store: clientStore,
-  token: "jwt",
-  clientId: "C1",
-  projectId: "workspace-1",
-});
-
-await client.start();
 ```
 
-Seamless online upgrade later:
+## Persistence Adapters
+
+Client-side stores:
+
+- `createInMemoryClientStore()` from `insieme/client` for tests and dev.
+- `createIndexedDbClientStore()` from `insieme/client` for browser persistence.
+- `createLibsqlClientStore(client)` from `insieme/client` for `@libsql/client`.
+- `createSqliteClientStore(db)` from `insieme/node` for `better-sqlite3` style SQLite APIs.
+
+Server-side sync stores:
+
+- `createInMemorySyncStore()` from `insieme/node`.
+- `createLibsqlSyncStore(client)` from `insieme/node`.
+- `createSqliteSyncStore(db)` from `insieme/node`.
+
+LibSQL example:
 
 ```js
-await offlineTransport.setOnlineTransport(realWebSocketTransport);
+import { createClient } from "@libsql/client";
+import { createLibsqlClientStore } from "insieme/client";
+import { createLibsqlSyncStore } from "insieme/node";
+
+const clientDb = createClient({ url: "file:./insieme-client.db" });
+const serverDb = createClient({ url: "file:./insieme-server.db" });
+
+const clientStore = createLibsqlClientStore(clientDb);
+const syncStore = createLibsqlSyncStore(serverDb);
 ```
 
-## Client Store Interface
+## Materialized Views
 
-Your client store must implement:
-
-- `init()`
-- `loadCursor()`
-- `insertDraft(item)`
-- `loadDraftsOrdered()`
-- `applySubmitResult({ result })`
-- `applyCommittedBatch({ events, nextCursor? })`
-
-See `docs/reference/javascript-interface.md` and `docs/client/storage.md`.
-
-Optional materialized-view extension (supported by both `createInMemoryClientStore` and `createSqliteClientStore`):
+Built-in client stores support optional partition-scoped materialized views.
 
 ```js
+import { createLibsqlClientStore, createReducer } from "insieme/client";
+
 const reducer = createReducer({
   schemaHandlers: {
     "counter.increment": ({ state, payload }) => {
@@ -120,7 +134,7 @@ const reducer = createReducer({
   },
 });
 
-const store = createSqliteClientStore(db, {
+const store = createLibsqlClientStore(db, {
   materializedViews: [
     {
       name: "event-count",
@@ -131,49 +145,42 @@ const store = createSqliteClientStore(db, {
   ],
 });
 
-const p1View = await store.loadMaterializedView({
+const view = await store.loadMaterializedView({
   viewName: "event-count",
   partition: "workspace-1",
 });
 ```
 
-Materialized views are updated only when a committed event is newly inserted
-(deduped duplicates are ignored), and SQLite stores persist/rebuild them by
-view `name` + `version`.
+Materialized views update only when a committed event is newly inserted.
+Duplicate committed deliveries are ignored by the built-in stores.
 
-Operational guidance:
+## Public API Highlights
 
-- Keep view count small: usually `1-3`, generally up to `~10` lightweight views.
-- Reuse the same domain reducer logic you already use for state replay to avoid duplicated logic paths.
-- Materialized views require an explicit `reduce` function.
-- `createReducer` dispatches by committed-event `type`.
-- `createReducer` throws on unknown event types by default; pass `fallback` to customize.
-- Full guide: `docs/client/materialized-views.md`.
+- `createSyncClient`: project-scoped client runtime (`start`, `submitEvent`, `syncNow`, `flushDrafts`, `stop`).
+- `createSyncServer`: authoritative server runtime (`attachConnection`, `shutdown`).
+- `createOfflineTransport`: local-first transport that buffers submits until an online transport is attached.
+- `createBrowserWebSocketTransport`: browser `WebSocket` transport adapter.
+- `attachWsConnection` / `createWsServerRuntime`: Node WebSocket bridge helpers for the server runtime.
+- `createReducer`: event-type dispatcher for replay and materialized-view reducers.
 
-Server runtime also supports optional inbound guardrails via `limits` (message rate and envelope size caps) for defense-in-depth reliability.
-For deployments that can re-check token/session validity on every active request, provide `auth.validateSession`.
+## Docs
 
-Each `createSyncClient(...)` instance is project-scoped. If your app needs to
-sync more than one project, create a separate client/store instance per project.
-
-## Protocol Docs
-
-- `docs/protocol/messages.md`
-- `docs/protocol/connection.md`
-- `docs/protocol/durability.md`
-- `docs/protocol/ordering-and-idempotency.md`
-- `docs/protocol/partitions.md`
-- `docs/protocol/errors.md`
-- `docs/production-checklist.md`
+- [Docs index](./docs/README.md)
+- [Package entry points](./docs/reference/package-entrypoints.md)
+- [JavaScript interface reference](./docs/reference/javascript-interface.md)
+- [Client storage model](./docs/client/storage.md)
+- [Materialized views](./docs/client/materialized-views.md)
+- [Protocol messages](./docs/protocol/messages.md)
+- [Production checklist](./docs/production-checklist.md)
 
 ## Examples
 
-Real usage examples are in `examples/real-client-usage/`.
+Production-style examples live in [`examples/real-client-usage`](./examples/real-client-usage/README.md).
 
 ## Ops Helper
 
 Run SQLite integrity checks:
 
 ```bash
-bun run ops:sqlite:integrity -- /path/to/client.db /path/to/server.db
+npm run ops:sqlite:integrity -- /path/to/client.db /path/to/server.db
 ```

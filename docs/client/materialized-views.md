@@ -127,7 +127,7 @@ for replay and materialized views.
 Recommended pattern:
 
 ```js
-import { createReducer } from "insieme";
+import { createReducer } from "insieme/client";
 
 const reducer = createReducer({
   schemaHandlers: {

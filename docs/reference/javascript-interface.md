@@ -6,6 +6,10 @@ This file defines the minimal JS API surface aligned with the current core proto
 - storage and transport are pluggable,
 - wire semantics are normative in `docs/protocol/*.md`.
 
+For published package entry points and recommended imports, see
+`docs/reference/package-entrypoints.md`. The runtime contracts below describe
+the API shape after you choose an entry point.
+
 ## Shared Data Shapes
 
 ```js
@@ -173,26 +177,6 @@ Client runtime events:
 - `error`
 - `reconnect_scheduled`
 
-## Command Session Interface
-
-```js
-/**
- * @typedef {Object} CommandSyncSession
- * @property {() => Promise<void>} start
- * @property {() => Promise<void>} stop
- * @property {(commands: object[]) => Promise<string[]>} submitCommands
- * @property {(items: object[]) => Promise<string[]>} submitEvents
- * @property {(item: object) => Promise<string>} submitEvent
- * @property {(options?: { sinceCommittedId?: number }) => Promise<void>} syncNow
- * @property {() => Promise<void>} flushDrafts
- * @property {(transport: object) => Promise<void>} setOnlineTransport
- * @property {() => object} getActor
- * @property {() => object} getStatus
- * @property {() => object | null} getLastError
- * @property {() => void} clearLastError
- */
-```
-
 ## Backend Interface
 
 ### Sync Server Factory
@@ -266,8 +250,6 @@ export function createSyncServer(deps) {}
 - Client runtime drains drafts in ordered batches and keeps one submit batch in flight at a time.
 - `schemaVersion` is a required top-level field on every submitted and committed event.
 - `submit_events_result` remains an outcome-only message; clients correlate results by `id` and do not expect echoed event fields.
-- `createCommandSyncSession()` should populate/pass through `schemaVersion` when mapping commands to sync events.
-- Command session callers should use `submitCommands()` for both one-command and multi-command submits.
 - `submitEvent()` remains a thin wrapper over `submitEvents()`.
 - Client store methods that mutate committed/draft/cursor state should use single DB transactions when available, or equivalent idempotent/monotonic semantics when transactional APIs are not available.
 - A `createSyncClient(...)` instance is project-scoped. Reuse one store per project unless your store implementation explicitly namespaces cursors and drafts.
@@ -277,20 +259,19 @@ export function createSyncServer(deps) {}
 
 ## Built-in Store Adapters
 
-Runtime exports include three persistence families:
+Runtime exports include these persistence families:
 
 - In-memory:
-  - `createInMemoryClientStore(options?)`
-  - `createInMemorySyncStore(startCommittedId?)`
+  - `createInMemoryClientStore(options?)` from `insieme`, `insieme/client`, or `insieme/browser`
+  - `createInMemorySyncStore(startCommittedId?)` from `insieme/node` or `insieme/server`
 - SQLite-style DB object (`exec`, `prepare`, optional `transaction`):
-  - `createSqliteClientStore(db, options?)`
-  - `createSqliteSyncStore(db, options?)`
+  - `createSqliteClientStore(db, options?)` from `insieme/node` or `insieme/server`
+  - `createSqliteSyncStore(db, options?)` from `insieme/node` or `insieme/server`
 - LibSQL client:
-  - `createLibsqlClientStore(client, options?)`
-  - `createLibsqlSyncStore(client, options?)`
+  - `createLibsqlClientStore(client, options?)` from `insieme`, `insieme/client`, `insieme/node`, or `insieme/server`
+  - `createLibsqlSyncStore(client, options?)` from `insieme/node` or `insieme/server`
 - IndexedDB:
-  - `createIndexedDbClientStore(options?)`
-  - `createIndexedDBClientStore(options?)`
+  - `createIndexedDbClientStore(options?)` from `insieme`, `insieme/client`, or `insieme/browser`
 
 ## Optional Materialized Views
 

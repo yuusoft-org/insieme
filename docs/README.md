@@ -4,6 +4,18 @@ Start here. This is the docs entrypoint and navigation index.
 
 Insieme is an offline-first collaborative library with an authoritative server. Clients create local drafts, submit them, and converge on server-ordered committed events.
 
+## Package Entry Points
+
+Published package imports are split by runtime so browser-safe clients and
+Node-only adapters stay explicit.
+
+- `insieme` and `insieme/client` - portable client surface.
+- `insieme/browser` - browser-explicit alias of the client surface.
+- `insieme/node` - Node-only surface with SQLite adapters and server runtime.
+- `insieme/server` - backward-compatible alias of `insieme/node`.
+
+See `reference/package-entrypoints.md` for the exact export groups and import guidance.
+
 ## Core Model
 
 - Server assigns global monotonic `committedId`.
@@ -53,12 +65,14 @@ sequenceDiagram
 - `client/drafts.md` - draft lifecycle and idempotent apply rules.
 - `client/materialized-views.md` - optional derived-state views (sizing + reducer reuse pattern).
 - Built-in persistence adapters:
-  - Client store: `createSqliteClientStore`, `createLibsqlClientStore`
+  - Client store: `createIndexedDbClientStore`, `createLibsqlClientStore`
+  - Node-only client store: `createSqliteClientStore`
   - Server sync store: `createSqliteSyncStore`, `createLibsqlSyncStore`
 - `../examples/real-client-usage/` - production-style client integration examples.
 
 ## Interface Reference
 
+- `reference/package-entrypoints.md` - public package entry points and export groups.
 - `reference/javascript-interface.md` - minimal JS client/server factory interface.
 
 ## Operations
