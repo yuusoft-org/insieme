@@ -87,9 +87,26 @@ export function createOfflineTransport(options) {}
  *   insertDraft: (item: SubmitItem) => Promise<void>,
  *   insertDrafts?: (items: SubmitItem[]) => Promise<void>,
  *   loadDraftsOrdered: () => Promise<SubmitItem[]>,
+ *   listDraftsOrdered?: () => Promise<SubmitItem[]>,
  *   applySubmitResult: (input: { result: object }) => Promise<void>,
  *   applyCommittedBatch: (input: { events: CommittedEvent[], nextCursor?: number }) => Promise<void>,
+ *   listCommitted?: () => Promise<CommittedEvent[]>,
+ *   listCommittedAfter?: (input: { sinceCommittedId?: number, limit?: number }) => Promise<CommittedEvent[]>,
+ *   getCursor?: () => Promise<number>,
+ *   close?: () => Promise<void>,
  *   loadMaterializedView?: (input: { viewName: string, partition: string }) => Promise<unknown>,
+ *   subscribeMaterializedView?: (input: {
+ *     viewName: string,
+ *     partition: string,
+ *     onChange: (payload: {
+ *       viewName: string,
+ *       partition: string,
+ *       value: unknown,
+ *       lastCommittedId: number,
+ *       updatedAt: number,
+ *     }) => void | Promise<void>,
+ *     emitCurrent?: boolean
+ *   }) => Promise<() => void>,
  *   evictMaterializedView?: (input: { viewName: string, partition: string }) => Promise<void>,
  *   invalidateMaterializedView?: (input: { viewName: string, partition: string }) => Promise<void>,
  *   flushMaterializedViews?: () => Promise<void>
@@ -129,6 +146,7 @@ export function createSyncClient(deps) {}
  * @typedef {Object} SyncClient
  * @property {() => Promise<void>} start
  * @property {() => Promise<void>} stop
+ * @property {() => Promise<void>} close
  * @property {(items: {
  *   id?: string,
  *   partition: string,
@@ -154,6 +172,7 @@ export function createSyncClient(deps) {}
  * @property {() => {
  *   started: boolean,
  *   stopped: boolean,
+ *   closed: boolean,
  *   connected: boolean,
  *   syncInFlight: boolean,
  *   reconnectInFlight: boolean,
@@ -264,6 +283,8 @@ Runtime exports include these persistence families:
 - In-memory:
   - `createInMemoryClientStore(options?)` from `insieme`, `insieme/client`, or `insieme/browser`
   - `createInMemorySyncStore(startCommittedId?)` from `insieme/node` or `insieme/server`
+- Injected async SQLite driver:
+  - `createAsyncSqliteClientStore({ driver, options? })` from `insieme`, `insieme/client`, `insieme/browser`, `insieme/node`, or `insieme/server`
 - SQLite-style DB object (`exec`, `prepare`, optional `transaction`):
   - `createSqliteClientStore(db, options?)` from `insieme/node` or `insieme/server`
   - `createSqliteSyncStore(db, options?)` from `insieme/node` or `insieme/server`
@@ -280,6 +301,8 @@ Client store adapters may expose an optional materialized-view API:
 - factory option:
   `materializedViews: [{ name, version?, initialState?, reduce, matchPartition?, checkpoint? }]`
 - runtime method: `loadMaterializedView({ viewName, partition })`
+- runtime method:
+  `subscribeMaterializedView({ viewName, partition, onChange, emitCurrent? })`
 - runtime method: `evictMaterializedView({ viewName, partition })`
 - runtime method: `invalidateMaterializedView({ viewName, partition })`
 - runtime method: `flushMaterializedViews()`
@@ -322,9 +345,18 @@ The reducer runs only for newly inserted committed events that match the loaded 
 Read semantics:
 
 - `loadMaterializedView(...)` returns exact state for that partition at the local committed snapshot used by the read.
+- `subscribeMaterializedView(...)` emits the current exact value first by default, then emits on committed updates that affect the loaded partition.
 - `evictMaterializedView(...)` drops hot in-memory state only.
 - `invalidateMaterializedView(...)` drops hot state and the persisted checkpoint for that partition.
 - `flushMaterializedViews()` persists dirty checkpoints immediately.
+
+Stable inspection helpers exposed by built-in client stores:
+
+- `listDraftsOrdered()`
+- `listCommitted()`
+- `listCommittedAfter({ sinceCommittedId, limit })`
+- `getCursor()`
+- `close()`
 
 `createReducer({ schemaHandlers })` dispatches by committed-event `type`.
 Handlers receive `{ state, event, payload, partition, type }` and run in an

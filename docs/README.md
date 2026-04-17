@@ -65,7 +65,7 @@ sequenceDiagram
 - `client/drafts.md` - draft lifecycle and idempotent apply rules.
 - `client/materialized-views.md` - optional derived-state views (sizing + reducer reuse pattern).
 - Built-in persistence adapters:
-  - Client store: `createIndexedDbClientStore`, `createLibsqlClientStore`
+  - Client store: `createIndexedDbClientStore`, `createLibsqlClientStore`, `createAsyncSqliteClientStore`
   - Node-only client store: `createSqliteClientStore`
   - Server sync store: `createSqliteSyncStore`, `createLibsqlSyncStore`
 - `../examples/real-client-usage/` - production-style client integration examples.
@@ -89,6 +89,7 @@ sequenceDiagram
 - `drafts/split-drafts-and-committed-storage.md`
 - `drafts/minimal-protocol-core.md`
 - `drafts/first-class-schema-version.md`
+- `drafts/injected-async-sqlite-client-store.md`
 - `drafts/persisted-projection-checkpoints.md` - proposal for checkpointed, partition-aware materialized views with exact reads
 
 ## Glossary

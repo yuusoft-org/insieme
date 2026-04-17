@@ -19,6 +19,7 @@ export {
 export { authorizeProjectId, authorizeSingleScopeId } from "./authz-helpers.js";
 export { createInMemorySyncStore } from "./in-memory-sync-store.js";
 export { createInMemoryClientStore } from "./in-memory-client-store.js";
+export { createAsyncSqliteClientStore } from "./async-sqlite-client-store.js";
 export {
   createSqliteClientStore,
   createSqliteStore,

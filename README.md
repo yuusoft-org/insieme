@@ -97,6 +97,7 @@ Client-side stores:
 - `createInMemoryClientStore()` from `insieme/client` for tests and dev.
 - `createIndexedDbClientStore()` from `insieme/client` for browser persistence.
 - `createLibsqlClientStore(client)` from `insieme/client` for `@libsql/client`.
+- `createAsyncSqliteClientStore({ driver })` from `insieme/client` for injected async SQLite runtimes such as Tauri-backed adapters.
 - `createSqliteClientStore(db)` from `insieme/node` for `better-sqlite3` style SQLite APIs.
 
 Server-side sync stores:
@@ -154,12 +155,25 @@ const view = await store.loadMaterializedView({
 Materialized views update only when a committed event is newly inserted.
 Duplicate committed deliveries are ignored by the built-in stores.
 
+Subscribe to a hot materialized view partition:
+
+```js
+const unsubscribe = await store.subscribeMaterializedView({
+  viewName: "event-count",
+  partition: "workspace-1",
+  onChange: ({ value, lastCommittedId }) => {
+    console.log(value, lastCommittedId);
+  },
+});
+```
+
 ## Public API Highlights
 
-- `createSyncClient`: project-scoped client runtime (`start`, `submitEvent`, `syncNow`, `flushDrafts`, `stop`).
+- `createSyncClient`: project-scoped client runtime (`start`, `submitEvent`, `syncNow`, `flushDrafts`, `stop`, `close`).
 - `createSyncServer`: authoritative server runtime (`attachConnection`, `shutdown`).
 - `createOfflineTransport`: local-first transport that buffers submits until an online transport is attached.
 - `createBrowserWebSocketTransport`: browser `WebSocket` transport adapter.
+- Built-in client stores: stable inspection (`listDraftsOrdered`, `listCommitted`, `listCommittedAfter`, `getCursor`), view subscriptions (`subscribeMaterializedView`), and explicit `close()`.
 - `attachWsConnection` / `createWsServerRuntime`: Node WebSocket bridge helpers for the server runtime.
 - `createReducer`: event-type dispatcher for replay and materialized-view reducers.
 

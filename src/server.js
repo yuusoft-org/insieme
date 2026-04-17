@@ -6,6 +6,7 @@ export { attachWsConnection } from "./ws-server-bridge.js";
 export { createWsServerRuntime } from "./ws-server-runtime.js";
 export { createInMemorySyncStore } from "./in-memory-sync-store.js";
 export { createInMemoryClientStore } from "./in-memory-client-store.js";
+export { createAsyncSqliteClientStore } from "./async-sqlite-client-store.js";
 export { createSqliteClientStore } from "./sqlite-client-store.js";
 export { createSqliteSyncStore } from "./sqlite-sync-store.js";
 export { createLibsqlClientStore } from "./libsql-client-store.js";

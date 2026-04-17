@@ -22,6 +22,7 @@ Portable client surface:
 - `createSyncClient`
 - `createOfflineTransport`
 - `createBrowserWebSocketTransport`
+- `createAsyncSqliteClientStore`
 - `createInMemoryClientStore`
 - `createIndexedDbClientStore`
 - `createLibsqlClientStore`
@@ -54,6 +55,7 @@ Node-only surface. This includes everything from `insieme/client`, plus:
 - `attachWsConnection`
 - `createWsServerRuntime`
 - `createInMemorySyncStore`
+- `createAsyncSqliteClientStore`
 - `createSqliteClientStore`
 - `createSqliteSyncStore`
 - `createLibsqlSyncStore`
@@ -70,10 +72,21 @@ Browser or portable client:
 
 ```js
 import {
+  createAsyncSqliteClientStore,
   createIndexedDbClientStore,
   createOfflineTransport,
   createSyncClient,
 } from "insieme/client";
+```
+
+Injected async SQLite client:
+
+```js
+import { createAsyncSqliteClientStore, createSyncClient } from "insieme/client";
+
+const store = createAsyncSqliteClientStore({
+  driver,
+});
 ```
 
 Node client with SQLite:

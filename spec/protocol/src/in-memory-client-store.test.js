@@ -299,6 +299,50 @@ describe("src createInMemoryClientStore", () => {
     await store.flushMaterializedViews();
   });
 
+  it("exposes stable inspection APIs and closes cleanly", async () => {
+    const store = createInMemoryClientStore({
+      materializedViews: [counterView],
+    });
+
+    await store.insertDraft(makeDraft({ id: "evt-1" }));
+    await store.applyCommittedBatch({
+      events: [makeCommitted({ id: "evt-2", committedId: 2 })],
+      nextCursor: 2,
+    });
+
+    const notifications = [];
+    const unsubscribe = await store.subscribeMaterializedView({
+      viewName: "counter",
+      partition: "P1",
+      onChange: (payload) => {
+        notifications.push(payload);
+      },
+    });
+
+    expect((await store.listDraftsOrdered()).map((draft) => draft.id)).toEqual([
+      "evt-1",
+    ]);
+    expect((await store.listCommitted()).map((event) => event.id)).toEqual([
+      "evt-2",
+    ]);
+    expect(
+      (
+        await store.listCommittedAfter({
+          sinceCommittedId: 1,
+        })
+      ).map((event) => event.id),
+    ).toEqual(["evt-2"]);
+    expect(await store.getCursor()).toBe(2);
+    expect(notifications).toHaveLength(1);
+
+    unsubscribe();
+    await store.close();
+
+    await expect(store.loadCursor()).rejects.toMatchObject({
+      code: "client_store_closed",
+    });
+  });
+
   it("requires explicit reduce in materialized view definitions", () => {
     expect(() =>
       createInMemoryClientStore({

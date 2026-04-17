@@ -7,6 +7,7 @@ import { normalizeMaterializedViewDefinitions } from "./materialized-view.js";
 import { createMaterializedViewRuntime } from "./materialized-view-runtime.js";
 import { createLibsqlDriver, parseIntSafe } from "./libsql-driver.js";
 import { deserializePayload, serializePayload } from "./payload-codec.js";
+import { throwIfClosed } from "./store-errors.js";
 
 const SCHEMA_VERSION = 6;
 const DEFAULT_MATERIALIZED_BACKFILL_CHUNK_SIZE = 512;
@@ -98,12 +99,17 @@ export const createLibsqlClientStore = (
 ) => {
   const db = createLibsqlDriver(client);
   let initialized = false;
+  let closed = false;
   /** @type {null|Promise<void>} */
   let initPromise = null;
   let materializedViewRuntime;
 
   const materializedViewDefinitions =
     normalizeMaterializedViewDefinitions(materializedViews);
+
+  const ensureOpen = () => {
+    throwIfClosed(closed, "libsql client store", "client_store_closed");
+  };
 
   const runPragmas = async () => {
     if (!applyPragmas) return;
@@ -395,6 +401,7 @@ export const createLibsqlClientStore = (
     });
 
   const ensureInitialized = async () => {
+    ensureOpen();
     if (initialized) return;
     if (initPromise) return initPromise;
 
@@ -418,7 +425,31 @@ export const createLibsqlClientStore = (
       await ensureInitialized();
     },
 
+    close: async () => {
+      if (closed) return;
+      closed = true;
+      if (materializedViewRuntime) {
+        await materializedViewRuntime.flushMaterializedViews();
+        await materializedViewRuntime.close();
+      }
+      if (typeof client.close === "function") {
+        await client.close();
+      }
+    },
+
     loadCursor: async () => {
+      await ensureInitialized();
+      const row = await db.queryOne(
+        `
+          SELECT value
+          FROM app_state
+          WHERE key = 'cursor_committed_id'
+        `,
+      );
+      return row ? parseIntSafe(row.value, 0) : 0;
+    },
+
+    getCursor: async () => {
       await ensureInitialized();
       const row = await db.queryOne(
         `
@@ -513,6 +544,16 @@ export const createLibsqlClientStore = (
     },
 
     loadDraftsOrdered: async () => {
+      await ensureInitialized();
+      const rows = await db.queryAll(`
+        SELECT draft_clock, id, partition, type, schema_version, payload, payload_compression, client_ts, created_at
+        FROM local_drafts
+        ORDER BY draft_clock ASC, id ASC
+      `);
+      return rows.map(parseDraft);
+    },
+
+    listDraftsOrdered: async () => {
       await ensureInitialized();
       const rows = await db.queryAll(`
         SELECT draft_clock, id, partition, type, schema_version, payload, payload_compression, client_ts, created_at
@@ -667,6 +708,21 @@ export const createLibsqlClientStore = (
       });
     },
 
+    subscribeMaterializedView: async ({
+      viewName,
+      partition,
+      onChange,
+      emitCurrent,
+    }) => {
+      await ensureInitialized();
+      return materializedViewRuntime.subscribeMaterializedView({
+        viewName,
+        partition,
+        onChange,
+        emitCurrent,
+      });
+    },
+
     evictMaterializedView: async ({ viewName, partition }) => {
       await ensureInitialized();
       await materializedViewRuntime.evictMaterializedView({
@@ -686,6 +742,46 @@ export const createLibsqlClientStore = (
     flushMaterializedViews: async () => {
       await ensureInitialized();
       await materializedViewRuntime.flushMaterializedViews();
+    },
+
+    listCommitted: async () => {
+      await ensureInitialized();
+      const rows = await db.queryAll(`
+        SELECT committed_id, id, project_id, user_id, partition, type, schema_version, payload, payload_compression, client_ts, server_ts, created_at
+        FROM committed_events
+        ORDER BY committed_id ASC
+      `);
+      return rows.map(parseCommittedRow);
+    },
+
+    listCommittedAfter: async ({
+      sinceCommittedId = 0,
+      limit = Number.MAX_SAFE_INTEGER,
+    } = {}) => {
+      await ensureInitialized();
+      const rows = await db.queryAll(
+        `
+          SELECT
+            committed_id,
+            id,
+            project_id,
+            user_id,
+            partition,
+            type,
+            schema_version,
+            payload,
+            payload_compression,
+            client_ts,
+            server_ts,
+            created_at
+          FROM committed_events
+          WHERE committed_id > ?
+          ORDER BY committed_id ASC
+          LIMIT ?
+        `,
+        [sinceCommittedId, limit],
+      );
+      return rows.map(parseCommittedRow);
     },
 
     _debug: {

@@ -64,6 +64,7 @@ Notes:
 - `draft_clock` and `committed_id` primary keys already provide ordered access paths in SQLite/LibSQL.
 - Built-in adapters only support the current on-disk schema version. Older databases must be reset before opening.
 - Reference adapters:
+  - `src/async-sqlite-client-store.js` (`createAsyncSqliteClientStore`)
   - `src/sqlite-client-store.js` (`createSqliteClientStore`)
   - `src/libsql-client-store.js` (`createLibsqlClientStore`)
 
@@ -81,6 +82,20 @@ const store = createLibsqlClientStore(client);
 
 For Node SQLite (`better-sqlite3` style APIs), use `createSqliteClientStore`
 from `insieme/node`.
+
+For injected async SQLite runtimes:
+
+```js
+import { createAsyncSqliteClientStore } from "insieme/client";
+
+const store = createAsyncSqliteClientStore({
+  driver,
+});
+```
+
+The injected driver owns connection lifecycle, transaction pinning, and
+runtime-specific pragmas such as WAL or busy timeout. The async SQLite client
+store keeps `applyPragmas` off by default for that reason.
 
 ## Optional Tables
 

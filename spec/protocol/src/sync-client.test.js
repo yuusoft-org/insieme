@@ -52,6 +52,7 @@ const createMockStore = () => {
 
   return {
     init: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
     loadCursor: vi.fn(async () => cursor),
     insertDraft: vi.fn(async (item) => {
       drafts.push(clone(item));
@@ -1141,6 +1142,26 @@ describe("src createSyncClient", () => {
       started: false,
       stopped: true,
       connected: false,
+    });
+  });
+
+  it("closes the store and rejects further use after close", async () => {
+    const client = await createStartedClient({
+      transport,
+      store,
+    });
+
+    await client.close();
+
+    expect(store.close).toHaveBeenCalledTimes(1);
+    expect(client.getStatus()).toMatchObject({
+      closed: true,
+      started: false,
+      connected: false,
+    });
+
+    await expect(client.start()).rejects.toMatchObject({
+      code: "sync_client_closed",
     });
   });
 });

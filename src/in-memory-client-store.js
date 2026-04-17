@@ -5,6 +5,7 @@ import {
 } from "./event-record.js";
 import { normalizeMaterializedViewDefinitions } from "./materialized-view.js";
 import { createMaterializedViewRuntime } from "./materialized-view-runtime.js";
+import { throwIfClosed } from "./store-errors.js";
 
 const sortDrafts = (left, right) => {
   if (left.draftClock !== right.draftClock) {
@@ -42,6 +43,21 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
 
   let nextDraftClock = 1;
   let cursor = 0;
+  let closed = false;
+
+  const ensureOpen = () => {
+    throwIfClosed(closed, "in-memory client store", "client_store_closed");
+  };
+
+  const getCommittedSnapshot = () => [...committed];
+
+  const getCommittedAfter = (
+    sinceCommittedId = 0,
+    limit = Number.MAX_SAFE_INTEGER,
+  ) =>
+    committed
+      .filter((event) => event.committedId > sinceCommittedId)
+      .slice(0, limit);
 
   const removeDraftById = (id) => {
     const index = drafts.findIndex((entry) => entry.id === id);
@@ -91,11 +107,28 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
   };
 
   return {
-    init: async () => {},
+    init: async () => {
+      ensureOpen();
+    },
 
-    loadCursor: async () => cursor,
+    close: async () => {
+      if (closed) return;
+      closed = true;
+      await materializedViewRuntime.close();
+    },
+
+    loadCursor: async () => {
+      ensureOpen();
+      return cursor;
+    },
+
+    getCursor: async () => {
+      ensureOpen();
+      return cursor;
+    },
 
     insertDrafts: async (items) => {
+      ensureOpen();
       const seenIds = new Set();
       const nextDrafts = items.map(
         ({
@@ -154,6 +187,7 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
       meta,
       createdAt,
     }) => {
+      ensureOpen();
       const existing = drafts.find((entry) => entry.id === id);
       if (existing) {
         throw new Error(`draft with id ${id} already exists`);
@@ -176,9 +210,18 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
       nextDraftClock += 1;
     },
 
-    loadDraftsOrdered: async () => [...drafts].sort(sortDrafts),
+    loadDraftsOrdered: async () => {
+      ensureOpen();
+      return [...drafts].sort(sortDrafts);
+    },
+
+    listDraftsOrdered: async () => {
+      ensureOpen();
+      return [...drafts].sort(sortDrafts);
+    },
 
     applySubmitResult: async ({ result }) => {
+      ensureOpen();
       if (result.status === "committed") {
         const draft = drafts.find((entry) => entry.id === result.id);
         if (draft) {
@@ -203,6 +246,7 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
     },
 
     applyCommittedBatch: async ({ events, nextCursor }) => {
+      ensureOpen();
       for (const event of events) {
         const committedEvent = normalizeCommittedEvent(event);
         const inserted = upsertCommitted(committedEvent);
@@ -216,32 +260,75 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
     },
 
     loadMaterializedView: async ({ viewName, partition }) => {
+      ensureOpen();
       return materializedViewRuntime.loadMaterializedView({
         viewName,
         partition,
       });
     },
 
-    evictMaterializedView: async ({ viewName, partition }) =>
-      materializedViewRuntime.evictMaterializedView({
+    subscribeMaterializedView: async ({
+      viewName,
+      partition,
+      onChange,
+      emitCurrent,
+    }) => {
+      ensureOpen();
+      return materializedViewRuntime.subscribeMaterializedView({
         viewName,
         partition,
-      }),
+        onChange,
+        emitCurrent,
+      });
+    },
 
-    invalidateMaterializedView: async ({ viewName, partition }) =>
-      materializedViewRuntime.invalidateMaterializedView({
+    evictMaterializedView: async ({ viewName, partition }) => {
+      ensureOpen();
+      return materializedViewRuntime.evictMaterializedView({
         viewName,
         partition,
-      }),
+      });
+    },
+
+    invalidateMaterializedView: async ({ viewName, partition }) => {
+      ensureOpen();
+      return materializedViewRuntime.invalidateMaterializedView({
+        viewName,
+        partition,
+      });
+    },
 
     flushMaterializedViews: async () => {
+      ensureOpen();
       await materializedViewRuntime.flushMaterializedViews();
     },
 
+    listCommitted: async () => {
+      ensureOpen();
+      return getCommittedSnapshot();
+    },
+
+    listCommittedAfter: async ({
+      sinceCommittedId = 0,
+      limit = Number.MAX_SAFE_INTEGER,
+    } = {}) => {
+      ensureOpen();
+      return getCommittedAfter(sinceCommittedId, limit);
+    },
+
     _debug: {
-      getDrafts: () => [...drafts].sort(sortDrafts),
-      getCommitted: () => [...committed],
-      getCursor: () => cursor,
+      getDrafts: () => {
+        ensureOpen();
+        return [...drafts].sort(sortDrafts);
+      },
+      getCommitted: () => {
+        ensureOpen();
+        return getCommittedSnapshot();
+      },
+      getCursor: () => {
+        ensureOpen();
+        return cursor;
+      },
       getMaterializedViewNames: () =>
         materializedViewDefinitions.map((definition) => definition.name),
     },

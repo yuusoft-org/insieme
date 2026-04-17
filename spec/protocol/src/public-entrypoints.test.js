@@ -11,6 +11,7 @@ import {
   createIndexedDBClientStore,
 } from "../../../src/indexeddb-client-store.js";
 import { createLibsqlClientStore } from "../../../src/libsql-client-store.js";
+import { createAsyncSqliteClientStore } from "../../../src/async-sqlite-client-store.js";
 import { createOfflineTransport } from "../../../src/offline-transport.js";
 import { createBrowserWebSocketTransport } from "../../../src/browser-websocket-transport.js";
 import { createInMemoryClientStore } from "../../../src/in-memory-client-store.js";
@@ -32,6 +33,7 @@ const CLIENT_EXPORTS = [
   "commandToSyncEvent",
   "committedSyncEventToCommand",
   "createBrowserWebSocketTransport",
+  "createAsyncSqliteClientStore",
   "createCommandSyncSession",
   "createIndexedDBClientStore",
   "createInMemoryClientStore",
@@ -62,6 +64,9 @@ describe("public entrypoints", () => {
     expect(client.createOfflineTransport).toBe(createOfflineTransport);
     expect(client.createBrowserWebSocketTransport).toBe(
       createBrowserWebSocketTransport,
+    );
+    expect(client.createAsyncSqliteClientStore).toBe(
+      createAsyncSqliteClientStore,
     );
     expect(client.createInMemoryClientStore).toBe(createInMemoryClientStore);
     expect(client.createReducer).toBe(createReducer);
@@ -94,6 +99,9 @@ describe("public entrypoints", () => {
     expect(Object.keys(server).sort()).toEqual(SERVER_EXPORTS);
     expect(server.createSyncServer).toBe(createSyncServer);
     expect(server.createInMemorySyncStore).toBe(createInMemorySyncStore);
+    expect(server.createAsyncSqliteClientStore).toBe(
+      createAsyncSqliteClientStore,
+    );
     expect(server.createSqliteClientStore).toBe(createSqliteClientStore);
     expect(server.createSqliteSyncStore).toBe(createSqliteSyncStore);
     expect(server.createLibsqlSyncStore).toBe(createLibsqlSyncStore);
@@ -116,6 +124,9 @@ describe("public entrypoints", () => {
   it("re-exports the server surface from the node entrypoint", () => {
     expect(Object.keys(nodeEntrypoint).sort()).toEqual(SERVER_EXPORTS);
     expect(nodeEntrypoint.createSyncServer).toBe(server.createSyncServer);
+    expect(nodeEntrypoint.createAsyncSqliteClientStore).toBe(
+      server.createAsyncSqliteClientStore,
+    );
     expect(nodeEntrypoint.createSqliteClientStore).toBe(
       server.createSqliteClientStore,
     );
