@@ -145,4 +145,111 @@ describe("src createBrowserWebSocketTransport", () => {
 
     await expect(connectPromise).rejects.toThrow("websocket connect failed");
   });
+
+  it("reuses the existing connecting socket for concurrent connects", async () => {
+    resetSockets();
+    const transport = createBrowserWebSocketTransport({
+      url: "ws://example.test/sync",
+      WebSocketImpl: MockWebSocket,
+    });
+
+    const firstConnect = transport.connect();
+    const secondConnect = transport.connect();
+    const socket = MockWebSocket.instances[0];
+
+    expect(MockWebSocket.instances).toHaveLength(1);
+
+    socket.open();
+
+    await expect(firstConnect).resolves.toBeUndefined();
+    await expect(secondConnect).resolves.toBeUndefined();
+  });
+
+  it("rejects concurrent connect waiters when the active socket fails", async () => {
+    resetSockets();
+    const transport = createBrowserWebSocketTransport({
+      url: "ws://example.test/sync",
+      WebSocketImpl: MockWebSocket,
+    });
+
+    const firstConnect = transport.connect();
+    const secondConnect = transport.connect();
+    const socket = MockWebSocket.instances[0];
+
+    socket.failConnect();
+
+    await expect(firstConnect).rejects.toThrow("websocket connect failed");
+    await expect(secondConnect).rejects.toThrow("websocket connect failed");
+  });
+
+  it("reattaches handlers on active sockets and supports unsubscribe", async () => {
+    resetSockets();
+    const transport = createBrowserWebSocketTransport({
+      url: "ws://example.test/sync",
+      WebSocketImpl: MockWebSocket,
+    });
+
+    const connectPromise = transport.connect();
+    const socket = MockWebSocket.instances[0];
+    socket.open();
+    await connectPromise;
+
+    const events = [];
+    const unsubscribe = transport.onMessage((message) => {
+      events.push(message);
+    });
+
+    const payload = new TextEncoder().encode(
+      JSON.stringify({
+        type: "connected",
+        payload: { clientId: "C2" },
+      }),
+    );
+    socket.emit("message", { data: payload });
+    await tick();
+
+    unsubscribe();
+    socket.emitMessage({
+      type: "connected",
+      payload: { clientId: "C3" },
+    });
+    await tick();
+
+    expect(events).toEqual([
+      {
+        type: "connected",
+        payload: { clientId: "C2" },
+      },
+    ]);
+  });
+
+  it("handles remote closes and explicit disconnects", async () => {
+    resetSockets();
+    const logs = [];
+    const transport = createBrowserWebSocketTransport({
+      url: "ws://example.test/sync",
+      WebSocketImpl: MockWebSocket,
+      logger: (entry) => {
+        logs.push(entry);
+      },
+    });
+
+    const connectPromise = transport.connect();
+    const socket = MockWebSocket.instances[0];
+    socket.open();
+    await connectPromise;
+
+    socket.close();
+    await tick();
+
+    const reconnectPromise = transport.connect();
+    const reconnectSocket = MockWebSocket.instances[1];
+    reconnectSocket.open();
+    await reconnectPromise;
+
+    await transport.disconnect();
+
+    expect(logs.some((entry) => entry.event === "socket_closed")).toBe(true);
+    expect(logs.some((entry) => entry.event === "disconnected")).toBe(true);
+  });
 });

@@ -91,6 +91,21 @@ describe("src createPersistedCursorClientStore", () => {
     expect(await wrapped.loadCursor()).toBe(9);
   });
 
+  it("uses default persistence hooks when external persistence is omitted", async () => {
+    const base = createMockStore();
+    const wrapped = createPersistedCursorClientStore({
+      store: base,
+    });
+
+    await wrapped.init();
+    await wrapped.applyCommittedBatch({
+      events: [],
+      nextCursor: 4,
+    });
+
+    expect(await wrapped.loadCursor()).toBe(4);
+  });
+
   it("normalizes invalid cursor values and logs save failures without throwing", async () => {
     const base = createMockStore();
     base.loadCursor.mockResolvedValueOnce(-5).mockResolvedValue(4);
