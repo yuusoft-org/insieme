@@ -4,6 +4,10 @@ import {
   createMaterializedViewInitialState,
   normalizeMaterializedViewDefinitions,
 } from "./materialized-view.js";
+import {
+  createClosedResourceError,
+  isPromiseLike,
+} from "./store-errors.js";
 
 const DEFAULT_CHUNK_SIZE = 256;
 
@@ -58,10 +62,20 @@ export const createMaterializedViewRuntime = ({
   const hotEntriesByView = new Map(
     (normalizedDefinitions || []).map((definition) => [definition.name, new Map()]),
   );
+  const subscriptionsByView = new Map(
+    (normalizedDefinitions || []).map((definition) => [definition.name, new Map()]),
+  );
   const lockTails = new Map();
   let pendingBackgroundError;
+  let closed = false;
 
   const assertHealthy = () => {
+    if (closed) {
+      throw createClosedResourceError(
+        "materialized view runtime",
+        "materialized_view_runtime_closed",
+      );
+    }
     if (!pendingBackgroundError) return;
     const error = pendingBackgroundError;
     pendingBackgroundError = undefined;
@@ -90,6 +104,14 @@ export const createMaterializedViewRuntime = ({
 
   const getHotEntries = (viewName) => {
     const entries = hotEntriesByView.get(viewName);
+    if (!entries) {
+      throw new Error(`unknown materialized view '${viewName}'`);
+    }
+    return entries;
+  };
+
+  const getSubscriptionsForView = (viewName) => {
+    const entries = subscriptionsByView.get(viewName);
     if (!entries) {
       throw new Error(`unknown materialized view '${viewName}'`);
     }
@@ -142,6 +164,50 @@ export const createMaterializedViewRuntime = ({
     }
   };
 
+  const getPartitionSubscriptions = (viewName, partition, create = false) => {
+    const subscriptionsForView = getSubscriptionsForView(viewName);
+    let partitionSubscriptions = subscriptionsForView.get(partition);
+    if (!partitionSubscriptions && create) {
+      partitionSubscriptions = new Set();
+      subscriptionsForView.set(partition, partitionSubscriptions);
+    }
+    return partitionSubscriptions;
+  };
+
+  const deletePartitionSubscriptionsIfEmpty = (viewName, partition) => {
+    const subscriptionsForView = getSubscriptionsForView(viewName);
+    const partitionSubscriptions = subscriptionsForView.get(partition);
+    if (partitionSubscriptions && partitionSubscriptions.size === 0) {
+      subscriptionsForView.delete(partition);
+    }
+  };
+
+  const emitSubscription = (listener, payload) => {
+    try {
+      const maybePromise = listener(payload);
+      if (isPromiseLike(maybePromise)) {
+        maybePromise.catch(recordBackgroundError);
+      }
+    } catch (error) {
+      recordBackgroundError(error);
+    }
+  };
+
+  const notifySubscribers = (viewName, partition, entry) => {
+    const partitionSubscriptions = getPartitionSubscriptions(viewName, partition);
+    if (!partitionSubscriptions || partitionSubscriptions.size === 0) return;
+    const payload = {
+      viewName,
+      partition,
+      value: cloneMaterializedViewValue(entry.state),
+      lastCommittedId: entry.lastCommittedId,
+      updatedAt: entry.updatedAt,
+    };
+    for (const listener of partitionSubscriptions) {
+      emitSubscription(listener, payload);
+    }
+  };
+
   const persistEntry = async (definition, partition, entry) => {
     if (typeof saveCheckpoint !== "function" || !isDirty(entry)) return;
     await saveCheckpoint({
@@ -184,6 +250,7 @@ export const createMaterializedViewRuntime = ({
     if (checkpoint.mode === "debounce") {
       clearFlushTimer(entry);
       entry.flushTimer = setTimeout(() => {
+        if (closed) return;
         entry.flushTimer = undefined;
         withLocks([toLockKey(definition.name, partition)], async () => {
           const liveEntry = getHotEntries(definition.name).get(partition);
@@ -196,6 +263,7 @@ export const createMaterializedViewRuntime = ({
 
     if (checkpoint.mode === "interval" && !entry.flushTimer) {
       entry.flushTimer = setTimeout(() => {
+        if (closed) return;
         entry.flushTimer = undefined;
         withLocks([toLockKey(definition.name, partition)], async () => {
           const liveEntry = getHotEntries(definition.name).get(partition);
@@ -276,20 +344,78 @@ export const createMaterializedViewRuntime = ({
     return entry;
   };
 
+  const loadSnapshot = async ({ viewName, partition }) => {
+    assertHealthy();
+    assertPartition(partition, "loadMaterializedView");
+    const definition = getDefinition(viewName);
+    return withLocks([toLockKey(viewName, partition)], async () => {
+      const targetCommittedId = await getLatestCommittedId();
+      const entry = await hydrateEntry({
+        definition,
+        partition,
+        targetCommittedId,
+      });
+      return {
+        value: cloneMaterializedViewValue(entry.state),
+        lastCommittedId: entry.lastCommittedId,
+        updatedAt: entry.updatedAt,
+      };
+    });
+  };
+
   return {
     loadMaterializedView: async ({ viewName, partition }) => {
+      const snapshot = await loadSnapshot({ viewName, partition });
+      return snapshot.value;
+    },
+
+    subscribeMaterializedView: async ({
+      viewName,
+      partition,
+      onChange,
+      emitCurrent = true,
+    }) => {
       assertHealthy();
-      assertPartition(partition, "loadMaterializedView");
-      const definition = getDefinition(viewName);
-      return withLocks([toLockKey(viewName, partition)], async () => {
-        const targetCommittedId = await getLatestCommittedId();
-        const entry = await hydrateEntry({
-          definition,
-          partition,
-          targetCommittedId,
-        });
-        return cloneMaterializedViewValue(entry?.state);
-      });
+      assertPartition(partition, "subscribeMaterializedView");
+      getDefinition(viewName);
+      if (typeof onChange !== "function") {
+        throw new Error("subscribeMaterializedView requires onChange");
+      }
+
+      const partitionSubscriptions = getPartitionSubscriptions(
+        viewName,
+        partition,
+        true,
+      );
+      partitionSubscriptions.add(onChange);
+
+      let active = true;
+      const unsubscribe = () => {
+        if (!active) return;
+        active = false;
+        partitionSubscriptions.delete(onChange);
+        deletePartitionSubscriptionsIfEmpty(viewName, partition);
+      };
+
+      try {
+        if (emitCurrent) {
+          const snapshot = await loadSnapshot({ viewName, partition });
+          if (active) {
+            emitSubscription(onChange, {
+              viewName,
+              partition,
+              value: snapshot.value,
+              lastCommittedId: snapshot.lastCommittedId,
+              updatedAt: snapshot.updatedAt,
+            });
+          }
+        }
+      } catch (error) {
+        unsubscribe();
+        throw error;
+      }
+
+      return unsubscribe;
     },
 
     onCommittedEvent: async (event) => {
@@ -332,6 +458,7 @@ export const createMaterializedViewRuntime = ({
             entry.updatedAt = event.serverTs || now();
             entry.dirtyEventCount += 1;
             await scheduleFlush(definition, loadedPartition, entry);
+            notifySubscribers(definition.name, loadedPartition, entry);
           }
         }
       });
@@ -347,6 +474,19 @@ export const createMaterializedViewRuntime = ({
         if (!entry) return;
         clearFlushTimer(entry);
         hotEntries.delete(partition);
+        const partitionSubscriptions = getPartitionSubscriptions(
+          definition.name,
+          partition,
+        );
+        if (partitionSubscriptions && partitionSubscriptions.size > 0) {
+          const targetCommittedId = await getLatestCommittedId();
+          const rehydratedEntry = await hydrateEntry({
+            definition,
+            partition,
+            targetCommittedId,
+          });
+          notifySubscribers(definition.name, partition, rehydratedEntry);
+        }
       });
     },
 
@@ -366,6 +506,19 @@ export const createMaterializedViewRuntime = ({
             viewName: definition.name,
             partition,
           });
+        }
+        const partitionSubscriptions = getPartitionSubscriptions(
+          definition.name,
+          partition,
+        );
+        if (partitionSubscriptions && partitionSubscriptions.size > 0) {
+          const targetCommittedId = await getLatestCommittedId();
+          const rehydratedEntry = await hydrateEntry({
+            definition,
+            partition,
+            targetCommittedId,
+          });
+          notifySubscribers(definition.name, partition, rehydratedEntry);
         }
       });
     },
@@ -395,6 +548,24 @@ export const createMaterializedViewRuntime = ({
         }
       }
       assertHealthy();
+    },
+
+    close: async () => {
+      if (closed) return;
+      closed = true;
+
+      for (const hotEntries of hotEntriesByView.values()) {
+        for (const entry of hotEntries.values()) {
+          clearFlushTimer(entry);
+        }
+        hotEntries.clear();
+      }
+
+      for (const subscriptionsForView of subscriptionsByView.values()) {
+        subscriptionsForView.clear();
+      }
+
+      lockTails.clear();
     },
   };
 };

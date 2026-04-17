@@ -277,6 +277,109 @@ describe("src materialized-view-runtime", () => {
     ]);
   });
 
+  it("supports subscriptions with initial and incremental updates", async () => {
+    const events = [];
+    const runtime = createMaterializedViewRuntime({
+      definitions: createCounterDefinitions({
+        mode: "manual",
+      }),
+      getLatestCommittedId: async () => 0,
+      listCommittedAfter: async () => [],
+    });
+
+    const unsubscribe = await runtime.subscribeMaterializedView({
+      viewName: "counter",
+      partition: "P1",
+      onChange: (payload) => {
+        events.push(payload);
+      },
+    });
+
+    expect(events).toEqual([
+      {
+        viewName: "counter",
+        partition: "P1",
+        value: { count: 0 },
+        lastCommittedId: 0,
+        updatedAt: 0,
+      },
+    ]);
+
+    await runtime.onCommittedEvent({
+      committedId: 1,
+      partition: "P1",
+      event: { type: "increment", payload: {} },
+      serverTs: 10,
+    });
+
+    expect(events).toEqual([
+      {
+        viewName: "counter",
+        partition: "P1",
+        value: { count: 0 },
+        lastCommittedId: 0,
+        updatedAt: 0,
+      },
+      {
+        viewName: "counter",
+        partition: "P1",
+        value: { count: 1 },
+        lastCommittedId: 1,
+        updatedAt: 10,
+      },
+    ]);
+
+    unsubscribe();
+
+    await runtime.onCommittedEvent({
+      committedId: 2,
+      partition: "P1",
+      event: { type: "increment", payload: {} },
+      serverTs: 11,
+    });
+
+    expect(events).toHaveLength(2);
+  });
+
+  it("stops timers and rejects new work after close", async () => {
+    vi.useFakeTimers();
+    const checkpointWrites = [];
+    const runtime = createMaterializedViewRuntime({
+      definitions: createCounterDefinitions({
+        mode: "debounce",
+        debounceMs: 20,
+      }),
+      getLatestCommittedId: async () => 0,
+      listCommittedAfter: async () => [],
+      saveCheckpoint: async ({ partition, value, lastCommittedId }) => {
+        checkpointWrites.push({ partition, value, lastCommittedId });
+      },
+    });
+
+    await runtime.loadMaterializedView({
+      viewName: "counter",
+      partition: "P1",
+    });
+
+    await runtime.onCommittedEvent({
+      committedId: 1,
+      partition: "P1",
+      event: { type: "increment", payload: {} },
+      serverTs: 10,
+    });
+
+    await runtime.close();
+    await vi.advanceTimersByTimeAsync(25);
+
+    expect(checkpointWrites).toEqual([]);
+    await expect(
+      runtime.loadMaterializedView({
+        viewName: "counter",
+        partition: "P1",
+      }),
+    ).rejects.toThrow("materialized view runtime is closed");
+  });
+
   it("flushes interval checkpoints on the configured timer", async () => {
     vi.useFakeTimers();
     const checkpointWrites = [];

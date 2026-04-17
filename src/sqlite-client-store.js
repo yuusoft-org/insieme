@@ -9,6 +9,7 @@ import {
 import { normalizeMaterializedViewDefinitions } from "./materialized-view.js";
 import { createMaterializedViewRuntime } from "./materialized-view-runtime.js";
 import { deserializePayload, serializePayload } from "./payload-codec.js";
+import { throwIfClosed } from "./store-errors.js";
 
 const SCHEMA_VERSION = 6;
 const DEFAULT_MATERIALIZED_BACKFILL_CHUNK_SIZE = 512;
@@ -72,6 +73,7 @@ export const createSqliteClientStore = (
   } = {},
 ) => {
   let initialized = false;
+  let closed = false;
   const materializedViewDefinitions =
     normalizeMaterializedViewDefinitions(materializedViews);
 
@@ -111,6 +113,10 @@ export const createSqliteClientStore = (
   /** @type {null|((arg: { items: object[] }) => void)} */
   let insertDraftsTxn = null;
   let materializedViewRuntime;
+
+  const ensureOpen = () => {
+    throwIfClosed(closed, "sqlite client store", "client_store_closed");
+  };
 
   const runPragmas = () => {
     if (!applyPragmas) return;
@@ -592,6 +598,7 @@ export const createSqliteClientStore = (
     });
 
   const ensureInitialized = () => {
+    ensureOpen();
     if (initialized) return;
     runPragmas();
     initializeSchema();
@@ -605,7 +612,25 @@ export const createSqliteClientStore = (
       ensureInitialized();
     },
 
+    close: async () => {
+      if (closed) return;
+      closed = true;
+      if (materializedViewRuntime) {
+        await materializedViewRuntime.flushMaterializedViews();
+        await materializedViewRuntime.close();
+      }
+      if (typeof db.close === "function") {
+        db.close();
+      }
+    },
+
     loadCursor: async () => {
+      ensureInitialized();
+      const row = loadCursorStmt.get();
+      return row ? parseIntSafe(row.value) : 0;
+    },
+
+    getCursor: async () => {
       ensureInitialized();
       const row = loadCursorStmt.get();
       return row ? parseIntSafe(row.value) : 0;
@@ -649,6 +674,11 @@ export const createSqliteClientStore = (
       return listDraftsStmt.all().map(parseDraft);
     },
 
+    listDraftsOrdered: async () => {
+      ensureInitialized();
+      return listDraftsStmt.all().map(parseDraft);
+    },
+
     applySubmitResult: async ({ result }) => {
       ensureInitialized();
       const committedEvent = applySubmitResultTxn({ result });
@@ -673,6 +703,21 @@ export const createSqliteClientStore = (
       });
     },
 
+    subscribeMaterializedView: async ({
+      viewName,
+      partition,
+      onChange,
+      emitCurrent,
+    }) => {
+      ensureInitialized();
+      return materializedViewRuntime.subscribeMaterializedView({
+        viewName,
+        partition,
+        onChange,
+        emitCurrent,
+      });
+    },
+
     evictMaterializedView: async ({ viewName, partition }) => {
       ensureInitialized();
       await materializedViewRuntime.evictMaterializedView({
@@ -692,6 +737,29 @@ export const createSqliteClientStore = (
     flushMaterializedViews: async () => {
       ensureInitialized();
       await materializedViewRuntime.flushMaterializedViews();
+    },
+
+    listCommitted: async () => {
+      ensureInitialized();
+      return listCommittedAfterStmt
+        .all({
+          since_committed_id: 0,
+          limit: Number.MAX_SAFE_INTEGER,
+        })
+        .map(parseCommittedRow);
+    },
+
+    listCommittedAfter: async ({
+      sinceCommittedId = 0,
+      limit = Number.MAX_SAFE_INTEGER,
+    } = {}) => {
+      ensureInitialized();
+      return listCommittedAfterStmt
+        .all({
+          since_committed_id: sinceCommittedId,
+          limit,
+        })
+        .map(parseCommittedRow);
     },
 
     _debug: {

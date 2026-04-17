@@ -5,6 +5,7 @@ import {
 } from "./event-record.js";
 import { normalizeMaterializedViewDefinitions } from "./materialized-view.js";
 import { createMaterializedViewRuntime } from "./materialized-view-runtime.js";
+import { throwIfClosed } from "./store-errors.js";
 
 const SCHEMA_VERSION = 8;
 const DEFAULT_DB_NAME = "insieme-client";
@@ -261,11 +262,17 @@ export const createIndexedDbClientStore = ({
   /** @type {null|Promise<void>} */
   let initPromise = null;
   let materializedViewRuntime;
+  let closed = false;
 
   const materializedViewDefinitions =
     normalizeMaterializedViewDefinitions(materializedViews);
 
+  const ensureOpen = () => {
+    throwIfClosed(closed, "indexeddb client store", "client_store_closed");
+  };
+
   const ensureInitialized = async () => {
+    ensureOpen();
     if (db) return;
     if (initPromise) return initPromise;
 
@@ -429,7 +436,28 @@ export const createIndexedDbClientStore = ({
       await ensureInitialized();
     },
 
+    close: async () => {
+      if (closed) return;
+      if (initPromise) {
+        await initPromise.catch(() => {});
+      }
+      if (materializedViewRuntime) {
+        await materializedViewRuntime.flushMaterializedViews();
+        await materializedViewRuntime.close();
+      }
+      closed = true;
+      if (db) {
+        db.close();
+        db = null;
+      }
+    },
+
     loadCursor: async () =>
+      withTransaction([META_STORE], "readonly", async (stores) =>
+        loadMetaInt(stores[META_STORE], CURSOR_KEY, 0),
+      ),
+
+    getCursor: async () =>
       withTransaction([META_STORE], "readonly", async (stores) =>
         loadMetaInt(stores[META_STORE], CURSOR_KEY, 0),
       ),
@@ -512,6 +540,18 @@ export const createIndexedDbClientStore = ({
     },
 
     loadDraftsOrdered: async () =>
+      withTransaction([DRAFT_STORE], "readonly", async (stores) => {
+        const drafts = (await listAll(stores[DRAFT_STORE])).map(parseDraftRow);
+        drafts.sort((left, right) => {
+          if (left.draftClock !== right.draftClock) {
+            return left.draftClock - right.draftClock;
+          }
+          return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
+        });
+        return drafts;
+      }),
+
+    listDraftsOrdered: async () =>
       withTransaction([DRAFT_STORE], "readonly", async (stores) => {
         const drafts = (await listAll(stores[DRAFT_STORE])).map(parseDraftRow);
         drafts.sort((left, right) => {
@@ -617,6 +657,21 @@ export const createIndexedDbClientStore = ({
       });
     },
 
+    subscribeMaterializedView: async ({
+      viewName,
+      partition,
+      onChange,
+      emitCurrent,
+    }) => {
+      await ensureInitialized();
+      return materializedViewRuntime.subscribeMaterializedView({
+        viewName,
+        partition,
+        onChange,
+        emitCurrent,
+      });
+    },
+
     evictMaterializedView: async ({ viewName, partition }) => {
       await ensureInitialized();
       await materializedViewRuntime.evictMaterializedView({
@@ -637,6 +692,29 @@ export const createIndexedDbClientStore = ({
       await ensureInitialized();
       await materializedViewRuntime.flushMaterializedViews();
     },
+
+    listCommitted: async () =>
+      withTransaction([COMMITTED_STORE], "readonly", async (stores) => {
+        const committed = (await listAll(stores[COMMITTED_STORE])).map(
+          parseCommittedRow,
+        );
+        committed.sort((left, right) => left.committedId - right.committedId);
+        return committed;
+      }),
+
+    listCommittedAfter: async ({
+      sinceCommittedId = 0,
+      limit = Number.MAX_SAFE_INTEGER,
+    } = {}) =>
+      withTransaction([COMMITTED_STORE], "readonly", async (stores) => {
+        const committed = await listCommittedAfter(
+          stores[COMMITTED_STORE],
+          sinceCommittedId,
+          limit,
+          IDBKeyRange,
+        );
+        return committed.map(parseCommittedRow);
+      }),
 
     _debug: {
       getDrafts: async () =>

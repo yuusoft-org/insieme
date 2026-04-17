@@ -5,6 +5,7 @@ import {
   toFiniteNumberOrNull,
   toPositiveIntegerOrNull,
 } from "./event-record.js";
+import { throwIfClosed } from "./store-errors.js";
 
 /**
  * @typedef {{
@@ -36,6 +37,7 @@ import {
  *     loadDraftsOrdered: () => Promise<SubmitItem[]>,
  *     applySubmitResult: (input: { result: object }) => Promise<void>,
  *     applyCommittedBatch: (input: { events: object[], nextCursor?: number }) => Promise<void>,
+ *     close?: () => Promise<void>,
  *   },
  *   token: string,
  *   clientId: string,
@@ -141,6 +143,7 @@ export const createSyncClient = ({
   let connected = false;
   let syncInFlight = false;
   let stopped = false;
+  let closed = false;
   if (!isNonEmptyString(projectId)) {
     throw new Error("createSyncClient requires projectId");
   }
@@ -172,6 +175,10 @@ export const createSyncClient = ({
     } catch {
       // logging must not affect client runtime behavior
     }
+  };
+
+  const assertOpen = () => {
+    throwIfClosed(closed, "sync client", "sync_client_closed");
   };
 
   const send = async (type, payload, options = {}) => {
@@ -942,8 +949,25 @@ export const createSyncClient = ({
     return drafts.map((draft) => draft.id);
   };
 
+  const stopRuntime = async () => {
+    if (!started) return;
+    stopped = true;
+    if (unsubscribeTransport) unsubscribeTransport();
+    await transport.disconnect();
+    connected = false;
+    connectedServerLastCommittedId = null;
+    submitBatchInFlight = null;
+    syncInFlight = false;
+    reconnectInFlight = false;
+    reconnectAttempts = 0;
+    settleConnectWaiters(false, new Error("stopped"));
+    started = false;
+    log({ event: "stopped" });
+  };
+
   return {
     start: async () => {
+      assertOpen();
       if (started) return;
       stopped = false;
       started = true;
@@ -981,39 +1005,47 @@ export const createSyncClient = ({
     },
 
     stop: async () => {
-      if (!started) return;
-      stopped = true;
-      if (unsubscribeTransport) unsubscribeTransport();
-      await transport.disconnect();
-      connected = false;
-      connectedServerLastCommittedId = null;
-      submitBatchInFlight = null;
-      syncInFlight = false;
-      reconnectInFlight = false;
-      reconnectAttempts = 0;
-      settleConnectWaiters(false, new Error("stopped"));
-      started = false;
-      log({ event: "stopped" });
+      if (closed) return;
+      await stopRuntime();
     },
 
-    submitEvents,
+    close: async () => {
+      if (closed) return;
+      closed = true;
+      await stopRuntime();
+      await inboundQueue.catch(() => {});
+      await draftFlushQueue.catch(() => {});
+      if (typeof store.close === "function") {
+        await store.close();
+      }
+      log({ event: "closed" });
+    },
+
+    submitEvents: async (inputs) => {
+      assertOpen();
+      return submitEvents(inputs);
+    },
 
     submitEvent: async (input) => {
+      assertOpen();
       const [draftId] = await submitEvents([input]);
       return draftId;
     },
 
     syncNow: async (options = {}) => {
+      assertOpen();
       await syncFromCursor(options.sinceCommittedId);
     },
 
     flushDrafts: async () => {
+      assertOpen();
       await flushDraftQueue();
     },
 
     getStatus: () => ({
       started,
       stopped,
+      closed,
       connected,
       syncInFlight,
       reconnectInFlight,

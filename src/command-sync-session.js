@@ -229,6 +229,10 @@ export const createCommandSyncSession = ({
       await syncClient.stop();
     },
 
+    close: async () => {
+      await syncClient.close();
+    },
+
     submitCommands,
 
     submitEvents: async (inputs) => {

@@ -47,6 +47,18 @@ const view = await store.loadMaterializedView({
 });
 ```
 
+Subscribe to updates for one hot partition:
+
+```js
+const unsubscribe = await store.subscribeMaterializedView({
+  viewName: "event-count",
+  partition: "workspace-1",
+  onChange: ({ value, lastCommittedId }) => {
+    console.log(value, lastCommittedId);
+  },
+});
+```
+
 Lifecycle helpers:
 
 ```js

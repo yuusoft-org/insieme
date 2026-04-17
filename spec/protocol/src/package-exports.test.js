@@ -9,6 +9,7 @@ const CLIENT_EXPORTS = [
   "commandToSyncEvent",
   "committedSyncEventToCommand",
   "createBrowserWebSocketTransport",
+  "createAsyncSqliteClientStore",
   "createCommandSyncSession",
   "createIndexedDBClientStore",
   "createInMemoryClientStore",
