@@ -88,6 +88,12 @@ export const createMaterializedViewRuntime = ({
     }
   };
 
+  const reportSubscriberError = (error) => {
+    if (typeof globalThis.reportError === "function") {
+      globalThis.reportError(error);
+    }
+  };
+
   const getDefinition = (viewName) => {
     const definition = definitionByName.get(viewName);
     if (!definition) {
@@ -186,10 +192,10 @@ export const createMaterializedViewRuntime = ({
     try {
       const maybePromise = listener(payload);
       if (isPromiseLike(maybePromise)) {
-        maybePromise.catch(recordBackgroundError);
+        maybePromise.catch(reportSubscriberError);
       }
     } catch (error) {
-      recordBackgroundError(error);
+      reportSubscriberError(error);
     }
   };
 
@@ -398,17 +404,15 @@ export const createMaterializedViewRuntime = ({
       };
 
       try {
-        if (emitCurrent) {
-          const snapshot = await loadSnapshot({ viewName, partition });
-          if (active) {
-            emitSubscription(onChange, {
-              viewName,
-              partition,
-              value: snapshot.value,
-              lastCommittedId: snapshot.lastCommittedId,
-              updatedAt: snapshot.updatedAt,
-            });
-          }
+        const snapshot = await loadSnapshot({ viewName, partition });
+        if (emitCurrent && active) {
+          emitSubscription(onChange, {
+            viewName,
+            partition,
+            value: snapshot.value,
+            lastCommittedId: snapshot.lastCommittedId,
+            updatedAt: snapshot.updatedAt,
+          });
         }
       } catch (error) {
         unsubscribe();

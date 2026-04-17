@@ -341,6 +341,106 @@ describe("src materialized-view-runtime", () => {
     expect(events).toHaveLength(2);
   });
 
+  it("hydrates emitCurrent-false subscriptions so future commits still notify", async () => {
+    const events = [];
+    const runtime = createMaterializedViewRuntime({
+      definitions: createCounterDefinitions({
+        mode: "manual",
+      }),
+      getLatestCommittedId: async () => 0,
+      listCommittedAfter: async () => [],
+    });
+
+    const unsubscribe = await runtime.subscribeMaterializedView({
+      viewName: "counter",
+      partition: "P1",
+      emitCurrent: false,
+      onChange: (payload) => {
+        events.push(payload);
+      },
+    });
+
+    expect(events).toEqual([]);
+
+    await runtime.onCommittedEvent({
+      committedId: 1,
+      partition: "P1",
+      event: { type: "increment", payload: {} },
+      serverTs: 10,
+    });
+
+    expect(events).toEqual([
+      {
+        viewName: "counter",
+        partition: "P1",
+        value: { count: 1 },
+        lastCommittedId: 1,
+        updatedAt: 10,
+      },
+    ]);
+
+    unsubscribe();
+  });
+
+  it("does not poison runtime health when subscribers fail", async () => {
+    const delivered = [];
+    const runtime = createMaterializedViewRuntime({
+      definitions: createCounterDefinitions({
+        mode: "manual",
+      }),
+      getLatestCommittedId: async () => 0,
+      listCommittedAfter: async () => [],
+    });
+
+    await runtime.subscribeMaterializedView({
+      viewName: "counter",
+      partition: "P1",
+      emitCurrent: false,
+      onChange: () => Promise.reject(new Error("listener failed")),
+    });
+    await runtime.subscribeMaterializedView({
+      viewName: "counter",
+      partition: "P1",
+      emitCurrent: false,
+      onChange: (payload) => {
+        delivered.push(payload);
+      },
+    });
+
+    await runtime.onCommittedEvent({
+      committedId: 1,
+      partition: "P1",
+      event: { type: "increment", payload: {} },
+      serverTs: 10,
+    });
+    await Promise.resolve();
+
+    expect(delivered).toEqual([
+      {
+        viewName: "counter",
+        partition: "P1",
+        value: { count: 1 },
+        lastCommittedId: 1,
+        updatedAt: 10,
+      },
+    ]);
+    expect(
+      await runtime.loadMaterializedView({
+        viewName: "counter",
+        partition: "P1",
+      }),
+    ).toEqual({ count: 1 });
+
+    await expect(
+      runtime.onCommittedEvent({
+        committedId: 2,
+        partition: "P1",
+        event: { type: "increment", payload: {} },
+        serverTs: 11,
+      }),
+    ).resolves.toBeUndefined();
+  });
+
   it("stops timers and rejects new work after close", async () => {
     vi.useFakeTimers();
     const checkpointWrites = [];
