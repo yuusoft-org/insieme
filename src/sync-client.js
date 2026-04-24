@@ -1,4 +1,3 @@
-import { nanoid } from "nanoid";
 import {
   isNonEmptyString,
   isObject,
@@ -6,6 +5,7 @@ import {
   toFiniteNumberOrNull,
   toPositiveIntegerOrNull,
 } from "./event-record.js";
+import { generateId } from "./id.js";
 import { throwIfClosed } from "./store-errors.js";
 
 /**
@@ -72,8 +72,8 @@ export const createSyncClient = ({
   clientId,
   projectId,
   now = () => Date.now(),
-  uuid = () => nanoid(),
-  msgId = () => nanoid(),
+  uuid = () => generateId(),
+  msgId = () => generateId(),
   validateLocalEvent = () => {},
   onEvent = () => {},
   logger = () => {},

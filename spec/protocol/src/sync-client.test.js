@@ -124,8 +124,10 @@ describe("src createSyncClient", () => {
     store = createMockStore();
   });
 
-  it("uses nanoid defaults when crypto.randomUUID is unavailable", async () => {
+  it("uses base58 nanoid defaults when crypto.randomUUID is unavailable", async () => {
     vi.stubGlobal("crypto", {});
+    const base58Pattern =
+      /^[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]{12}$/;
 
     const client = createSyncClient({
       transport,
@@ -142,8 +144,7 @@ describe("src createSyncClient", () => {
       type: "connect",
       payload: { token: "jwt", clientId: "C1", projectId: "proj-1" },
     });
-    expect(transport.sent[0].msgId).toEqual(expect.any(String));
-    expect(transport.sent[0].msgId.length).toBeGreaterThan(0);
+    expect(transport.sent[0].msgId).toMatch(base58Pattern);
 
     const id = await client.submitEvent({
       partition: "P1",
@@ -152,8 +153,7 @@ describe("src createSyncClient", () => {
       payload: {},
     });
 
-    expect(id).toEqual(expect.any(String));
-    expect(id.length).toBeGreaterThan(0);
+    expect(id).toMatch(base58Pattern);
   });
 
   it("PT-SC-00: handshake then empty sync page", async () => {

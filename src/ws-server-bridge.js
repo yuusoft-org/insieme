@@ -1,4 +1,4 @@
-import { nanoid } from "nanoid";
+import { generateId } from "./id.js";
 
 /**
  * Attach a node `ws` socket to an Insieme sync server connection.
@@ -23,7 +23,7 @@ import { nanoid } from "nanoid";
 export const attachWsConnection = ({
   syncServer,
   ws,
-  connectionId = nanoid(),
+  connectionId = generateId(),
   logger = () => {},
   keepAliveIntervalMs = 30_000,
 }) => {
