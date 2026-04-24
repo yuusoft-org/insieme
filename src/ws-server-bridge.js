@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { nanoid } from "nanoid";
 
 /**
  * Attach a node `ws` socket to an Insieme sync server connection.
@@ -23,7 +23,7 @@ import { randomUUID } from "node:crypto";
 export const attachWsConnection = ({
   syncServer,
   ws,
-  connectionId = randomUUID(),
+  connectionId = nanoid(),
   logger = () => {},
   keepAliveIntervalMs = 30_000,
 }) => {

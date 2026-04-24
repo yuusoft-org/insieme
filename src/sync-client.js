@@ -1,3 +1,4 @@
+import { nanoid } from "nanoid";
 import {
   isNonEmptyString,
   isObject,
@@ -71,8 +72,8 @@ export const createSyncClient = ({
   clientId,
   projectId,
   now = () => Date.now(),
-  uuid = () => crypto.randomUUID(),
-  msgId = () => crypto.randomUUID(),
+  uuid = () => nanoid(),
+  msgId = () => nanoid(),
   validateLocalEvent = () => {},
   onEvent = () => {},
   logger = () => {},
