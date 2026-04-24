@@ -5,6 +5,7 @@ import {
   toFiniteNumberOrNull,
   toPositiveIntegerOrNull,
 } from "./event-record.js";
+import { generateId } from "./id.js";
 import { throwIfClosed } from "./store-errors.js";
 
 /**
@@ -71,8 +72,8 @@ export const createSyncClient = ({
   clientId,
   projectId,
   now = () => Date.now(),
-  uuid = () => crypto.randomUUID(),
-  msgId = () => crypto.randomUUID(),
+  uuid = () => generateId(),
+  msgId = () => generateId(),
   validateLocalEvent = () => {},
   onEvent = () => {},
   logger = () => {},

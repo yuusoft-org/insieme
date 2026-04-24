@@ -1,7 +1,7 @@
 // Real-life scenario: user is online, creates a change, gets commit confirmation,
 // and peers receive the broadcast.
 
-// Assumes browser runtime (WebSocket + crypto.randomUUID).
+// Assumes browser runtime with WebSocket support.
 // For desktop/node, swap transport/store implementations accordingly.
 
 import Database from "better-sqlite3";

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSyncClient } from "../../../src/index.js";
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -115,9 +115,45 @@ describe("src createSyncClient", () => {
   let transport;
   let store;
 
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   beforeEach(() => {
     transport = createMockTransport();
     store = createMockStore();
+  });
+
+  it("uses base58 nanoid defaults when crypto.randomUUID is unavailable", async () => {
+    vi.stubGlobal("crypto", {});
+    const base58Pattern =
+      /^[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]{12}$/;
+
+    const client = createSyncClient({
+      transport,
+      store,
+      token: "jwt",
+      clientId: "C1",
+      projectId: "proj-1",
+      now: () => 1000,
+    });
+
+    await client.start();
+
+    expect(transport.sent[0]).toMatchObject({
+      type: "connect",
+      payload: { token: "jwt", clientId: "C1", projectId: "proj-1" },
+    });
+    expect(transport.sent[0].msgId).toMatch(base58Pattern);
+
+    const id = await client.submitEvent({
+      partition: "P1",
+      type: "x",
+      schemaVersion: 1,
+      payload: {},
+    });
+
+    expect(id).toMatch(base58Pattern);
   });
 
   it("PT-SC-00: handshake then empty sync page", async () => {
