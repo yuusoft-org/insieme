@@ -208,6 +208,122 @@ describe("src createSyncServer", () => {
     });
   });
 
+  it("rejects submitted partitions with a foreign project scope", async () => {
+    const { server } = createServer();
+    const c1 = createConnectionTransport("c1");
+    const s1 = server.attachConnection(c1);
+
+    await connectSession({ session: s1 });
+    await syncSession({ session: s1 });
+
+    await s1.receive({
+      type: "submit_events",
+      protocolVersion: "1.0",
+      payload: {
+        events: [
+          {
+            id: "evt-foreign-scope",
+            clientId: "C1",
+            partitions: ["P1", "proj-1", "project:proj-2"],
+            event: {
+              type: "event",
+              payload: { schema: "x", schemaVersion: 1, data: {} },
+            },
+          },
+        ],
+      },
+    });
+
+    const result = c1.sent.find((m) => m.type === "submit_events_result");
+    expect(result.payload.results[0]).toMatchObject({
+      id: "evt-foreign-scope",
+      status: "rejected",
+      reason: "forbidden",
+    });
+  });
+
+  it("rejects sync requests with a foreign project scope partition", async () => {
+    const { server } = createServer();
+    const c1 = createConnectionTransport("c1");
+    const s1 = server.attachConnection(c1);
+
+    await connectSession({ session: s1 });
+
+    await s1.receive({
+      type: "sync",
+      protocolVersion: "1.0",
+      payload: {
+        projectId: "proj-1",
+        partitions: ["project:proj-2"],
+        sinceCommittedId: 0,
+        limit: 500,
+      },
+    });
+
+    const error = c1.sent.find((m) => m.type === "error");
+    expect(error).toMatchObject({
+      payload: {
+        code: "forbidden",
+        message: "sync partitions include a different project scope",
+      },
+    });
+  });
+
+  it("does not route raw foreign project-id partitions across project scopes", async () => {
+    const { server } = createServer({
+      verifyToken: async (token) => ({
+        clientId: token === "jwt-c2" ? "C2" : "C1",
+        claims: {},
+      }),
+    });
+
+    const c1 = createConnectionTransport("c1");
+    const c2 = createConnectionTransport("c2");
+    const s1 = server.attachConnection(c1);
+    const s2 = server.attachConnection(c2);
+
+    await connectSession({ session: s1, clientId: "C1", token: "jwt-c1" });
+    await connectSession({
+      session: s2,
+      clientId: "C2",
+      token: "jwt-c2",
+      projectId: "proj-2",
+    });
+    await syncSession({ session: s1 });
+    await syncSession({ session: s2, projectId: "proj-2" });
+
+    await s1.receive({
+      type: "submit_events",
+      protocolVersion: "1.0",
+      payload: {
+        events: [
+          {
+            id: "evt-raw-foreign",
+            clientId: "C1",
+            partitions: ["P1", "proj-1", "proj-2"],
+            event: {
+              type: "event",
+              payload: { schema: "x", schemaVersion: 1, data: {} },
+            },
+          },
+        ],
+      },
+    });
+
+    const submitResult = c1.sent.find(
+      (m) => m.type === "submit_events_result",
+    );
+    expect(submitResult.payload.results[0]).toMatchObject({
+      id: "evt-raw-foreign",
+      status: "committed",
+    });
+    expect(c2.sent.filter((m) => m.type === "event_broadcast")).toHaveLength(0);
+
+    await syncSession({ session: s2, projectId: "proj-2" });
+    const syncResponses = c2.sent.filter((m) => m.type === "sync_response");
+    expect(syncResponses.at(-1).payload.events).toEqual([]);
+  });
+
   it("commits ordered multi-item batches and broadcasts each committed item to peers", async () => {
     const { server } = createServer({
       verifyToken: async (token) => ({

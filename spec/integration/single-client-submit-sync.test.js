@@ -28,9 +28,16 @@ describe("integration single-client submit-sync", () => {
     const clientCommitted = store._debug.getCommitted();
     expect(clientCommitted).toHaveLength(1);
     expect(clientCommitted[0]).toMatchObject({
-      partition: "tasks",
-      type: "task_created",
-      committedId: 1,
+      committed_id: 1,
+      partitions: ["proj-1", "tasks"],
+      event: {
+        type: "event",
+        payload: {
+          schema: "task_created",
+          schemaVersion: 1,
+          data: { title: "Write integration tests" },
+        },
+      },
     });
 
     const serverCommitted = serverStore._debug.getCommitted();
@@ -89,8 +96,15 @@ describe("integration single-client submit-sync", () => {
     expect(committed).toHaveLength(1);
     expect(committed[0]).toMatchObject({
       id: "pre-1",
-      partition: "docs",
-      type: "doc_created",
+      partitions: ["docs", "proj-1"],
+      event: {
+        type: "event",
+        payload: {
+          schema: "doc_created",
+          schemaVersion: 1,
+          data: { title: "Existing doc" },
+        },
+      },
     });
 
     await client.stop();

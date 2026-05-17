@@ -31,6 +31,40 @@ export const deepSortKeys = (value) => {
 };
 
 /**
+ * @param {string[]} partitions
+ * @returns {string[]}
+ */
+export const normalizePartitionSet = (partitions) => {
+  const sorted = Array.isArray(partitions)
+    ? partitions
+        .filter((partition) => typeof partition === "string" && partition.length > 0)
+        .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+    : [];
+  const unique = [];
+  for (const value of sorted) {
+    if (unique.length === 0 || unique[unique.length - 1] !== value) {
+      unique.push(value);
+    }
+  }
+  return unique;
+};
+
+/**
+ * @param {string[]} left
+ * @param {string[]} right
+ * @returns {boolean}
+ */
+export const intersectsPartitions = (left, right) => {
+  if (!Array.isArray(left) || !Array.isArray(right)) return false;
+  if (left.length === 0 || right.length === 0) return false;
+  const rightSet = new Set(right);
+  for (const value of left) {
+    if (rightSet.has(value)) return true;
+  }
+  return false;
+};
+
+/**
  * @param {{
  *   partition?: string,
  *   projectId?: string,
@@ -44,6 +78,8 @@ export const deepSortKeys = (value) => {
  * @returns {string}
  */
 export const canonicalizeSubmitItem = ({
+  partitions,
+  event,
   partition,
   projectId,
   userId,
@@ -53,6 +89,13 @@ export const canonicalizeSubmitItem = ({
   clientTs,
   meta,
 }) => {
+  if (Array.isArray(partitions) && event && typeof event === "object") {
+    return JSON.stringify({
+      partitions: normalizePartitionSet(partitions),
+      event: deepSortKeys(event),
+    });
+  }
+
   const normalizedMeta = normalizeMeta(meta, {
     defaultClientTs: normalizeClientTs(clientTs),
   });

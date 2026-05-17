@@ -119,8 +119,18 @@ describe("src createIndexedDbClientStore", () => {
       expect(committed).toHaveLength(1);
       expect(committed[0]).toMatchObject({
         id: "evt-1",
-        committedId: 5,
-        clientTs: 100,
+        committed_id: 5,
+        client_id: "C1",
+        partitions: ["P1", "proj-1"],
+        status_updated_at: 500,
+        event: {
+          type: "event",
+          payload: {
+            schema: "x",
+            schemaVersion: 1,
+            data: { n: 1 },
+          },
+        },
       });
     }
 
@@ -136,8 +146,18 @@ describe("src createIndexedDbClientStore", () => {
       expect(committed).toHaveLength(1);
       expect(committed[0]).toMatchObject({
         id: "evt-1",
-        committedId: 5,
-        clientTs: 100,
+        committed_id: 5,
+        client_id: "C1",
+        partitions: ["P1", "proj-1"],
+        status_updated_at: 500,
+        event: {
+          type: "event",
+          payload: {
+            schema: "x",
+            schemaVersion: 1,
+            data: { n: 1 },
+          },
+        },
       });
     }
   });

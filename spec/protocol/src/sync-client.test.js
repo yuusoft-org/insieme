@@ -533,6 +533,59 @@ describe("src createSyncClient", () => {
     ]);
   });
 
+  it("rejects malformed submit input before writing a local draft", async () => {
+    const client = createSyncClient({
+      transport,
+      store,
+      token: "jwt",
+      clientId: "C1",
+      projectId: "proj-1",
+      now: () => 1000,
+      uuid: () => "evt-local-1",
+    });
+
+    await expect(
+      client.submitEvents([
+        {
+          id: "evt-bad-local",
+          partition: "P1",
+          payload: { n: 1 },
+        },
+      ]),
+    ).rejects.toThrow("submitEvents requires type");
+
+    expect(store.insertDraft).not.toHaveBeenCalled();
+    expect(store._debug.getDrafts()).toEqual([]);
+  });
+
+  it("rejects malformed stored-shape submit input before writing a local draft", async () => {
+    const client = createSyncClient({
+      transport,
+      store,
+      token: "jwt",
+      clientId: "C1",
+      projectId: "proj-1",
+      now: () => 1000,
+      uuid: () => "evt-local-1",
+    });
+
+    await expect(
+      client.submitEvents([
+        {
+          id: "evt-bad-stored-local",
+          partitions: ["P1", "proj-1"],
+          event: {
+            type: "event",
+            payload: { schema: "x", data: { n: 1 } },
+          },
+        },
+      ]),
+    ).rejects.toThrow("submitEvents requires event.payload.schemaVersion");
+
+    expect(store.insertDraft).not.toHaveBeenCalled();
+    expect(store._debug.getDrafts()).toEqual([]);
+  });
+
   it("rejects an oversized queued draft locally without sending it", async () => {
     const events = [];
     const client = await createStartedClient({

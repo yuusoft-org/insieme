@@ -8,6 +8,11 @@ import {
   createClosedResourceError,
   isPromiseLike,
 } from "./store-errors.js";
+import {
+  getStoredCommittedId,
+  getStoredPartitions,
+  getStoredStatusUpdatedAt,
+} from "./stored-event.js";
 
 const DEFAULT_CHUNK_SIZE = 256;
 
@@ -126,12 +131,23 @@ export const createMaterializedViewRuntime = ({
 
   const toLockKey = (viewName, partition) => `${viewName}::${partition}`;
 
-  const definitionMatchesPartition = (definition, loadedPartition, event) =>
-    definition.matchesPartition({
-      loadedPartition,
-      eventPartition: event?.partition,
-      event,
-    });
+  const definitionMatchesPartition = (definition, loadedPartition, event) => {
+    const partitions = getStoredPartitions(event);
+    if (partitions.length === 0) {
+      return definition.matchesPartition({
+        loadedPartition,
+        eventPartition: event?.partition,
+        event,
+      });
+    }
+    return partitions.some((eventPartition) =>
+      definition.matchesPartition({
+        loadedPartition,
+        eventPartition,
+        event,
+      }),
+    );
+  };
 
   const acquireLock = async (lockKey) => {
     const previousTail = lockTails.get(lockKey) || Promise.resolve();
@@ -333,14 +349,14 @@ export const createMaterializedViewRuntime = ({
       for (const event of events) {
         if (
           definitionMatchesPartition(definition, partition, event) &&
-          event.committedId > entry.lastCommittedId
+          getStoredCommittedId(event) > entry.lastCommittedId
         ) {
           entry.state = applyMaterializedViewReducer(definition, entry.state, event, partition);
-          entry.lastCommittedId = event.committedId;
-          entry.updatedAt = event.serverTs || now();
+          entry.lastCommittedId = getStoredCommittedId(event);
+          entry.updatedAt = getStoredStatusUpdatedAt(event) || now();
           entry.dirtyEventCount += 1;
         }
-        cursor = event.committedId;
+        cursor = getStoredCommittedId(event);
       }
 
       if (events.length < normalizedChunkSize) break;
@@ -424,11 +440,7 @@ export const createMaterializedViewRuntime = ({
 
     onCommittedEvent: async (event) => {
       assertHealthy();
-      if (
-        !event ||
-        typeof event.partition !== "string" ||
-        event.partition.length === 0
-      ) {
+      if (!event || getStoredPartitions(event).length === 0) {
         return;
       }
 
@@ -448,7 +460,7 @@ export const createMaterializedViewRuntime = ({
           for (const [loadedPartition, entry] of hotEntries) {
             if (
               !definitionMatchesPartition(definition, loadedPartition, event) ||
-              event.committedId <= entry.lastCommittedId
+              getStoredCommittedId(event) <= entry.lastCommittedId
             ) {
               continue;
             }
@@ -458,8 +470,8 @@ export const createMaterializedViewRuntime = ({
               event,
               loadedPartition,
             );
-            entry.lastCommittedId = event.committedId;
-            entry.updatedAt = event.serverTs || now();
+            entry.lastCommittedId = getStoredCommittedId(event);
+            entry.updatedAt = getStoredStatusUpdatedAt(event) || now();
             entry.dirtyEventCount += 1;
             await scheduleFlush(definition, loadedPartition, entry);
             notifySubscribers(definition.name, loadedPartition, entry);

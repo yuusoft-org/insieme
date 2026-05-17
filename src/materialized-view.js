@@ -1,3 +1,5 @@
+import { toReducerEvent } from "./stored-event.js";
+
 const cloneValue = (value) => {
   if (value === undefined) return undefined;
   return structuredClone(value);
@@ -125,21 +127,6 @@ export const normalizeMaterializedViewDefinitions = (definitions) => {
       checkpoint: normalizeCheckpoint(entry.checkpoint, index),
     };
   });
-};
-
-const toReducerEvent = (event) => {
-  if (!event || typeof event !== "object") return event;
-  if (event.event && typeof event.event === "object") {
-    return event;
-  }
-
-  return {
-    ...event,
-    event: {
-      type: event.type,
-      payload: event.payload,
-    },
-  };
 };
 
 /**

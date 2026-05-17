@@ -89,34 +89,25 @@ describeSqlite("src createSqliteClientStore", () => {
     await store.init();
 
     const row = db._raw.prepare("PRAGMA user_version").get();
-    expect(row.user_version).toBe(6);
-    const draftProject = db._raw
-      .prepare("SELECT type FROM pragma_table_info('local_drafts') WHERE name = 'project_id'")
+    expect(row.user_version).toBe(2);
+    const draftClient = db._raw
+      .prepare("SELECT type FROM pragma_table_info('local_drafts') WHERE name = 'client_id'")
       .get();
-    const draftUser = db._raw
-      .prepare("SELECT type FROM pragma_table_info('local_drafts') WHERE name = 'user_id'")
+    const draftPartitions = db._raw
+      .prepare("SELECT type FROM pragma_table_info('local_drafts') WHERE name = 'partitions'")
       .get();
-    const draftPayload = db._raw
-      .prepare("SELECT type FROM pragma_table_info('local_drafts') WHERE name = 'payload'")
+    const draftEvent = db._raw
+      .prepare("SELECT type FROM pragma_table_info('local_drafts') WHERE name = 'event'")
       .get();
-    const draftMeta = db._raw
-      .prepare("SELECT type FROM pragma_table_info('local_drafts') WHERE name = 'meta'")
-      .get();
-    const committedPayload = db._raw
+    const committedStatus = db._raw
       .prepare(
-        "SELECT type FROM pragma_table_info('committed_events') WHERE name = 'payload'",
+        "SELECT type FROM pragma_table_info('committed_events') WHERE name = 'status_updated_at'",
       )
       .get();
-    expect(draftProject).toBe(undefined);
-    expect(draftUser).toBe(undefined);
-    expect(draftPayload.type).toBe("BLOB");
-    expect(draftMeta).toBe(undefined);
-    expect(committedPayload.type).toBe("BLOB");
-    expect(
-      db._raw
-        .prepare("SELECT type FROM pragma_table_info('committed_events') WHERE name = 'meta'")
-        .get(),
-    ).toBe(undefined);
+    expect(draftClient.type).toBe("TEXT");
+    expect(draftPartitions.type).toBe("TEXT");
+    expect(draftEvent.type).toBe("TEXT");
+    expect(committedStatus.type).toBe("INTEGER");
 
     db.close();
   });
@@ -153,8 +144,18 @@ describeSqlite("src createSqliteClientStore", () => {
       expect(await store._debug.getCommitted()).toEqual([
         expect.objectContaining({
           id: "evt-1",
-          committedId: 5,
-          clientTs: 100,
+          committed_id: 5,
+          client_id: "C1",
+          partitions: ["P1", "proj-1"],
+          status_updated_at: 500,
+          event: {
+            type: "event",
+            payload: {
+              schema: "x",
+              schemaVersion: 1,
+              data: { n: 1 },
+            },
+          },
         }),
       ]);
       db.close();
@@ -170,8 +171,18 @@ describeSqlite("src createSqliteClientStore", () => {
       expect(await store._debug.getCommitted()).toEqual([
         expect.objectContaining({
           id: "evt-1",
-          committedId: 5,
-          clientTs: 100,
+          committed_id: 5,
+          client_id: "C1",
+          partitions: ["P1", "proj-1"],
+          status_updated_at: 500,
+          event: {
+            type: "event",
+            payload: {
+              schema: "x",
+              schemaVersion: 1,
+              data: { n: 1 },
+            },
+          },
         }),
       ]);
 
@@ -179,53 +190,107 @@ describeSqlite("src createSqliteClientStore", () => {
     }
   });
 
-  it("fails fast on older on-disk schema versions", async () => {
+  it("opens an existing old-shape SQLite store without event-table migration", async () => {
     const db = createSqliteDb(":memory:");
     db.exec(`
-      PRAGMA user_version=5;
       CREATE TABLE local_drafts (
         draft_clock INTEGER PRIMARY KEY AUTOINCREMENT,
         id TEXT NOT NULL UNIQUE,
-        partition TEXT NOT NULL,
-        type TEXT NOT NULL,
-        schema_version INTEGER NOT NULL,
-        payload BLOB NOT NULL,
-        payload_compression TEXT DEFAULT NULL,
-        client_ts INTEGER NOT NULL,
+        client_id TEXT NOT NULL,
+        partitions TEXT NOT NULL,
+        event TEXT NOT NULL,
         created_at INTEGER NOT NULL
       );
+
       CREATE TABLE committed_events (
         committed_id INTEGER PRIMARY KEY,
         id TEXT NOT NULL UNIQUE,
-        project_id TEXT,
-        user_id TEXT,
-        partition TEXT NOT NULL,
-        type TEXT NOT NULL,
-        schema_version INTEGER NOT NULL,
-        payload BLOB NOT NULL,
-        payload_compression TEXT DEFAULT NULL,
-        client_ts INTEGER NOT NULL,
-        server_ts INTEGER NOT NULL,
-        created_at INTEGER NOT NULL
+        client_id TEXT NOT NULL,
+        partitions TEXT NOT NULL,
+        event TEXT NOT NULL,
+        status_updated_at INTEGER NOT NULL
       );
+
       CREATE TABLE app_state (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
       );
-      CREATE TABLE materialized_view_state (
-        view_name TEXT NOT NULL,
-        partition TEXT NOT NULL,
-        view_version TEXT NOT NULL,
-        last_committed_id INTEGER NOT NULL,
-        value TEXT NOT NULL,
-        updated_at INTEGER NOT NULL,
-        PRIMARY KEY(view_name, partition)
-      );
+
+      PRAGMA user_version=1;
     `);
+    db._raw
+      .prepare(
+        "INSERT INTO local_drafts(id, client_id, partitions, event, created_at) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run(
+        "draft-old-1",
+        "C1",
+        JSON.stringify(["P1", "proj-1"]),
+        JSON.stringify({
+          type: "event",
+          payload: { schema: "draft.x", schemaVersion: 1, data: { n: 1 } },
+        }),
+        101,
+      );
+    db._raw
+      .prepare(
+        "INSERT INTO committed_events(committed_id, id, client_id, partitions, event, status_updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        7,
+        "committed-old-1",
+        "C2",
+        JSON.stringify(["P2", "proj-1"]),
+        JSON.stringify({
+          type: "event",
+          payload: { schema: "committed.x", schemaVersion: 2, data: { n: 2 } },
+        }),
+        202,
+      );
+    db._raw
+      .prepare("INSERT INTO app_state(key, value) VALUES (?, ?)")
+      .run("cursor_committed_id", "7");
+
+    const store = createSqliteClientStore(db);
+    await store.init();
+
+    expect(db._raw.prepare("PRAGMA user_version").get().user_version).toBe(2);
+    expect(await store.loadCursor()).toBe(7);
+    expect(await store.loadDraftsOrdered()).toEqual([
+      expect.objectContaining({
+        id: "draft-old-1",
+        clientId: "C1",
+        partitions: ["P1", "proj-1"],
+        partition: "P1",
+        type: "draft.x",
+        schemaVersion: 1,
+        payload: { n: 1 },
+      }),
+    ]);
+    expect(await store.listCommitted()).toEqual([
+      expect.objectContaining({
+        committed_id: 7,
+        id: "committed-old-1",
+        client_id: "C2",
+        partitions: ["P2", "proj-1"],
+        partition: "P2",
+        type: "committed.x",
+        schemaVersion: 2,
+        payload: { n: 2 },
+        status_updated_at: 202,
+      }),
+    ]);
+
+    db.close();
+  });
+
+  it("fails fast on incompatible future on-disk schema versions", async () => {
+    const db = createSqliteDb(":memory:");
+    db.exec("PRAGMA user_version=5;");
     const store = createSqliteClientStore(db);
 
     await expect(store.init()).rejects.toThrow(
-      "Client store requires reset for schema version 5; runtime expects 6",
+      "Unsupported schema version 5; runtime supports up to 2",
     );
 
     db.close();
@@ -379,10 +444,10 @@ describeSqlite("src createSqliteClientStore", () => {
     });
     await store.init();
 
-      await store.applyCommittedBatch({
-        events: [
-          makeCommitted({ type: "increment", payload: {}, serverTs: 10, clientTs: 10 }),
-        ],
+    await store.applyCommittedBatch({
+      events: [
+        makeCommitted({ type: "increment", payload: {}, serverTs: 10, clientTs: 10 }),
+      ],
       nextCursor: 1,
     });
 
@@ -400,9 +465,11 @@ describeSqlite("src createSqliteClientStore", () => {
     const checkpoint = db._raw
       .prepare(
         `
-          SELECT view_version, last_committed_id, value
-          FROM materialized_view_state
-          WHERE view_name = ? AND partition = ?
+          SELECT state.value, offsets.view_version, offsets.last_committed_id
+          FROM materialized_view_state state
+          JOIN materialized_view_offsets offsets
+            ON offsets.view_name = state.view_name
+          WHERE state.view_name = ? AND state.partition = ?
         `,
       )
       .get("counter", "P1");
@@ -431,6 +498,204 @@ describeSqlite("src createSqliteClientStore", () => {
     db.close();
   });
 
+  it("stores materialized-view checkpoint offsets per partition", async () => {
+    const dbPath = createDbPath();
+    const materializedViews = [
+      {
+        name: "counter",
+        checkpoint: { mode: "manual" },
+        initialState: () => ({ count: 0 }),
+        reduce: ({ state, event }) => ({
+          count: state.count + (event.type === "increment" ? 1 : 0),
+        }),
+      },
+    ];
+
+    {
+      const db = createSqliteDb(dbPath);
+      const store = createSqliteClientStore(db, { materializedViews });
+      await store.init();
+
+      await store.applyCommittedBatch({
+        events: [
+          makeCommitted({
+            id: "evt-p2-1",
+            committedId: 1,
+            partition: "P2",
+            type: "increment",
+            payload: {},
+            serverTs: 10,
+          }),
+        ],
+        nextCursor: 1,
+      });
+      expect(
+        await store.loadMaterializedView({ viewName: "counter", partition: "P2" }),
+      ).toEqual({ count: 1 });
+      await store.flushMaterializedViews({ viewName: "counter", partition: "P2" });
+      await store.evictMaterializedView({ viewName: "counter", partition: "P2" });
+
+      await store.applyCommittedBatch({
+        events: [
+          makeCommitted({
+            id: "evt-p2-2",
+            committedId: 2,
+            partition: "P2",
+            type: "increment",
+            payload: {},
+            serverTs: 11,
+          }),
+          makeCommitted({
+            id: "evt-p1-1",
+            committedId: 3,
+            partition: "P1",
+            type: "increment",
+            payload: {},
+            serverTs: 12,
+          }),
+        ],
+        nextCursor: 3,
+      });
+      expect(
+        await store.loadMaterializedView({ viewName: "counter", partition: "P1" }),
+      ).toEqual({ count: 1 });
+      await store.flushMaterializedViews({ viewName: "counter", partition: "P1" });
+      db.close();
+    }
+
+    {
+      const db = createSqliteDb(dbPath);
+      const store = createSqliteClientStore(db, { materializedViews });
+      await store.init();
+
+      expect(
+        await store.loadMaterializedView({ viewName: "counter", partition: "P2" }),
+      ).toEqual({ count: 2 });
+
+      db.close();
+    }
+  });
+
+  it("rebuilds legacy materialized checkpoints that lack per-partition offsets", async () => {
+    const db = createSqliteDb(":memory:");
+    db.exec(`
+      CREATE TABLE local_drafts (
+        draft_clock INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT NOT NULL UNIQUE,
+        client_id TEXT NOT NULL,
+        partitions TEXT NOT NULL,
+        event TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE committed_events (
+        committed_id INTEGER PRIMARY KEY,
+        id TEXT NOT NULL UNIQUE,
+        client_id TEXT NOT NULL,
+        partitions TEXT NOT NULL,
+        event TEXT NOT NULL,
+        status_updated_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE app_state (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+
+      CREATE TABLE materialized_view_state (
+        view_name TEXT NOT NULL,
+        partition TEXT NOT NULL,
+        value TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY(view_name, partition)
+      );
+
+      CREATE TABLE materialized_view_offsets (
+        view_name TEXT PRIMARY KEY,
+        view_version TEXT NOT NULL,
+        last_committed_id INTEGER NOT NULL
+      );
+
+      PRAGMA user_version=2;
+    `);
+    const insertCommitted = db._raw.prepare(
+      "INSERT INTO committed_events(committed_id, id, client_id, partitions, event, status_updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+    );
+    insertCommitted.run(
+      1,
+      "evt-p2-1",
+      "C1",
+      JSON.stringify(["P2", "proj-1"]),
+      JSON.stringify({
+        type: "event",
+        payload: { schema: "increment", schemaVersion: 1, data: {} },
+      }),
+      10,
+    );
+    insertCommitted.run(
+      2,
+      "evt-p2-2",
+      "C1",
+      JSON.stringify(["P2", "proj-1"]),
+      JSON.stringify({
+        type: "event",
+        payload: { schema: "increment", schemaVersion: 1, data: {} },
+      }),
+      11,
+    );
+    insertCommitted.run(
+      3,
+      "evt-p1-1",
+      "C1",
+      JSON.stringify(["P1", "proj-1"]),
+      JSON.stringify({
+        type: "event",
+        payload: { schema: "increment", schemaVersion: 1, data: {} },
+      }),
+      12,
+    );
+    db._raw
+      .prepare(
+        "INSERT INTO materialized_view_state(view_name, partition, value, updated_at) VALUES (?, ?, ?, ?)",
+      )
+      .run("counter", "P2", JSON.stringify({ count: 999 }), 999);
+    db._raw
+      .prepare(
+        "INSERT INTO materialized_view_offsets(view_name, view_version, last_committed_id) VALUES (?, ?, ?)",
+      )
+      .run("counter", "1", 3);
+
+    const store = createSqliteClientStore(db, {
+      materializedViews: [
+        {
+          name: "counter",
+          checkpoint: { mode: "manual" },
+          initialState: () => ({ count: 0 }),
+          reduce: ({ state, event }) => ({
+            count: state.count + (event.type === "increment" ? 1 : 0),
+          }),
+        },
+      ],
+    });
+    await store.init();
+
+    expect(
+      await store.loadMaterializedView({ viewName: "counter", partition: "P2" }),
+    ).toEqual({ count: 2 });
+    await store.flushMaterializedViews();
+
+    const checkpoint = db._raw
+      .prepare(
+        "SELECT value, view_version, last_committed_id FROM materialized_view_state WHERE view_name = ? AND partition = ?",
+      )
+      .get("counter", "P2");
+    expect(JSON.parse(checkpoint.value)).toEqual({ count: 2 });
+    expect(checkpoint.view_version).toBe("1");
+    expect(checkpoint.last_committed_id).toBe(2);
+
+    db.close();
+  });
+
   it("supports the alias export and explicit materialized-view eviction", async () => {
     const db = createSqliteDb(":memory:");
     const store = createSqliteStore(db, {
@@ -447,12 +712,12 @@ describeSqlite("src createSqliteClientStore", () => {
     });
     await store.init();
 
-      await store.applyCommittedBatch({
-        events: [
-          makeCommitted({ type: "increment", payload: {}, serverTs: 10, clientTs: 10 }),
-        ],
-        nextCursor: 1,
-      });
+    await store.applyCommittedBatch({
+      events: [
+        makeCommitted({ type: "increment", payload: {}, serverTs: 10, clientTs: 10 }),
+      ],
+      nextCursor: 1,
+    });
 
     await store.evictMaterializedView({
       viewName: "counter",

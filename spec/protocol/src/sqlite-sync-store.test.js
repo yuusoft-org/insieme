@@ -62,13 +62,25 @@ describeSqlite("src createSqliteSyncStore", () => {
     expect(second.committedEvent.committedId).toBe(1);
 
     const schema = db._raw.prepare("PRAGMA user_version").get();
-    expect(schema.user_version).toBe(4);
-    const payload = db._raw
+    expect(schema.user_version).toBe(1);
+    const event = db._raw
       .prepare(
-        "SELECT type FROM pragma_table_info('committed_events') WHERE name = 'payload'",
+        "SELECT type FROM pragma_table_info('committed_events') WHERE name = 'event'",
       )
       .get();
-    expect(payload.type).toBe("BLOB");
+    const canonical = db._raw
+      .prepare(
+        "SELECT type FROM pragma_table_info('committed_events') WHERE name = 'canonical'",
+      )
+      .get();
+    const statusUpdatedAt = db._raw
+      .prepare(
+        "SELECT type FROM pragma_table_info('committed_events') WHERE name = 'status_updated_at'",
+      )
+      .get();
+    expect(event.type).toBe("TEXT");
+    expect(canonical.type).toBe("TEXT");
+    expect(statusUpdatedAt.type).toBe("INTEGER");
 
     db.close();
   });
@@ -179,6 +191,97 @@ describeSqlite("src createSqliteSyncStore", () => {
     db.close();
   });
 
+  it("uses a global upper bound for direct multi-partition listing", async () => {
+    const db = createSqliteDb(":memory:");
+    const store = createSqliteSyncStore(db);
+    await store.init();
+
+    await store.commitOrGetExisting(
+      makeSubmit({
+        id: "evt-a",
+        projectId: "proj-1",
+        partition: "A",
+        payload: { n: 1 },
+        now: 1,
+      }),
+    );
+    await store.commitOrGetExisting(
+      makeSubmit({
+        id: "evt-b",
+        projectId: "proj-1",
+        partition: "B",
+        payload: { n: 2 },
+        now: 2,
+      }),
+    );
+
+    const page = await store.listCommittedSince({
+      projectId: "proj-1",
+      partitions: ["A", "B"],
+      sinceCommittedId: 0,
+      limit: 10,
+    });
+
+    expect(page.events.map((event) => event.id)).toEqual(["evt-a", "evt-b"]);
+
+    db.close();
+  });
+
+  it("reads existing legacy rows with configured project metadata", async () => {
+    const db = createSqliteDb(":memory:");
+    const store = createSqliteSyncStore(db);
+    await store.init();
+
+    db._raw
+      .prepare(
+        `
+          INSERT INTO committed_events(
+            id,
+            client_id,
+            partitions,
+            event,
+            canonical,
+            status_updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?)
+        `,
+      )
+      .run(
+        "legacy-1",
+        "C1",
+        JSON.stringify(["proj-1", "P1"]),
+        JSON.stringify({
+          type: "event",
+          payload: {
+            schema: "x",
+            schemaVersion: 1,
+            data: { n: 1 },
+          },
+        }),
+        "legacy-canonical",
+        10,
+      );
+
+    const page = await store.listCommittedSince({
+      projectId: "proj-1",
+      sinceCommittedId: 0,
+      limit: 10,
+    });
+
+    expect(page.events).toEqual([
+      expect.objectContaining({
+        id: "legacy-1",
+        partition: "P1",
+        type: "x",
+        schemaVersion: 1,
+        payload: { n: 1 },
+        committedId: 1,
+        serverTs: 10,
+      }),
+    ]);
+
+    db.close();
+  });
+
   it("fails fast on unsupported future schema version", async () => {
     const db = createSqliteDb(":memory:");
     db.exec("PRAGMA user_version=999;");
@@ -191,13 +294,13 @@ describeSqlite("src createSqliteSyncStore", () => {
     db.close();
   });
 
-  it("fails fast on older on-disk schema versions", async () => {
+  it("fails fast on incompatible future on-disk schema versions", async () => {
     const db = createSqliteDb(":memory:");
     db.exec("PRAGMA user_version=3;");
     const store = createSqliteSyncStore(db);
 
     await expect(store.init()).rejects.toThrow(
-      "Sync store requires reset for schema version 3; runtime expects 4",
+      "Unsupported schema version 3; runtime supports up to 1",
     );
 
     db.close();

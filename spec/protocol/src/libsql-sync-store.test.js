@@ -62,13 +62,25 @@ describeLibsql("src createLibsqlSyncStore", () => {
     expect(second.committedEvent.committedId).toBe(1);
 
     const schema = db._raw.prepare("PRAGMA user_version").get();
-    expect(schema.user_version).toBe(4);
-    const payload = db._raw
+    expect(schema.user_version).toBe(1);
+    const event = db._raw
       .prepare(
-        "SELECT type FROM pragma_table_info('committed_events') WHERE name = 'payload'",
+        "SELECT type FROM pragma_table_info('committed_events') WHERE name = 'event'",
       )
       .get();
-    expect(payload.type).toBe("BLOB");
+    const canonical = db._raw
+      .prepare(
+        "SELECT type FROM pragma_table_info('committed_events') WHERE name = 'canonical'",
+      )
+      .get();
+    const statusUpdatedAt = db._raw
+      .prepare(
+        "SELECT type FROM pragma_table_info('committed_events') WHERE name = 'status_updated_at'",
+      )
+      .get();
+    expect(event.type).toBe("TEXT");
+    expect(canonical.type).toBe("TEXT");
+    expect(statusUpdatedAt.type).toBe("INTEGER");
 
     db.close();
   });
@@ -179,6 +191,42 @@ describeLibsql("src createLibsqlSyncStore", () => {
     db.close();
   });
 
+  it("uses a global upper bound for direct multi-partition listing", async () => {
+    const db = createLibsqlClient(":memory:");
+    const store = createLibsqlSyncStore(db);
+    await store.init();
+
+    await store.commitOrGetExisting(
+      makeSubmit({
+        id: "evt-a",
+        projectId: "proj-1",
+        partition: "A",
+        payload: { n: 1 },
+        now: 1,
+      }),
+    );
+    await store.commitOrGetExisting(
+      makeSubmit({
+        id: "evt-b",
+        projectId: "proj-1",
+        partition: "B",
+        payload: { n: 2 },
+        now: 2,
+      }),
+    );
+
+    const page = await store.listCommittedSince({
+      projectId: "proj-1",
+      partitions: ["A", "B"],
+      sinceCommittedId: 0,
+      limit: 10,
+    });
+
+    expect(page.events.map((event) => event.id)).toEqual(["evt-a", "evt-b"]);
+
+    db.close();
+  });
+
   it("fails fast on unsupported future schema version", async () => {
     const db = createLibsqlClient(":memory:");
     await db.execute("PRAGMA user_version=999;");
@@ -191,13 +239,13 @@ describeLibsql("src createLibsqlSyncStore", () => {
     db.close();
   });
 
-  it("fails fast on older on-disk schema versions", async () => {
+  it("fails fast on incompatible future on-disk schema versions", async () => {
     const db = createLibsqlClient(":memory:");
     await db.execute("PRAGMA user_version=3;");
     const store = createLibsqlSyncStore(db);
 
     await expect(store.init()).rejects.toThrow(
-      "Sync store requires reset for schema version 3; runtime expects 4",
+      "Unsupported schema version 3; runtime supports up to 1",
     );
 
     db.close();

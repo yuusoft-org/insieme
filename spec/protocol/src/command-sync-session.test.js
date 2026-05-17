@@ -190,12 +190,16 @@ describe("src createCommandSyncSession", () => {
     expect(submit).toBeTruthy();
     expect(submit.payload.events[0]).toMatchObject({
       id: "cmd-local-1",
-      projectId: "p1",
-      userId: "u1",
-      type: "scene.create",
-      payload: { sceneId: "s1" },
-      schemaVersion: 1,
-      meta: { clientId: "c1", clientTs: 5 },
+      clientId: "c1",
+      partitions: ["p1", "project:p1:story"],
+      event: {
+        type: "event",
+        payload: {
+          schema: "scene.create",
+          schemaVersion: 1,
+          data: { sceneId: "s1" },
+        },
+      },
     });
   });
 
@@ -306,9 +310,16 @@ describe("src createCommandSyncSession", () => {
     const submit = transport.sent.find((entry) => entry.type === "submit_events");
     expect(submit.payload.events[0]).toMatchObject({
       id: "evt-wrapper-1",
-      projectId: "p1",
-      userId: "u1",
-      partition: "project:p1:story",
+      clientId: "c1",
+      partitions: ["p1", "project:p1:story"],
+      event: {
+        type: "event",
+        payload: {
+          schema: "scene.create",
+          schemaVersion: 1,
+          data: { sceneId: "s3" },
+        },
+      },
     });
   });
 

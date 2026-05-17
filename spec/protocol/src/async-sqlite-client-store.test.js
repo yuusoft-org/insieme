@@ -372,6 +372,171 @@ describeSqlite("src createAsyncSqliteClientStore", () => {
     await store.close();
   });
 
+  it("stores materialized-view checkpoint offsets per partition", async () => {
+    const dbPath = createDbPath();
+
+    {
+      const driver = createAsyncSqliteDriver(dbPath);
+      const store = createAsyncSqliteClientStore({
+        driver,
+        materializedViews: [counterView],
+      });
+      await store.init();
+
+      await store.applyCommittedBatch({
+        events: [
+          makeCommitted({
+            id: "evt-p2-1",
+            committedId: 1,
+            partition: "P2",
+            type: "increment",
+            payload: {},
+            serverTs: 10,
+          }),
+        ],
+        nextCursor: 1,
+      });
+      expect(
+        await store.loadMaterializedView({ viewName: "counter", partition: "P2" }),
+      ).toEqual({ count: 1 });
+      await store.flushMaterializedViews();
+      await store.evictMaterializedView({ viewName: "counter", partition: "P2" });
+
+      await store.applyCommittedBatch({
+        events: [
+          makeCommitted({
+            id: "evt-p2-2",
+            committedId: 2,
+            partition: "P2",
+            type: "increment",
+            payload: {},
+            serverTs: 11,
+          }),
+          makeCommitted({
+            id: "evt-p1-1",
+            committedId: 3,
+            partition: "P1",
+            type: "increment",
+            payload: {},
+            serverTs: 12,
+          }),
+        ],
+        nextCursor: 3,
+      });
+      expect(
+        await store.loadMaterializedView({ viewName: "counter", partition: "P1" }),
+      ).toEqual({ count: 1 });
+      await store.flushMaterializedViews();
+      await store.close();
+    }
+
+    {
+      const driver = createAsyncSqliteDriver(dbPath);
+      const store = createAsyncSqliteClientStore({
+        driver,
+        materializedViews: [counterView],
+      });
+      await store.init();
+
+      expect(
+        await store.loadMaterializedView({ viewName: "counter", partition: "P2" }),
+      ).toEqual({ count: 2 });
+
+      await store.close();
+    }
+  });
+
+  it("rebuilds legacy materialized checkpoints that lack per-partition offsets", async () => {
+    const driver = createAsyncSqliteDriver(":memory:");
+    driver._raw.exec(`
+      CREATE TABLE local_drafts (
+        draft_clock INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT NOT NULL UNIQUE,
+        client_id TEXT NOT NULL,
+        partitions TEXT NOT NULL,
+        event TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE committed_events (
+        committed_id INTEGER PRIMARY KEY,
+        id TEXT NOT NULL UNIQUE,
+        client_id TEXT NOT NULL,
+        partitions TEXT NOT NULL,
+        event TEXT NOT NULL,
+        status_updated_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE app_state (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+
+      CREATE TABLE materialized_view_state (
+        view_name TEXT NOT NULL,
+        partition TEXT NOT NULL,
+        value TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY(view_name, partition)
+      );
+
+      CREATE TABLE materialized_view_offsets (
+        view_name TEXT PRIMARY KEY,
+        view_version TEXT NOT NULL,
+        last_committed_id INTEGER NOT NULL
+      );
+
+      PRAGMA user_version=2;
+    `);
+    const insertCommitted = driver._raw.prepare(
+      "INSERT INTO committed_events(committed_id, id, client_id, partitions, event, status_updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+    );
+    insertCommitted.run(
+      1,
+      "evt-p2-1",
+      "C1",
+      JSON.stringify(["P2", "proj-1"]),
+      JSON.stringify({
+        type: "event",
+        payload: { schema: "increment", schemaVersion: 1, data: {} },
+      }),
+      10,
+    );
+    insertCommitted.run(
+      2,
+      "evt-p2-2",
+      "C1",
+      JSON.stringify(["P2", "proj-1"]),
+      JSON.stringify({
+        type: "event",
+        payload: { schema: "increment", schemaVersion: 1, data: {} },
+      }),
+      11,
+    );
+    driver._raw
+      .prepare(
+        "INSERT INTO materialized_view_state(view_name, partition, value, updated_at) VALUES (?, ?, ?, ?)",
+      )
+      .run("counter", "P2", JSON.stringify({ count: 999 }), 999);
+    driver._raw
+      .prepare(
+        "INSERT INTO materialized_view_offsets(view_name, view_version, last_committed_id) VALUES (?, ?, ?)",
+      )
+      .run("counter", "1", 99);
+
+    const store = createAsyncSqliteClientStore({
+      driver,
+      materializedViews: [counterView],
+    });
+    await store.init();
+
+    expect(
+      await store.loadMaterializedView({ viewName: "counter", partition: "P2" }),
+    ).toEqual({ count: 2 });
+
+    await store.close();
+  });
+
   it("treats duplicate submit results idempotently and rejects conflicting duplicates", async () => {
     const driver = createAsyncSqliteDriver(":memory:");
     const store = createAsyncSqliteClientStore({ driver });
@@ -489,27 +654,18 @@ describeSqlite("src createAsyncSqliteClientStore", () => {
       local_drafts: [
         { name: "draft_clock", type: "INTEGER" },
         { name: "id", type: "TEXT" },
-        { name: "partition", type: "TEXT" },
-        { name: "type", type: "TEXT" },
-        { name: "schema_version", type: "INTEGER" },
-        { name: "payload", type: "BLOB" },
-        { name: "payload_compression", type: "TEXT" },
-        { name: "client_ts", type: "INTEGER" },
+        { name: "client_id", type: "TEXT" },
+        { name: "partitions", type: "TEXT" },
+        { name: "event", type: "TEXT" },
         { name: "created_at", type: "INTEGER" },
       ],
       committed_events: [
         { name: "committed_id", type: "INTEGER" },
         { name: "id", type: "TEXT" },
-        { name: "project_id", type: "TEXT" },
-        { name: "user_id", type: "TEXT" },
-        { name: "partition", type: "TEXT" },
-        { name: "type", type: "TEXT" },
-        { name: "schema_version", type: "INTEGER" },
-        { name: "payload", type: "BLOB" },
-        { name: "payload_compression", type: "TEXT" },
-        { name: "client_ts", type: "INTEGER" },
-        { name: "server_ts", type: "INTEGER" },
-        { name: "created_at", type: "INTEGER" },
+        { name: "client_id", type: "TEXT" },
+        { name: "partitions", type: "TEXT" },
+        { name: "event", type: "TEXT" },
+        { name: "status_updated_at", type: "INTEGER" },
       ],
     };
     const store = createAsyncSqliteClientStore({
@@ -616,7 +772,7 @@ describeSqlite("src createAsyncSqliteClientStore", () => {
       driver: createAsyncSqliteDriver(legacyDbPath),
     });
     await expect(legacyStore.init()).rejects.toThrow(
-      "Client store requires reset for schema version 1",
+      "Client store schema is incompatible; reset required",
     );
     await legacyStore.close();
   });

@@ -1,9 +1,22 @@
 import {
   isNonEmptyString,
-  normalizeMeta,
-  toFiniteNumberOrNull,
   toPositiveIntegerOrNull,
 } from "./event-record.js";
+import {
+  intersectsPartitions,
+  normalizePartitionSet,
+} from "./canonicalize.js";
+import {
+  buildProjectScopePartition,
+  extractProjectScopeIds,
+  getProjectPartitions,
+  partitionSetBelongsToProject,
+} from "./partition-scope.js";
+import {
+  getStoredCommittedId,
+  getStoredStatusUpdatedAt,
+  toStoredDraft,
+} from "./stored-event.js";
 
 const PROTOCOL_VERSION = "1.0";
 const DEFAULT_SYNC_LIMIT = 500;
@@ -32,23 +45,27 @@ const toPositiveIntOr = (value, fallback) => {
   return value;
 };
 
-/**
- * @param {string} partition
- * @param {string} [path]
- * @returns {{ ok: true, value: string } | { ok: false, code: string, message: string }}
- */
-const validateEventPartition = (
-  partition,
-  path = "payload.events[].partition",
+const validateEventPartitions = (
+  partitions,
+  path = "payload.events[].partitions",
 ) => {
-  if (typeof partition !== "string" || partition.length === 0) {
+  if (!Array.isArray(partitions) || partitions.length === 0) {
     return {
       ok: false,
       code: "bad_request",
-      message: `${path} must be a non-empty string`,
+      message: `${path} must be a non-empty string array`,
     };
   }
-  return { ok: true, value: partition };
+  for (const partition of partitions) {
+    if (!isNonEmptyString(partition)) {
+      return {
+        ok: false,
+        code: "bad_request",
+        message: `${path} entries must be non-empty strings`,
+      };
+    }
+  }
+  return { ok: true, value: partitions };
 };
 
 /**
@@ -138,8 +155,8 @@ const toErrorPayload = (reason, fallbackCode, fallbackMessage) => {
  *   authz: { authorizeProject: (identity: object, projectId: string) => Promise<boolean> },
  *   validation: { validate: (item: object, ctx: object) => Promise<void> },
  *   store: {
- *     commitOrGetExisting: (input: { id: string, partition: string, projectId?: string, userId?: string, type: string, schemaVersion: number, payload: object, meta: object, now: number }) => Promise<{ deduped: boolean, committedEvent: { id: string, partition: string, projectId?: string, userId?: string, type: string, schemaVersion: number, payload: object, meta: object, committedId: number, serverTs: number } }>,
- *     listCommittedSince: (input: { projectId: string, sinceCommittedId: number, limit: number, syncToCommittedId?: number }) => Promise<{ events: object[], hasMore: boolean, nextSinceCommittedId: number }>,
+ *     commitOrGetExisting: (input: { id: string, clientId?: string, partitions: string[], event: object, projectId?: string, partition?: string, now: number }) => Promise<{ deduped: boolean, committedEvent: { committed_id: number, id: string, client_id: string, partitions: string[], event: object, status_updated_at: number } }>,
+ *     listCommittedSince: (input: { projectId: string, partitions?: string[], sinceCommittedId: number, limit: number, syncToCommittedId?: number }) => Promise<{ events: object[], hasMore: boolean, nextSinceCommittedId: number }>,
  *     getMaxCommittedIdForProject: (input: { projectId: string }) => Promise<number>,
  *     getMaxCommittedId: () => Promise<number>,
  *   },
@@ -428,7 +445,11 @@ export const createSyncServer = ({
         session.state === "active" &&
         session.transport.connectionId !== originConnectionId &&
         !session.syncInProgress &&
-        session.activeProjectId === committedEvent.projectId,
+        Array.isArray(committedEvent.partitions) &&
+        partitionSetBelongsToProject(
+          committedEvent.partitions,
+          session.activeProjectId,
+        ),
     );
 
     for (const session of recipients) {
@@ -440,7 +461,7 @@ export const createSyncServer = ({
         event: "broadcast_sent",
         connectionId: session.transport.connectionId,
         id: committedEvent.id,
-        committedId: committedEvent.committedId,
+        committedId: getStoredCommittedId(committedEvent),
         msgId: broadcastMsgId,
       });
     }
@@ -505,9 +526,6 @@ export const createSyncServer = ({
       }
     }
 
-    const claimsUserId = isNonEmptyString(session.identity?.claims?.userId)
-      ? session.identity.claims.userId
-      : undefined;
     /** @type {object[]} */
     const results = [];
     /** @type {object[]} */
@@ -556,91 +574,45 @@ export const createSyncServer = ({
         continue;
       }
 
-      if (!isNonEmptyString(item.type)) {
-        pushRejected(
-          item.id,
-          "validation_failed",
-          `events[${index}].type must be a non-empty string`,
-        );
-        continue;
-      }
-      if (toPositiveIntegerOrNull(item.schemaVersion) === null) {
-        pushRejected(
-          item.id,
-          "validation_failed",
-          `events[${index}].schemaVersion must be a positive integer`,
-        );
-        continue;
-      }
-      if (!isObject(item.payload)) {
-        pushRejected(
-          item.id,
-          "validation_failed",
-          `events[${index}].payload must be an object`,
-        );
-        continue;
-      }
-
-      const partitionCheck = validateEventPartition(
-        item.partition,
-        `events[${index}].partition`,
-      );
-      if (!partitionCheck.ok) {
-        pushRejected(item.id, partitionCheck.code, partitionCheck.message);
-        continue;
-      }
-
-      const normalizedPartition = partitionCheck.value;
-      const normalizedMeta = normalizeMeta(item.meta, {
-        defaultClientId: session.identity.clientId,
-      });
-
-      if (!isNonEmptyString(normalizedMeta.clientId)) {
-        pushRejected(item.id, "validation_failed", "meta.clientId is required");
-        continue;
-      }
-      if (normalizedMeta.clientId !== session.identity.clientId) {
-        pushRejected(
-          item.id,
-          "forbidden",
-          "meta.clientId must match authenticated client",
-        );
-        continue;
-      }
-      if (toFiniteNumberOrNull(normalizedMeta.clientTs) === null) {
-        pushRejected(
-          item.id,
-          "validation_failed",
-          "meta.clientTs must be a finite number",
-        );
-        continue;
-      }
-      if (item.userId !== undefined && !isNonEmptyString(item.userId)) {
-        pushRejected(
-          item.id,
-          "validation_failed",
-          "userId must be a non-empty string when provided",
-        );
-        continue;
+      const hasStoredShape = Array.isArray(item.partitions) && isObject(item.event);
+      if (!hasStoredShape) {
+        if (!isNonEmptyString(item.partition)) {
+          pushRejected(
+            item.id,
+            "bad_request",
+            `events[${index}].partition must be a non-empty string`,
+          );
+          continue;
+        }
+        if (!isNonEmptyString(item.type)) {
+          pushRejected(
+            item.id,
+            "validation_failed",
+            `events[${index}].type must be a non-empty string`,
+          );
+          continue;
+        }
+        if (toPositiveIntegerOrNull(item.schemaVersion) === null) {
+          pushRejected(
+            item.id,
+            "validation_failed",
+            `events[${index}].schemaVersion must be a positive integer`,
+          );
+          continue;
+        }
+        if (!isObject(item.payload)) {
+          pushRejected(
+            item.id,
+            "validation_failed",
+            `events[${index}].payload must be an object`,
+          );
+          continue;
+        }
       }
       if (
-        claimsUserId &&
-        isNonEmptyString(item.userId) &&
-        item.userId !== claimsUserId
+        item.projectId !== undefined &&
+        item.projectId !== session.activeProjectId
       ) {
-        pushRejected(
-          item.id,
-          "forbidden",
-          "userId must match authenticated user",
-        );
-        continue;
-      }
-
-      if (!isNonEmptyString(item.projectId)) {
-        pushRejected(item.id, "validation_failed", "projectId is required");
-        continue;
-      }
-      if (item.projectId !== session.activeProjectId) {
         pushRejected(
           item.id,
           "forbidden",
@@ -649,28 +621,85 @@ export const createSyncServer = ({
         continue;
       }
 
+      const storedItem = toStoredDraft(item, {
+        defaultClientId: session.identity.clientId,
+        defaultProjectId: session.activeProjectId,
+        defaultCreatedAt: clock.now(),
+      });
+      storedItem.partitions = normalizePartitionSet([
+        ...storedItem.partitions,
+        session.activeProjectId,
+        buildProjectScopePartition(session.activeProjectId),
+      ]);
+      const partitionCheck = validateEventPartitions(
+        storedItem.partitions,
+        `events[${index}].partitions`,
+      );
+      if (!partitionCheck.ok) {
+        pushRejected(item.id, partitionCheck.code, partitionCheck.message);
+        continue;
+      }
+      const foreignProjectScopeId = extractProjectScopeIds(
+        storedItem.partitions,
+      ).find((scopeId) => scopeId !== session.activeProjectId);
+      if (foreignProjectScopeId) {
+        pushRejected(
+          item.id,
+          "forbidden",
+          "event partitions include a different project scope",
+        );
+        continue;
+      }
+      if (
+        !partitionSetBelongsToProject(
+          storedItem.partitions,
+          session.activeProjectId,
+        )
+      ) {
+        pushRejected(
+          item.id,
+          "forbidden",
+          "event partitions must include authenticated session project",
+        );
+        continue;
+      }
+      if (storedItem.clientId !== session.identity.clientId) {
+        pushRejected(item.id, "forbidden", "clientId must match authenticated client");
+        continue;
+      }
+      if (!isObject(storedItem.event)) {
+        pushRejected(
+          item.id,
+          "validation_failed",
+          `events[${index}].event must be an object`,
+        );
+        continue;
+      }
+      if (
+        storedItem.event.type !== "event" ||
+        !isObject(storedItem.event.payload) ||
+        !isNonEmptyString(storedItem.event.payload.schema) ||
+        toPositiveIntegerOrNull(storedItem.event.payload.schemaVersion) === null
+      ) {
+        pushRejected(
+          item.id,
+          "validation_failed",
+          `events[${index}].event.payload schema and schemaVersion are required`,
+        );
+        continue;
+      }
+
       const authorized = await authz.authorizeProject(
         session.identity,
-        item.projectId,
+        session.activeProjectId,
       );
       if (!authorized) {
         pushRejected(item.id, "forbidden", "project access denied");
         continue;
       }
 
-      const normalizedItem = {
-        id: item.id,
-        partition: normalizedPartition,
-        projectId: isNonEmptyString(item.projectId) ? item.projectId : undefined,
-        userId: isNonEmptyString(item.userId) ? item.userId : undefined,
-        type: item.type,
-        schemaVersion: item.schemaVersion,
-        payload: item.payload,
-        meta: normalizedMeta,
-      };
-
       try {
-        await validation.validate(normalizedItem, {
+        await validation.validate(storedItem, {
           identity: session.identity,
           now: clock.now(),
         });
@@ -690,22 +719,25 @@ export const createSyncServer = ({
 
       try {
         const { deduped, committedEvent } = await store.commitOrGetExisting({
-          ...normalizedItem,
+          ...storedItem,
+          projectId: session.activeProjectId,
+          partition: item.partition ?? storedItem.partition,
           now: clock.now(),
         });
         results.push({
           id: committedEvent.id,
           status: "committed",
-          committedId: committedEvent.committedId,
-          serverTs: committedEvent.serverTs,
+          committedId: getStoredCommittedId(committedEvent),
+          committed_id: getStoredCommittedId(committedEvent),
+          serverTs: getStoredStatusUpdatedAt(committedEvent),
+          status_updated_at: getStoredStatusUpdatedAt(committedEvent),
         });
         committedEvents.push(committedEvent);
         log({
           event: "submit_committed",
           connectionId: session.transport.connectionId,
           id: committedEvent.id,
-          committedId: committedEvent.committedId,
-          partition: committedEvent.partition,
+          committedId: getStoredCommittedId(committedEvent),
           deduped,
           msgId: context.msgId,
         });
@@ -837,11 +869,57 @@ export const createSyncServer = ({
       msgId: context.msgId,
     });
 
+    const requestedPartitions = Array.isArray(payload.partitions)
+      ? normalizePartitionSet(payload.partitions)
+      : [];
+    const partitionCheck =
+      payload.partitions !== undefined
+        ? validateEventPartitions(payload.partitions, "sync.payload.partitions")
+        : { ok: true };
+    if (!partitionCheck.ok) {
+      await sendError(
+        session.transport,
+        partitionCheck.code,
+        partitionCheck.message,
+        {},
+        { msgId: context.msgId },
+      );
+      session.syncInProgress = false;
+      session.syncToCommittedId = null;
+      return;
+    }
+    const foreignRequestedProjectScopeId = extractProjectScopeIds(
+      requestedPartitions,
+    ).find((scopeId) => scopeId !== normalizedProjectId);
+    if (foreignRequestedProjectScopeId) {
+      await sendError(
+        session.transport,
+        "forbidden",
+        "sync partitions include a different project scope",
+        {},
+        { msgId: context.msgId },
+      );
+      session.syncInProgress = false;
+      session.syncToCommittedId = null;
+      return;
+    }
+
+    const projectPartitions = getProjectPartitions(normalizedProjectId);
     const page = await store.listCommittedSince({
       projectId: normalizedProjectId,
+      partitions: projectPartitions,
       sinceCommittedId: rawSince,
       limit,
       syncToCommittedId: session.syncToCommittedId,
+    });
+    const scopedEvents = page.events.filter((event) => {
+      if (!partitionSetBelongsToProject(event.partitions, normalizedProjectId)) {
+        return false;
+      }
+      return (
+        requestedPartitions.length === 0 ||
+        intersectsPartitions(requestedPartitions, event.partitions)
+      );
     });
 
     await sendMessage(
@@ -849,7 +927,7 @@ export const createSyncServer = ({
       "sync_response",
       {
         projectId: normalizedProjectId,
-        events: page.events,
+        events: scopedEvents,
         nextSinceCommittedId: page.nextSinceCommittedId,
         hasMore: page.hasMore,
         syncToCommittedId: session.syncToCommittedId,
@@ -860,7 +938,7 @@ export const createSyncServer = ({
       event: "sync_page_sent",
       connectionId: session.transport.connectionId,
       projectId: normalizedProjectId,
-      eventCount: page.events.length,
+      eventCount: scopedEvents.length,
       nextSinceCommittedId: page.nextSinceCommittedId,
       hasMore: page.hasMore,
       msgId: context.msgId,

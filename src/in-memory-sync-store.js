@@ -1,43 +1,61 @@
-import { canonicalizeSubmitItem } from "./canonicalize.js";
-import { normalizeMeta } from "./event-record.js";
+import {
+  intersectsPartitions,
+  normalizePartitionSet,
+} from "./canonicalize.js";
+import {
+  getProjectPartitions,
+  partitionSetBelongsToProject,
+} from "./partition-scope.js";
+import {
+  getStoredCommittedId,
+  toStoredCommitted,
+  toStoredComparisonKey,
+} from "./stored-event.js";
 
 /**
  * @param {number} [startCommittedId]
  */
 export const createInMemorySyncStore = (startCommittedId = 0) => {
-  /** @type {Map<string, { comparisonKey: string, committedEvent: { id: string, projectId?: string, userId?: string, partition: string, committedId: number, type: string, schemaVersion: number, payload: object, meta: object, serverTs: number } }>} */
+  /** @type {Map<string, { comparisonKey: string, committedEvent: object }>} */
   const byId = new Map();
 
-  /** @type {{ id: string, projectId?: string, userId?: string, partition: string, committedId: number, type: string, schemaVersion: number, payload: object, meta: object, serverTs: number }[]} */
+  /** @type {object[]} */
   const committed = [];
 
   let nextCommittedId = startCommittedId + 1;
 
   return {
     /**
-     * @param {{ id: string, partition: string, projectId?: string, userId?: string, type: string, schemaVersion: number, payload: object, meta: object, now: number }} input
+     * @param {{ id: string, clientId?: string, partitions?: string[], event?: object, partition?: string, projectId?: string, type?: string, schemaVersion?: number, payload?: object, meta?: object, now: number }} input
      */
     commitOrGetExisting: async ({
       id,
       partition,
       projectId,
+      partitions,
       userId,
       type,
       schemaVersion,
       payload,
       meta,
+      event,
       now,
     }) => {
-      const normalizedMeta = normalizeMeta(meta);
-      const comparisonKey = canonicalizeSubmitItem({
+      const committedEvent = toStoredCommitted({
+        id,
         partition,
         projectId,
+        partitions,
         userId,
         type,
         schemaVersion,
         payload,
-        meta: normalizedMeta,
+        meta,
+        event,
+        committed_id: nextCommittedId,
+        status_updated_at: now,
       });
+      const comparisonKey = toStoredComparisonKey(committedEvent);
 
       const existing = byId.get(id);
       if (existing) {
@@ -54,18 +72,6 @@ export const createInMemorySyncStore = (startCommittedId = 0) => {
         };
       }
 
-      const committedEvent = {
-        id,
-        projectId,
-        userId,
-        partition,
-        committedId: nextCommittedId,
-        type,
-        schemaVersion,
-        payload: structuredClone(payload),
-        meta: normalizedMeta,
-        serverTs: now,
-      };
       nextCommittedId += 1;
 
       byId.set(id, { comparisonKey, committedEvent });
@@ -78,10 +84,11 @@ export const createInMemorySyncStore = (startCommittedId = 0) => {
     },
 
     /**
-     * @param {{ projectId: string, sinceCommittedId: number, limit: number, syncToCommittedId?: number }} input
+     * @param {{ projectId: string, partitions?: string[], sinceCommittedId: number, limit: number, syncToCommittedId?: number }} input
      */
     listCommittedSince: async ({
       projectId,
+      partitions,
       sinceCommittedId,
       limit,
       syncToCommittedId,
@@ -90,19 +97,23 @@ export const createInMemorySyncStore = (startCommittedId = 0) => {
         syncToCommittedId !== undefined
           ? syncToCommittedId
           : Number.POSITIVE_INFINITY;
+      const requestedPartitions = normalizePartitionSet(
+        partitions || getProjectPartitions(projectId),
+      );
 
       const filtered = committed.filter(
         (event) =>
-          event.projectId === projectId &&
-          event.committedId > sinceCommittedId &&
-          event.committedId <= upperBound,
+          intersectsPartitions(requestedPartitions, event.partitions) &&
+          partitionSetBelongsToProject(event.partitions, projectId) &&
+          getStoredCommittedId(event) > sinceCommittedId &&
+          getStoredCommittedId(event) <= upperBound,
       );
 
       const events = filtered.slice(0, limit);
       const hasMore = filtered.length > events.length;
       const nextSinceCommittedId =
         events.length > 0
-          ? events[events.length - 1].committedId
+          ? getStoredCommittedId(events[events.length - 1])
           : sinceCommittedId;
 
       return {
@@ -114,7 +125,7 @@ export const createInMemorySyncStore = (startCommittedId = 0) => {
 
     getMaxCommittedId: async () => {
       if (committed.length === 0) return 0;
-      return committed[committed.length - 1].committedId;
+      return getStoredCommittedId(committed[committed.length - 1]);
     },
 
     /**
@@ -122,12 +133,18 @@ export const createInMemorySyncStore = (startCommittedId = 0) => {
      */
     getMaxCommittedIdForProject: async ({ projectId }) => {
       let maxCommittedId = 0;
+      const requestedPartitions = normalizePartitionSet(
+        getProjectPartitions(projectId),
+      );
       for (const event of committed) {
-        if (event.projectId !== projectId) {
+        if (
+          !intersectsPartitions(requestedPartitions, event.partitions) ||
+          !partitionSetBelongsToProject(event.partitions, projectId)
+        ) {
           continue;
         }
-        if (event.committedId > maxCommittedId) {
-          maxCommittedId = event.committedId;
+        if (getStoredCommittedId(event) > maxCommittedId) {
+          maxCommittedId = getStoredCommittedId(event);
         }
       }
       return maxCommittedId;

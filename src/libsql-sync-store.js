@@ -1,38 +1,24 @@
-import { canonicalizeSubmitItem } from "./canonicalize.js";
-import { normalizeMeta } from "./event-record.js";
+import {
+  intersectsPartitions,
+  normalizePartitionSet,
+} from "./canonicalize.js";
+import {
+  getProjectPartitions,
+  partitionSetBelongsToProject,
+} from "./partition-scope.js";
 import { createLibsqlDriver, parseIntSafe } from "./libsql-driver.js";
-import { deserializePayload, serializePayload } from "./payload-codec.js";
+import {
+  parseStoredEvent,
+  parseStoredPartitions,
+  toStoredCommitted,
+  toStoredComparisonKey,
+  withStoredCommittedAliases,
+} from "./stored-event.js";
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 1;
 const DEFAULT_SCAN_CHUNK_SIZE = 512;
 
-const parseCommittedRow = (row) => ({
-  id: row.id,
-  projectId: row.project_id || undefined,
-  userId: row.user_id || undefined,
-  partition: row.partition,
-  committedId: parseIntSafe(row.committed_id, 0),
-  type: row.type,
-  schemaVersion: parseIntSafe(row.schema_version, 0),
-  payload: deserializePayload(row.payload),
-  payloadCompression: row.payload_compression || undefined,
-  meta: normalizeMeta({
-    clientTs: parseIntSafe(row.client_ts, 0),
-  }),
-  serverTs: parseIntSafe(row.server_ts, 0),
-  createdAt: parseIntSafe(row.created_at, 0),
-});
-
-const toComparisonKey = (event) =>
-  canonicalizeSubmitItem({
-    partition: event.partition,
-    projectId: event.projectId,
-    userId: event.userId,
-    type: event.type,
-    schemaVersion: event.schemaVersion,
-    payload: event.payload,
-    meta: event.meta,
-  });
+const toComparisonKey = (event) => toStoredComparisonKey(event);
 
 const tableHasColumn = async (db, tableName, columnName) => {
   const rows = await db.queryAll(`PRAGMA table_info(${tableName})`);
@@ -60,6 +46,16 @@ export const createLibsqlSyncStore = (
   /** @type {null|Promise<void>} */
   let initPromise = null;
 
+  const parseCommittedRow = (row) =>
+    withStoredCommittedAliases({
+      committed_id: parseIntSafe(row.committed_id, 0),
+      id: row.id,
+      client_id: row.client_id,
+      partitions: parseStoredPartitions(row.partitions),
+      event: parseStoredEvent(row.event),
+      status_updated_at: parseIntSafe(row.status_updated_at, 0),
+    });
+
   const runPragmas = async () => {
     if (!applyPragmas) return;
     await db.execute(`PRAGMA journal_mode=${journalMode};`);
@@ -83,32 +79,38 @@ export const createLibsqlSyncStore = (
       CREATE TABLE IF NOT EXISTS committed_events (
         committed_id INTEGER PRIMARY KEY AUTOINCREMENT,
         id TEXT NOT NULL UNIQUE,
-        project_id TEXT NOT NULL,
-        user_id TEXT,
-        partition TEXT NOT NULL,
-        type TEXT NOT NULL,
-        schema_version INTEGER NOT NULL,
-        payload BLOB NOT NULL,
-        payload_compression TEXT DEFAULT NULL,
-        client_ts INTEGER NOT NULL,
-        server_ts INTEGER NOT NULL,
-        created_at INTEGER NOT NULL
+        client_id TEXT NOT NULL,
+        partitions TEXT NOT NULL,
+        event TEXT NOT NULL,
+        canonical TEXT NOT NULL,
+        status_updated_at INTEGER NOT NULL
       );
-    `);
-    await db.execute(`
-      CREATE INDEX IF NOT EXISTS committed_events_project_committed_idx
-      ON committed_events(project_id, committed_id);
     `);
   };
 
   const validateSchema = async () => {
-    const hasPartition = await tableHasColumn(db, "committed_events", "partition");
-    const payloadType = await getTableColumnType(
+    const hasClientId = await tableHasColumn(db, "committed_events", "client_id");
+    const hasPartitions = await tableHasColumn(
       db,
       "committed_events",
-      "payload",
+      "partitions",
     );
-    if (!hasPartition || payloadType !== "BLOB") {
+    const hasEvent = await tableHasColumn(db, "committed_events", "event");
+    const hasCanonical = await tableHasColumn(db, "committed_events", "canonical");
+    const hasStatusUpdatedAt = await tableHasColumn(
+      db,
+      "committed_events",
+      "status_updated_at",
+    );
+    const eventType = await getTableColumnType(db, "committed_events", "event");
+    if (
+      !hasClientId ||
+      !hasPartitions ||
+      !hasEvent ||
+      !hasCanonical ||
+      !hasStatusUpdatedAt ||
+      eventType !== "TEXT"
+    ) {
       throw new Error("Sync store schema is incompatible; reset required");
     }
   };
@@ -143,16 +145,11 @@ export const createLibsqlSyncStore = (
         SELECT
           committed_id,
           id,
-          project_id,
-          user_id,
-          partition,
-          type,
-          schema_version,
-          payload,
-          payload_compression,
-          client_ts,
-          server_ts,
-          created_at
+          client_id,
+          partitions,
+          event,
+          canonical,
+          status_updated_at
         FROM committed_events
         WHERE id = ?
       `,
@@ -168,16 +165,46 @@ export const createLibsqlSyncStore = (
   };
 
   const getMaxCommittedIdForProjectInternal = async (projectId) => {
-    if (!projectId) return 0;
-    const row = await db.queryOne(
-      `
-        SELECT COALESCE(MAX(committed_id), 0) AS max_committed_id
-        FROM committed_events
-        WHERE project_id = ?
-      `,
-      [projectId],
-    );
-    return parseIntSafe(row?.max_committed_id, 0);
+    const projectPartitions = normalizePartitionSet(getProjectPartitions(projectId));
+    if (projectPartitions.length === 0) return 0;
+    const pageSize =
+      Number.isInteger(scanChunkSize) && scanChunkSize > 0
+        ? scanChunkSize
+        : DEFAULT_SCAN_CHUNK_SIZE;
+    let maxCommittedId = 0;
+    let cursor = 0;
+    while (true) {
+      const rows = await db.queryAll(
+        `
+          SELECT
+            committed_id,
+            id,
+            client_id,
+            partitions,
+            event,
+            status_updated_at
+          FROM committed_events
+          WHERE committed_id > ?
+          ORDER BY committed_id ASC
+          LIMIT ?
+        `,
+        [cursor, pageSize],
+      );
+      if (rows.length === 0) break;
+      cursor = parseIntSafe(rows[rows.length - 1].committed_id, 0);
+      for (const row of rows) {
+        const parsed = parseCommittedRow(row);
+        if (
+          intersectsPartitions(projectPartitions, parsed.partitions) &&
+          partitionSetBelongsToProject(parsed.partitions, projectId) &&
+          parsed.committed_id > maxCommittedId
+        ) {
+          maxCommittedId = parsed.committed_id;
+        }
+      }
+      if (rows.length < pageSize) break;
+    }
+    return maxCommittedId;
   };
 
   const ensureInitialized = async () => {
@@ -207,53 +234,50 @@ export const createLibsqlSyncStore = (
       id,
       partition,
       projectId,
+      partitions,
       userId,
       type,
       schemaVersion,
       payload,
       meta,
+      event,
       now,
     }) => {
       await ensureInitialized();
-      const normalizedMeta = normalizeMeta(meta);
-      const comparisonKey = canonicalizeSubmitItem({
+      const storedEvent = toStoredCommitted({
+        id,
         partition,
         projectId,
+        partitions,
         userId,
         type,
         schemaVersion,
         payload,
-        meta: normalizedMeta,
+        meta,
+        event,
+        status_updated_at: now,
+        serverTs: now,
       });
+      const comparisonKey = toComparisonKey(storedEvent);
 
       const insertResult = await db.execute(
         `
           INSERT INTO committed_events(
             id,
-            project_id,
-            user_id,
-            partition,
-            type,
-            schema_version,
-            payload,
-            payload_compression,
-            client_ts,
-            server_ts,
-            created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            client_id,
+            partitions,
+            event,
+            canonical,
+            status_updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO NOTHING
         `,
         [
-          id,
-          projectId,
-          userId ?? null,
-          partition,
-          type,
-          schemaVersion,
-          serializePayload(payload),
-          null,
-          parseIntSafe(normalizedMeta.clientTs, 0),
-          now,
+          storedEvent.id,
+          storedEvent.client_id || "unknown",
+          JSON.stringify(storedEvent.partitions),
+          JSON.stringify(storedEvent.event),
+          comparisonKey,
           now,
         ],
       );
@@ -285,12 +309,16 @@ export const createLibsqlSyncStore = (
 
     listCommittedSince: async ({
       projectId,
+      partitions,
       sinceCommittedId,
       limit,
       syncToCommittedId,
     }) => {
       await ensureInitialized();
-      if (!projectId) {
+      const requestedPartitions = normalizePartitionSet(
+        partitions || getProjectPartitions(projectId),
+      );
+      if (requestedPartitions.length === 0) {
         return {
           events: [],
           hasMore: false,
@@ -300,7 +328,7 @@ export const createLibsqlSyncStore = (
       const upperBound =
         syncToCommittedId !== undefined
           ? syncToCommittedId
-          : await getMaxCommittedIdForProjectInternal(projectId);
+          : await getMaxCommittedIdInternal();
 
       const pageSize = Math.max(
         limit + 1,
@@ -320,24 +348,17 @@ export const createLibsqlSyncStore = (
             SELECT
               committed_id,
               id,
-              project_id,
-              user_id,
-              partition,
-              type,
-              schema_version,
-              payload,
-              payload_compression,
-              client_ts,
-              server_ts,
-              created_at
+              client_id,
+              partitions,
+              event,
+              status_updated_at
             FROM committed_events
-            WHERE project_id = ?
-              AND committed_id > ?
+            WHERE committed_id > ?
               AND committed_id <= ?
             ORDER BY committed_id ASC
             LIMIT ?
           `,
-          [projectId, cursor, upperBound, pageSize],
+          [cursor, upperBound, pageSize],
         );
 
         if (rows.length === 0) {
@@ -348,7 +369,13 @@ export const createLibsqlSyncStore = (
         cursor = parseIntSafe(rows[rows.length - 1].committed_id, 0);
 
         for (const row of rows) {
-          matched.push(parseCommittedRow(row));
+          const parsed = parseCommittedRow(row);
+          if (
+            intersectsPartitions(requestedPartitions, parsed.partitions) &&
+            partitionSetBelongsToProject(parsed.partitions, projectId)
+          ) {
+            matched.push(parsed);
+          }
           if (matched.length > limit) break;
         }
 
@@ -361,7 +388,7 @@ export const createLibsqlSyncStore = (
       const hasMore = matched.length > limit;
       const nextSinceCommittedId =
         events.length > 0
-          ? events[events.length - 1].committedId
+          ? events[events.length - 1].committed_id
           : sinceCommittedId;
 
       return {
