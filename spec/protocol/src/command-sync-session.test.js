@@ -138,6 +138,71 @@ describe("src createCommandSyncSession", () => {
     });
   });
 
+  it("maps JSON-serialized stored sync events to commands", async () => {
+    const committedCalls = [];
+    const session = createCommandSyncSession({
+      token: "t1",
+      actor: {
+        userId: "u1",
+        clientId: "c1",
+      },
+      projectId: "p1",
+      transport,
+      store,
+      onCommittedCommand: (payload) => {
+        committedCalls.push(payload);
+      },
+    });
+
+    await session.start();
+
+    transport.emit({
+      type: "connected",
+      payload: { clientId: "c1", projectId: "p1", projectLastCommittedId: 0 },
+    });
+    await tick();
+
+    const storedEvent = JSON.parse(
+      JSON.stringify({
+        committed_id: 1,
+        id: "cmd-json-1",
+        client_id: "c2",
+        partitions: ["p1", "project:p1:story"],
+        event: {
+          type: "event",
+          payload: {
+            schema: "scene.create",
+            schemaVersion: 1,
+            data: { sceneId: "s1" },
+          },
+        },
+        status_updated_at: 1,
+      }),
+    );
+
+    transport.emit({
+      type: "sync_response",
+      payload: {
+        projectId: "p1",
+        events: [storedEvent],
+        nextSinceCommittedId: 1,
+        hasMore: false,
+      },
+    });
+    await tick();
+
+    expect(committedCalls).toHaveLength(1);
+    expect(committedCalls[0].command).toMatchObject({
+      id: "cmd-json-1",
+      projectId: "p1",
+      partition: "project:p1:story",
+      type: "scene.create",
+      payload: { sceneId: "s1" },
+      actor: { clientId: "c2" },
+      clientTs: 1,
+    });
+  });
+
   it("submits a single command through the batch API with command id as submit id", async () => {
     const session = createCommandSyncSession({
       token: "t1",

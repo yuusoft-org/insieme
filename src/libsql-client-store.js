@@ -14,7 +14,7 @@ import { createMaterializedViewRuntime } from "./materialized-view-runtime.js";
 import { createLibsqlDriver, parseIntSafe } from "./libsql-driver.js";
 import { throwIfClosed } from "./store-errors.js";
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 7;
 const DEFAULT_MATERIALIZED_BACKFILL_CHUNK_SIZE = 512;
 
 const createTransaction = async (db, fn) => {
@@ -238,7 +238,7 @@ export const createLibsqlClientStore = (
       return;
     }
 
-    if (current === 1) {
+    if (current < SCHEMA_VERSION) {
       await createTransaction(db, async () => {
         await createMaterializedSchema();
         await validateSchema();

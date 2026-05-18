@@ -122,6 +122,66 @@ describeSqlite("src createAsyncSqliteClientStore", () => {
     }
   });
 
+  it("opens an existing compatible version 6 async SQLite store", async () => {
+    const driver = createAsyncSqliteDriver(":memory:");
+    driver._raw.exec(`
+      CREATE TABLE local_drafts (
+        draft_clock INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT NOT NULL UNIQUE,
+        client_id TEXT NOT NULL,
+        partitions TEXT NOT NULL,
+        event TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE committed_events (
+        committed_id INTEGER PRIMARY KEY,
+        id TEXT NOT NULL UNIQUE,
+        client_id TEXT NOT NULL,
+        partitions TEXT NOT NULL,
+        event TEXT NOT NULL,
+        status_updated_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE app_state (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+
+      PRAGMA user_version=6;
+    `);
+    driver._raw
+      .prepare(
+        "INSERT INTO committed_events(committed_id, id, client_id, partitions, event, status_updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        1,
+        "evt-v6-1",
+        "C1",
+        JSON.stringify(["P1", "proj-1"]),
+        JSON.stringify({
+          type: "event",
+          payload: { schema: "x", schemaVersion: 1, data: { n: 1 } },
+        }),
+        100,
+      );
+
+    const store = createAsyncSqliteClientStore({ driver });
+    await store.init();
+
+    expect(driver._raw.prepare("PRAGMA user_version").get().user_version).toBe(7);
+    expect(await store.listCommitted()).toEqual([
+      expect.objectContaining({
+        id: "evt-v6-1",
+        partition: "P1",
+        type: "x",
+        payload: { n: 1 },
+      }),
+    ]);
+
+    await store.close();
+  });
+
   it("exposes subscriptions and stable inspection APIs", async () => {
     const driver = createAsyncSqliteDriver(":memory:");
     const store = createAsyncSqliteClientStore({

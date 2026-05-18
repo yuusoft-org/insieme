@@ -30,6 +30,7 @@ export const createInMemorySyncStore = (startCommittedId = 0) => {
      */
     commitOrGetExisting: async ({
       id,
+      clientId,
       partition,
       projectId,
       partitions,
@@ -43,6 +44,7 @@ export const createInMemorySyncStore = (startCommittedId = 0) => {
     }) => {
       const committedEvent = toStoredCommitted({
         id,
+        clientId,
         partition,
         projectId,
         partitions,

@@ -10,6 +10,48 @@ const createDbName = () =>
 
 const createdDbNames = [];
 
+const seedVersion8Database = (dbName) =>
+  new Promise((resolve, reject) => {
+    const request = indexedDB.open(dbName, 8);
+    request.onerror = () => reject(request.error);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      const meta = db.createObjectStore("meta", { keyPath: "key" });
+      meta.put({ key: "cursor_committed_id", value: 12 });
+      const drafts = db.createObjectStore("drafts", { keyPath: "id" });
+      drafts.createIndex("by_draft_clock", "draft_clock", { unique: false });
+      drafts.put({
+        id: "draft-v8-1",
+        draft_clock: 1,
+        client_id: "C1",
+        partition: "P1",
+        type: "x",
+        schema_version: 1,
+        payload: { n: 1 },
+        created_at: 100,
+      });
+      const committed = db.createObjectStore("committed", { keyPath: "id" });
+      committed.createIndex("by_committed_id", "committed_id", { unique: true });
+      committed.put({
+        id: "committed-v8-1",
+        committed_id: 12,
+        client_id: "C2",
+        partition: "P1",
+        type: "x",
+        schema_version: 1,
+        payload: { n: 2 },
+        status_updated_at: 200,
+      });
+      db.createObjectStore("materialized_view_state", {
+        keyPath: ["view_name", "partition"],
+      });
+    };
+    request.onsuccess = () => {
+      request.result.close();
+      resolve();
+    };
+  });
+
 afterEach(async () => {
   for (const dbName of createdDbNames.splice(0)) {
     await new Promise((resolve) => {
@@ -160,6 +202,22 @@ describe("src createIndexedDbClientStore", () => {
         },
       });
     }
+  });
+
+  it("bumps version 8 databases and clears incompatible old row shapes", async () => {
+    const dbName = createDbName();
+    createdDbNames.push(dbName);
+    await seedVersion8Database(dbName);
+
+    const store = createIndexedDbClientStore({
+      indexedDB,
+      dbName,
+    });
+    await store.init();
+
+    expect(await store.loadCursor()).toBe(0);
+    expect(await store.loadDraftsOrdered()).toEqual([]);
+    expect(await store._debug.getCommitted()).toEqual([]);
   });
 
   it("orders drafts by draftClock then id", async () => {

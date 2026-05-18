@@ -228,6 +228,7 @@ export const createSqliteSyncStore = (
       db,
       ({
         id,
+        clientId,
         partition,
         projectId,
         partitions,
@@ -242,7 +243,7 @@ export const createSqliteSyncStore = (
         const existing = getByIdStmt.get({ id });
         const storedEvent = toStoredCommitted({
           id,
-          clientId: meta?.clientId,
+          clientId,
           partition,
           projectId,
           userId,
@@ -341,6 +342,7 @@ export const createSqliteSyncStore = (
 
     commitOrGetExisting: async ({
       id,
+      clientId,
       partition,
       projectId,
       partitions,
@@ -355,6 +357,7 @@ export const createSqliteSyncStore = (
       ensureInitialized();
       return commitTxn({
         id,
+        clientId,
         partition,
         projectId,
         partitions,

@@ -17,7 +17,7 @@ import {
   withStoredDraftAliases,
 } from "./stored-event.js";
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 7;
 const DEFAULT_MATERIALIZED_BACKFILL_CHUNK_SIZE = 512;
 
 const parseDraft = (row) =>
@@ -240,6 +240,28 @@ export const createAsyncSqliteClientStore = ({
     await tx.execute(`PRAGMA user_version=${version}`);
   };
 
+  const createMaterializedSchema = async (tx) => {
+    await tx.execute(`
+      CREATE TABLE IF NOT EXISTS materialized_view_state (
+        view_name TEXT NOT NULL,
+        partition TEXT NOT NULL,
+        view_version TEXT,
+        last_committed_id INTEGER,
+        value TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY(view_name, partition)
+      )
+    `);
+    await ensureMaterializedViewStateCheckpointColumns(tx);
+    await tx.execute(`
+      CREATE TABLE IF NOT EXISTS materialized_view_offsets (
+        view_name TEXT PRIMARY KEY,
+        view_version TEXT NOT NULL,
+        last_committed_id INTEGER NOT NULL
+      )
+    `);
+  };
+
   const createSchema = async (tx) => {
     await tx.execute(`
       CREATE TABLE IF NOT EXISTS local_drafts (
@@ -267,25 +289,7 @@ export const createAsyncSqliteClientStore = ({
         value TEXT NOT NULL
       )
     `);
-    await tx.execute(`
-      CREATE TABLE IF NOT EXISTS materialized_view_state (
-        view_name TEXT NOT NULL,
-        partition TEXT NOT NULL,
-        view_version TEXT,
-        last_committed_id INTEGER,
-        value TEXT NOT NULL,
-        updated_at INTEGER NOT NULL,
-        PRIMARY KEY(view_name, partition)
-      )
-    `);
-    await ensureMaterializedViewStateCheckpointColumns(tx);
-    await tx.execute(`
-      CREATE TABLE IF NOT EXISTS materialized_view_offsets (
-        view_name TEXT PRIMARY KEY,
-        view_version TEXT NOT NULL,
-        last_committed_id INTEGER NOT NULL
-      )
-    `);
+    await createMaterializedSchema(tx);
   };
 
   const validateSchema = async (tx) => {
@@ -343,57 +347,21 @@ export const createAsyncSqliteClientStore = ({
         await createSchema(tx);
         await validateSchema(tx);
         await setUserVersion(tx, SCHEMA_VERSION);
-        return 0;
+        return SCHEMA_VERSION;
       }
 
-      if (nextCurrent === 1) {
-        await tx.execute(`
-          CREATE TABLE IF NOT EXISTS materialized_view_state (
-            view_name TEXT NOT NULL,
-            partition TEXT NOT NULL,
-            view_version TEXT,
-            last_committed_id INTEGER,
-            value TEXT NOT NULL,
-            updated_at INTEGER NOT NULL,
-            PRIMARY KEY(view_name, partition)
-          )
-        `);
-        await ensureMaterializedViewStateCheckpointColumns(tx);
-        await tx.execute(`
-          CREATE TABLE IF NOT EXISTS materialized_view_offsets (
-            view_name TEXT PRIMARY KEY,
-            view_version TEXT NOT NULL,
-            last_committed_id INTEGER NOT NULL
-          )
-        `);
+      if (nextCurrent < SCHEMA_VERSION) {
+        await createMaterializedSchema(tx);
         await validateSchema(tx);
         await setUserVersion(tx, SCHEMA_VERSION);
         return SCHEMA_VERSION;
       }
 
-      await tx.execute(`
-        CREATE TABLE IF NOT EXISTS materialized_view_state (
-          view_name TEXT NOT NULL,
-          partition TEXT NOT NULL,
-          view_version TEXT,
-          last_committed_id INTEGER,
-          value TEXT NOT NULL,
-          updated_at INTEGER NOT NULL,
-          PRIMARY KEY(view_name, partition)
-        )
-      `);
-      await ensureMaterializedViewStateCheckpointColumns(tx);
-      await tx.execute(`
-        CREATE TABLE IF NOT EXISTS materialized_view_offsets (
-          view_name TEXT PRIMARY KEY,
-          view_version TEXT NOT NULL,
-          last_committed_id INTEGER NOT NULL
-        )
-      `);
+      await createMaterializedSchema(tx);
       return nextCurrent;
     });
 
-    if (current !== 0 && current !== SCHEMA_VERSION) {
+    if (current !== SCHEMA_VERSION) {
       throw new Error(
         `Client store requires reset for schema version ${current}; runtime expects ${SCHEMA_VERSION}`,
       );

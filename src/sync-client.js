@@ -9,6 +9,7 @@ import { buildProjectScopePartition } from "./partition-scope.js";
 import {
   setStoredContext,
   toStoredDraft,
+  withStoredCommittedAliases,
   withStoredDraftAliases,
 } from "./stored-event.js";
 import { throwIfClosed } from "./store-errors.js";
@@ -220,10 +221,11 @@ export const createSyncClient = ({
           candidate !== activeProjectId && candidate !== projectScopePartition,
       ) ??
       (isNonEmptyString(event?.partition) ? event.partition : partitions[0]);
-    return setStoredContext(event, {
+    setStoredContext(event, {
       projectId: activeProjectId,
       partition,
     });
+    return withStoredCommittedAliases(event);
   };
 
   const getApproxSubmitEnvelopeBytes = (events) => {
@@ -304,17 +306,14 @@ export const createSyncClient = ({
     return error;
   };
 
-  const assertSubmitInput = (input, index) => {
-    if (!isObject(input)) {
-      throw new Error(`submitEvents item ${index} must be an object`);
-    }
-    if (input.id !== undefined && !isNonEmptyString(input.id)) {
-      throw new Error("submitEvents requires each item to have a non-empty id");
-    }
+  const isStoredEventEnvelope = (event) =>
+    isObject(event) &&
+    event.type === "event" &&
+    isObject(event.payload) &&
+    isNonEmptyString(event.payload.schema);
 
-    const hasStoredShape =
-      Array.isArray(input.partitions) && isObject(input.event);
-    if (hasStoredShape) {
+  const assertSubmitPartitionInput = (input) => {
+    if (Array.isArray(input.partitions)) {
       if (input.partitions.length === 0) {
         throw new Error("submitEvents requires partition");
       }
@@ -323,51 +322,66 @@ export const createSyncClient = ({
           throw new Error("submitEvents requires partition");
         }
       }
-      if (input.event.type !== "event") {
-        throw new Error("submitEvents requires event.type to be event");
-      }
-      if (!isObject(input.event.payload)) {
-        throw new Error("submitEvents requires event payload object");
-      }
-      if (!isNonEmptyString(input.event.payload.schema)) {
-        throw new Error("submitEvents requires event.payload.schema");
-      }
-      if (
-        toPositiveIntegerOrNull(
-          input.event.payload.schemaVersion ?? input.event.schemaVersion,
-        ) === null
-      ) {
-        throw new Error("submitEvents requires event.payload.schemaVersion");
-      }
-      return;
-    }
-
-    if (isObject(input.event)) {
-      if (!isNonEmptyString(input.partition)) {
-        throw new Error("submitEvents requires partition");
-      }
-      if (input.event.type !== "event") {
-        throw new Error("submitEvents requires event.type to be event");
-      }
-      if (!isObject(input.event.payload)) {
-        throw new Error("submitEvents requires event payload object");
-      }
-      if (!isNonEmptyString(input.event.payload.schema)) {
-        throw new Error("submitEvents requires event.payload.schema");
-      }
-      if (
-        toPositiveIntegerOrNull(
-          input.event.payload.schemaVersion ?? input.event.schemaVersion,
-        ) === null
-      ) {
-        throw new Error("submitEvents requires event.payload.schemaVersion");
-      }
       return;
     }
 
     if (!isNonEmptyString(input.partition)) {
       throw new Error("submitEvents requires partition");
     }
+  };
+
+  const normalizeSubmitInput = (input) => {
+    if (!isObject(input?.event) || isStoredEventEnvelope(input.event)) {
+      return input;
+    }
+
+    return {
+      ...input,
+      event: undefined,
+      type: input.event.type,
+      schemaVersion: input.event.schemaVersion ?? input.schemaVersion,
+      payload: input.event.payload,
+    };
+  };
+
+  const assertSubmitInput = (input, index) => {
+    if (!isObject(input)) {
+      throw new Error(`submitEvents item ${index} must be an object`);
+    }
+    if (input.id !== undefined && !isNonEmptyString(input.id)) {
+      throw new Error("submitEvents requires each item to have a non-empty id");
+    }
+
+    if (isObject(input.event)) {
+      assertSubmitPartitionInput(input);
+      if (!isObject(input.event.payload)) {
+        throw new Error("submitEvents requires event payload object");
+      }
+
+      if (isStoredEventEnvelope(input.event)) {
+        if (
+          toPositiveIntegerOrNull(
+            input.event.payload.schemaVersion ?? input.event.schemaVersion,
+          ) === null
+        ) {
+          throw new Error("submitEvents requires event.payload.schemaVersion");
+        }
+        return;
+      }
+
+      if (!isNonEmptyString(input.event.type)) {
+        throw new Error("submitEvents requires type");
+      }
+      if (
+        toPositiveIntegerOrNull(input.event.schemaVersion ?? input.schemaVersion) ===
+        null
+      ) {
+        throw new Error("submitEvents requires schemaVersion");
+      }
+      return;
+    }
+
+    assertSubmitPartitionInput(input);
     if (!isNonEmptyString(input.type)) {
       throw new Error("submitEvents requires type");
     }
@@ -921,7 +935,7 @@ export const createSyncClient = ({
     const seenIds = new Set();
     inputs.forEach(assertSubmitInput);
     const drafts = inputs.map((input) =>
-      toStoredDraft(input, {
+      toStoredDraft(normalizeSubmitInput(input), {
         defaultId: uuid(),
         defaultClientId: clientId,
         defaultProjectId: activeProjectId,

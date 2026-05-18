@@ -118,7 +118,7 @@ describeLibsql("src createLibsqlClientStore", () => {
     await store.init();
 
     const row = db._raw.prepare("PRAGMA user_version").get();
-    expect(row.user_version).toBe(2);
+    expect(row.user_version).toBe(7);
     const draftClient = db._raw
       .prepare("SELECT type FROM pragma_table_info('local_drafts') WHERE name = 'client_id'")
       .get();
@@ -151,7 +151,7 @@ describeLibsql("src createLibsqlClientStore", () => {
     await Promise.all([store.init(), store.init()]);
 
     const row = db._raw.prepare("PRAGMA user_version").get();
-    expect(row.user_version).toBe(2);
+    expect(row.user_version).toBe(7);
 
     db.close();
   });
@@ -234,14 +234,74 @@ describeLibsql("src createLibsqlClientStore", () => {
     }
   });
 
-  it("fails fast on incompatible future on-disk schema versions", async () => {
+  it("fails fast on incompatible lower on-disk schema versions", async () => {
     const db = createLibsqlClient(":memory:");
-    await db.execute("PRAGMA user_version=5;");
+    await db.execute("PRAGMA user_version=6;");
     const store = createLibsqlClientStore(db);
 
     await expect(store.init()).rejects.toThrow(
-      "Unsupported schema version 5; runtime supports up to 2",
+      "Client store schema is incompatible; reset required",
     );
+
+    db.close();
+  });
+
+  it("opens an existing compatible version 6 libSQL store", async () => {
+    const db = createLibsqlClient(":memory:");
+    db._raw.exec(`
+      CREATE TABLE local_drafts (
+        draft_clock INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT NOT NULL UNIQUE,
+        client_id TEXT NOT NULL,
+        partitions TEXT NOT NULL,
+        event TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE committed_events (
+        committed_id INTEGER PRIMARY KEY,
+        id TEXT NOT NULL UNIQUE,
+        client_id TEXT NOT NULL,
+        partitions TEXT NOT NULL,
+        event TEXT NOT NULL,
+        status_updated_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE app_state (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+
+      PRAGMA user_version=6;
+    `);
+    db._raw
+      .prepare(
+        "INSERT INTO committed_events(committed_id, id, client_id, partitions, event, status_updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        1,
+        "evt-v6-1",
+        "C1",
+        JSON.stringify(["P1", "proj-1"]),
+        JSON.stringify({
+          type: "event",
+          payload: { schema: "x", schemaVersion: 1, data: { n: 1 } },
+        }),
+        100,
+      );
+
+    const store = createLibsqlClientStore(db);
+    await store.init();
+
+    expect(db._raw.prepare("PRAGMA user_version").get().user_version).toBe(7);
+    expect(await store.listCommitted()).toEqual([
+      expect.objectContaining({
+        id: "evt-v6-1",
+        partition: "P1",
+        type: "x",
+        payload: { n: 1 },
+      }),
+    ]);
 
     db.close();
   });

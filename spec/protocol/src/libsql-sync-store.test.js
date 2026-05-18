@@ -85,6 +85,23 @@ describeLibsql("src createLibsqlSyncStore", () => {
     db.close();
   });
 
+  it("preserves top-level clientId on stored commits", async () => {
+    const db = createLibsqlClient(":memory:");
+    const store = createLibsqlSyncStore(db);
+    await store.init();
+
+    const result = await store.commitOrGetExisting(
+      makeSubmit({
+        clientId: "C-top",
+        meta: undefined,
+      }),
+    );
+
+    expect(result.committedEvent.client_id).toBe("C-top");
+
+    db.close();
+  });
+
   it("supports crash-after-persist recovery with same id dedupe", async () => {
     const dbPath = createDbPath();
 

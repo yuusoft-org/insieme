@@ -136,6 +136,38 @@ describe("src createInMemoryClientStore", () => {
     expect(await store.loadCursor()).toBe(2);
   });
 
+  it("infers the domain partition after stored context is serialized away", async () => {
+    const store = createInMemoryClientStore();
+
+    await store.applyCommittedBatch({
+      events: [
+        {
+          committed_id: 1,
+          id: "evt-scoped-1",
+          client_id: "C1",
+          partitions: ["a", "project:a", "z"],
+          event: {
+            type: "event",
+            payload: {
+              schema: "x",
+              schemaVersion: 1,
+              data: {},
+            },
+          },
+          status_updated_at: 10,
+        },
+      ],
+      nextCursor: 1,
+    });
+
+    expect(await store.listCommitted()).toEqual([
+      expect.objectContaining({
+        id: "evt-scoped-1",
+        partition: "z",
+      }),
+    ]);
+  });
+
   it("keeps cursor monotonic when an older nextCursor is received", async () => {
     const store = createInMemoryClientStore();
 

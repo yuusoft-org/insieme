@@ -232,6 +232,7 @@ export const createLibsqlSyncStore = (
 
     commitOrGetExisting: async ({
       id,
+      clientId,
       partition,
       projectId,
       partitions,
@@ -246,6 +247,7 @@ export const createLibsqlSyncStore = (
       await ensureInitialized();
       const storedEvent = toStoredCommitted({
         id,
+        clientId,
         partition,
         projectId,
         partitions,

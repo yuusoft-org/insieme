@@ -173,15 +173,19 @@ export const setStoredContext = (target, { projectId, partition } = {}) => {
 const inferStoredPartition = (event) => {
   if (isNonEmptyString(event?.__storedPartition)) return event.__storedPartition;
   const partitions = Array.isArray(event?.partitions) ? event.partitions : [];
+  const projectIds = new Set(extractProjectScopeIds(partitions));
   if (isNonEmptyString(event?.__storedProjectId)) {
-    const projectScopePartition = buildProjectScopePartition(event.__storedProjectId);
-    const scopedPartition = partitions.find(
-      (partition) =>
-        partition !== event.__storedProjectId &&
-        partition !== projectScopePartition,
-    );
-    if (isNonEmptyString(scopedPartition)) return scopedPartition;
+    projectIds.add(event.__storedProjectId);
   }
+  const scopedPartition = partitions.find((partition) => {
+    if (!isNonEmptyString(partition)) return false;
+    if (projectIds.has(partition)) return false;
+    for (const projectId of projectIds) {
+      if (partition === buildProjectScopePartition(projectId)) return false;
+    }
+    return true;
+  });
+  if (isNonEmptyString(scopedPartition)) return scopedPartition;
   return partitions[0];
 };
 

@@ -586,6 +586,52 @@ describe("src createSyncClient", () => {
     expect(store._debug.getDrafts()).toEqual([]);
   });
 
+  it("accepts documented nested legacy event submit input", async () => {
+    const client = await createStartedClient({ transport, store });
+
+    transport.emit({
+      type: "connected",
+      payload: { clientId: "C1", projectId: "proj-1", projectLastCommittedId: 0 },
+    });
+    await tick();
+
+    transport.emit({
+      type: "sync_response",
+      payload: {
+        projectId: "proj-1",
+        events: [],
+        nextSinceCommittedId: 0,
+        hasMore: false,
+      },
+    });
+    await tick();
+
+    await client.submitEvent({
+      id: "evt-nested-legacy",
+      partition: "P1",
+      event: {
+        type: "event",
+        schemaVersion: 1,
+        payload: { n: 1 },
+      },
+    });
+
+    const submit = transport.sent.find((message) => message.type === "submit_events");
+    expect(submit.payload.events[0]).toMatchObject({
+      id: "evt-nested-legacy",
+      clientId: "C1",
+      partitions: ["P1", "proj-1"],
+      event: {
+        type: "event",
+        payload: {
+          schema: "event",
+          schemaVersion: 1,
+          data: { n: 1 },
+        },
+      },
+    });
+  });
+
   it("rejects an oversized queued draft locally without sending it", async () => {
     const events = [];
     const client = await createStartedClient({

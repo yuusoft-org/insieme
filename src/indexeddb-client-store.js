@@ -11,7 +11,7 @@ import {
   withStoredDraftAliases,
 } from "./stored-event.js";
 
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 9;
 const DEFAULT_DB_NAME = "insieme-client";
 const META_STORE = "meta";
 const DRAFT_STORE = "drafts";
@@ -118,11 +118,12 @@ const openDatabase = ({ indexedDB, dbName }) =>
     request.onupgradeneeded = () => {
       const db = request.result;
 
-      if (!db.objectStoreNames.contains(META_STORE)) {
-        db.createObjectStore(META_STORE, {
-          keyPath: "key",
-        });
+      if (db.objectStoreNames.contains(META_STORE)) {
+        db.deleteObjectStore(META_STORE);
       }
+      db.createObjectStore(META_STORE, {
+        keyPath: "key",
+      });
 
       if (db.objectStoreNames.contains(DRAFT_STORE)) {
         db.deleteObjectStore(DRAFT_STORE);

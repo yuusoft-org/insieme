@@ -16,7 +16,7 @@ import {
 } from "./stored-event.js";
 import { throwIfClosed } from "./store-errors.js";
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 7;
 const DEFAULT_MATERIALIZED_BACKFILL_CHUNK_SIZE = 512;
 
 const createTransaction = (db, fn) => {
@@ -250,7 +250,7 @@ export const createSqliteClientStore = (
       return;
     }
 
-    if (current === 1) {
+    if (current < SCHEMA_VERSION) {
       const migrationTxn = createTransaction(db, () => {
         createMaterializedSchema();
         validateSchema();
@@ -645,6 +645,7 @@ export const createSqliteClientStore = (
 
     insertDraft: async ({
       id,
+      clientId,
       projectId,
       userId,
       partition,
@@ -659,7 +660,7 @@ export const createSqliteClientStore = (
       ensureInitialized();
       const draft = toStoredDraft({
         id,
-        clientId: meta?.clientId,
+        clientId,
         projectId,
         userId,
         partition,
