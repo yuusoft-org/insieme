@@ -15,6 +15,7 @@ import {
 import {
   getStoredCommittedId,
   getStoredStatusUpdatedAt,
+  getStoredUserId,
   toPublicCommittedEvent,
   toStoredDraft,
 } from "./stored-event.js";
@@ -530,6 +531,9 @@ export const createSyncServer = ({
       }
     }
 
+    const claimsUserId = isNonEmptyString(session.identity?.claims?.userId)
+      ? session.identity.claims.userId
+      : undefined;
     /** @type {object[]} */
     const results = [];
     /** @type {object[]} */
@@ -622,6 +626,23 @@ export const createSyncServer = ({
           "forbidden",
           "projectId must match authenticated session project",
         );
+        continue;
+      }
+      const submittedUserId = getStoredUserId(item);
+      const hasSubmittedUserId =
+        item.userId !== undefined ||
+        item.user_id !== undefined ||
+        (isObject(item.event) && item.event.__storedUserId !== undefined);
+      if (hasSubmittedUserId && !isNonEmptyString(submittedUserId)) {
+        pushRejected(
+          item.id,
+          "validation_failed",
+          "userId must be a non-empty string when provided",
+        );
+        continue;
+      }
+      if (claimsUserId && submittedUserId && submittedUserId !== claimsUserId) {
+        pushRejected(item.id, "forbidden", "userId must match authenticated user");
         continue;
       }
 

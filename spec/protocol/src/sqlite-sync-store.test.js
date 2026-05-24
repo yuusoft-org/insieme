@@ -316,6 +316,7 @@ describeSqlite("src createSqliteSyncStore", () => {
         committedId: 7,
         id: "routevn-legacy-1",
         partition: "project:proj-1:story",
+        userId: "user-1",
         type: "scene.create",
         schemaVersion: 2,
         payload: { sceneId: "s1" },

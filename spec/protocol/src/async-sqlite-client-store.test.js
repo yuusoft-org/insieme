@@ -182,6 +182,131 @@ describeSqlite("src createAsyncSqliteClientStore", () => {
     await store.close();
   });
 
+  it("migrates a legacy flat version 6 async SQLite client database without data loss", async () => {
+    const driver = createAsyncSqliteDriver(":memory:");
+    driver._raw.exec(`
+      CREATE TABLE local_drafts (
+        draft_clock INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT NOT NULL UNIQUE,
+        partition TEXT NOT NULL,
+        type TEXT NOT NULL,
+        schema_version INTEGER NOT NULL,
+        payload BLOB NOT NULL,
+        payload_compression TEXT DEFAULT NULL,
+        client_ts INTEGER NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE committed_events (
+        committed_id INTEGER PRIMARY KEY,
+        id TEXT NOT NULL UNIQUE,
+        project_id TEXT,
+        user_id TEXT,
+        partition TEXT NOT NULL,
+        type TEXT NOT NULL,
+        schema_version INTEGER NOT NULL,
+        payload BLOB NOT NULL,
+        payload_compression TEXT DEFAULT NULL,
+        client_ts INTEGER NOT NULL,
+        server_ts INTEGER NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE app_state (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+
+      PRAGMA user_version=6;
+    `);
+    driver._raw
+      .prepare(
+        `INSERT INTO local_drafts(
+          draft_clock,
+          id,
+          partition,
+          type,
+          schema_version,
+          payload,
+          client_ts,
+          created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        3,
+        "draft-v6-1",
+        "project:proj-1:story",
+        "scene.update",
+        2,
+        JSON.stringify({ sceneId: "s2" }),
+        301,
+        302,
+      );
+    driver._raw
+      .prepare(
+        `INSERT INTO committed_events(
+          committed_id,
+          id,
+          project_id,
+          user_id,
+          partition,
+          type,
+          schema_version,
+          payload,
+          client_ts,
+          server_ts,
+          created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        7,
+        "committed-v6-1",
+        "proj-1",
+        "user-1",
+        "project:proj-1:story",
+        "scene.create",
+        2,
+        JSON.stringify({ sceneId: "s1" }),
+        101,
+        202,
+        203,
+      );
+
+    const store = createAsyncSqliteClientStore({ driver });
+    await store.init();
+
+    expect(driver._raw.prepare("PRAGMA user_version").get().user_version).toBe(7);
+    expect(
+      driver._raw
+        .prepare(
+          "SELECT name FROM pragma_table_info('committed_events') WHERE name = 'project_id'",
+        )
+        .get(),
+    ).toBeUndefined();
+
+    const drafts = await store.listDraftsOrdered();
+    expect(drafts[0]).toMatchObject({
+      id: "draft-v6-1",
+      partition: "project:proj-1:story",
+      type: "scene.update",
+      schemaVersion: 2,
+      payload: { sceneId: "s2" },
+    });
+
+    const committed = await store.listCommitted();
+    expect(committed[0].committedId).toBe(7);
+    expect(committed[0].id).toBe("committed-v6-1");
+    expect(committed[0].projectId).toBe("proj-1");
+    expect(committed[0].userId).toBe("user-1");
+    expect(committed[0].partition).toBe("project:proj-1:story");
+    expect(committed[0].type).toBe("scene.create");
+    expect(committed[0].schemaVersion).toBe(2);
+    expect(committed[0].payload).toEqual({ sceneId: "s1" });
+    expect(committed[0].serverTs).toBe(202);
+
+    await store.close();
+  });
+
   it("exposes subscriptions and stable inspection APIs", async () => {
     const driver = createAsyncSqliteDriver(":memory:");
     const store = createAsyncSqliteClientStore({

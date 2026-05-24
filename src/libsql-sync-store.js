@@ -3,10 +3,12 @@ import {
   normalizePartitionSet,
 } from "./canonicalize.js";
 import {
+  buildProjectScopePartition,
   getProjectPartitions,
   partitionSetBelongsToProject,
 } from "./partition-scope.js";
 import { createLibsqlDriver, parseIntSafe } from "./libsql-driver.js";
+import { deserializePayload } from "./payload-codec.js";
 import {
   parseStoredEvent,
   parseStoredPartitions,
@@ -15,7 +17,7 @@ import {
   withStoredCommittedAliases,
 } from "./stored-event.js";
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 5;
 const DEFAULT_SCAN_CHUNK_SIZE = 512;
 
 const toComparisonKey = (event) => toStoredComparisonKey(event);
@@ -30,6 +32,47 @@ const getTableColumnType = async (db, tableName, columnName) => {
   const column = rows.find((row) => row.name === columnName);
   return typeof column?.type === "string" ? column.type.toUpperCase() : null;
 };
+
+const tableExists = async (db, tableName) => {
+  const row = await db.queryOne(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+    [tableName],
+  );
+  return row !== null && row !== undefined;
+};
+
+const hasCompatibleSchema = async (db) => {
+  const hasClientId = await tableHasColumn(db, "committed_events", "client_id");
+  const hasPartitions = await tableHasColumn(
+    db,
+    "committed_events",
+    "partitions",
+  );
+  const hasEvent = await tableHasColumn(db, "committed_events", "event");
+  const hasCanonical = await tableHasColumn(db, "committed_events", "canonical");
+  const hasStatusUpdatedAt = await tableHasColumn(
+    db,
+    "committed_events",
+    "status_updated_at",
+  );
+  const eventType = await getTableColumnType(db, "committed_events", "event");
+  return (
+    hasClientId &&
+    hasPartitions &&
+    hasEvent &&
+    hasCanonical &&
+    hasStatusUpdatedAt &&
+    eventType === "TEXT"
+  );
+};
+
+const hasLegacyFlatSchema = async (db) =>
+  (await tableHasColumn(db, "committed_events", "project_id")) &&
+  (await tableHasColumn(db, "committed_events", "partition")) &&
+  (await tableHasColumn(db, "committed_events", "type")) &&
+  (await tableHasColumn(db, "committed_events", "schema_version")) &&
+  (await tableHasColumn(db, "committed_events", "payload")) &&
+  (await tableHasColumn(db, "committed_events", "server_ts"));
 
 export const createLibsqlSyncStore = (
   client,
@@ -89,30 +132,83 @@ export const createLibsqlSyncStore = (
   };
 
   const validateSchema = async () => {
-    const hasClientId = await tableHasColumn(db, "committed_events", "client_id");
-    const hasPartitions = await tableHasColumn(
-      db,
-      "committed_events",
-      "partitions",
-    );
-    const hasEvent = await tableHasColumn(db, "committed_events", "event");
-    const hasCanonical = await tableHasColumn(db, "committed_events", "canonical");
-    const hasStatusUpdatedAt = await tableHasColumn(
-      db,
-      "committed_events",
-      "status_updated_at",
-    );
-    const eventType = await getTableColumnType(db, "committed_events", "event");
-    if (
-      !hasClientId ||
-      !hasPartitions ||
-      !hasEvent ||
-      !hasCanonical ||
-      !hasStatusUpdatedAt ||
-      eventType !== "TEXT"
-    ) {
+    if (!(await hasCompatibleSchema(db))) {
       throw new Error("Sync store schema is incompatible; reset required");
     }
+  };
+
+  const migrateLegacyFlatSchema = async () => {
+    await db.execute("ALTER TABLE committed_events RENAME TO committed_events_legacy_v4;");
+    await createSchema();
+
+    const rows = await db.queryAll(`
+      SELECT
+        committed_id,
+        id,
+        project_id,
+        user_id,
+        partition,
+        type,
+        schema_version,
+        payload,
+        client_ts,
+        server_ts,
+        created_at
+      FROM committed_events_legacy_v4
+      ORDER BY committed_id ASC
+    `);
+
+    for (const row of rows) {
+      const projectId = row.project_id || undefined;
+      const partition = row.partition || undefined;
+      const statusUpdatedAt =
+        parseIntSafe(row.server_ts, 0) || parseIntSafe(row.created_at, 0);
+      const committed = toStoredCommitted({
+        committed_id: parseIntSafe(row.committed_id, 0),
+        id: row.id,
+        clientId: "",
+        projectId,
+        userId: row.user_id || undefined,
+        partition,
+        partitions: normalizePartitionSet([
+          projectId,
+          projectId ? buildProjectScopePartition(projectId) : undefined,
+          partition,
+        ]),
+        type: row.type,
+        schemaVersion: parseIntSafe(row.schema_version, 1),
+        payload: deserializePayload(row.payload),
+        meta: { clientTs: parseIntSafe(row.client_ts, 0) },
+        status_updated_at: statusUpdatedAt,
+        serverTs: statusUpdatedAt,
+      });
+      const comparisonKey = toComparisonKey(committed);
+      await db.execute(
+        `
+          INSERT INTO committed_events(
+            committed_id,
+            id,
+            client_id,
+            partitions,
+            event,
+            canonical,
+            status_updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        `,
+        [
+          committed.committed_id,
+          committed.id,
+          committed.client_id || "",
+          JSON.stringify(committed.partitions),
+          JSON.stringify(committed.event),
+          comparisonKey,
+          committed.status_updated_at,
+        ],
+      );
+    }
+
+    await db.execute("DROP TABLE committed_events_legacy_v4;");
+    await validateSchema();
   };
 
   const initializeSchema = async () => {
@@ -123,20 +219,32 @@ export const createLibsqlSyncStore = (
       );
     }
 
-    if (current === 0) {
-      await createSchema();
+    const hasCommittedEventsTable = await tableExists(db, "committed_events");
+    if (!hasCommittedEventsTable) {
+      if (current === 0) {
+        await createSchema();
+        await validateSchema();
+        await setUserVersion(SCHEMA_VERSION);
+        return;
+      }
+      throw new Error("Sync store schema is incompatible; reset required");
+    }
+
+    if (await hasCompatibleSchema(db)) {
       await validateSchema();
+      if (current !== SCHEMA_VERSION) {
+        await setUserVersion(SCHEMA_VERSION);
+      }
+      return;
+    }
+
+    if (await hasLegacyFlatSchema(db)) {
+      await migrateLegacyFlatSchema();
       await setUserVersion(SCHEMA_VERSION);
       return;
     }
 
-    if (current !== SCHEMA_VERSION) {
-      throw new Error(
-        `Sync store requires reset for schema version ${current}; runtime expects ${SCHEMA_VERSION}`,
-      );
-    }
-
-    await validateSchema();
+    throw new Error("Sync store schema is incompatible; reset required");
   };
 
   const getById = async (id) =>

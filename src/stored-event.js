@@ -30,7 +30,17 @@ export const parseStoredPartitions = (value) =>
 
 export const parseStoredEvent = (value) => {
   const parsed = typeof value === "string" ? safeJsonParse(value, {}) : value;
-  return isObject(parsed) ? parsed : {};
+  if (!isObject(parsed)) return {};
+  if (isNonEmptyString(parsed.__storedUserId)) {
+    const userId = parsed.__storedUserId;
+    delete parsed.__storedUserId;
+    Object.defineProperty(parsed, "__storedUserId", {
+      configurable: true,
+      enumerable: false,
+      value: userId,
+    });
+  }
+  return parsed;
 };
 
 export const getStoredCommittedId = (event) =>
@@ -58,6 +68,18 @@ export const getStoredClientId = (event, fallback) =>
         ? event.meta.clientId
         : fallback;
 
+export const getStoredUserId = (event, fallback) => {
+  const userId = ownValue(event, "userId");
+  if (isNonEmptyString(userId)) return userId;
+  const user_id = ownValue(event, "user_id");
+  if (isNonEmptyString(user_id)) return user_id;
+  if (isNonEmptyString(event?.event?.__storedUserId)) {
+    return event.event.__storedUserId;
+  }
+  if (isNonEmptyString(event?.__storedUserId)) return event.__storedUserId;
+  return fallback;
+};
+
 export const getStoredPartitions = (event) => {
   if (Array.isArray(event?.partitions)) {
     return normalizePartitionSet(event.partitions);
@@ -67,8 +89,9 @@ export const getStoredPartitions = (event) => {
     : isNonEmptyString(event?.__storedPartition)
       ? event.__storedPartition
       : undefined;
-  const projectId = isNonEmptyString(event?.projectId)
-    ? event.projectId
+  const ownProjectId = ownValue(event, "projectId");
+  const projectId = isNonEmptyString(ownProjectId)
+    ? ownProjectId
     : isNonEmptyString(event?.__storedProjectId)
       ? event.__storedProjectId
       : undefined;
@@ -78,6 +101,7 @@ export const getStoredPartitions = (event) => {
 export const getStoredDomainEvent = (event) => {
   if (isObject(event?.event)) {
     const domainEvent = structuredClone(event.event);
+    delete domainEvent.__storedUserId;
     if (
       domainEvent.type === "event" &&
       isObject(domainEvent.payload) &&
@@ -174,6 +198,15 @@ export const setStoredContext = (target, { projectId, partition } = {}) => {
   return target;
 };
 
+const inferStoredProjectId = (event) => {
+  if (isNonEmptyString(event?.__storedProjectId)) return event.__storedProjectId;
+  const partitions = Array.isArray(event?.partitions)
+    ? normalizePartitionSet(event.partitions)
+    : [];
+  const scopedProjectIds = extractProjectScopeIds(partitions);
+  return scopedProjectIds.length === 1 ? scopedProjectIds[0] : undefined;
+};
+
 const inferStoredPartition = (event) => {
   if (isNonEmptyString(event?.__storedPartition)) return event.__storedPartition;
   const partitions = Array.isArray(event?.partitions) ? event.partitions : [];
@@ -195,8 +228,10 @@ const inferStoredPartition = (event) => {
 
 export const withStoredDraftAliases = (draft) => {
   defineAlias(draft, "client_id", () => draft.clientId);
+  defineAlias(draft, "userId", () => getStoredUserId(draft));
+  defineAlias(draft, "user_id", () => getStoredUserId(draft));
   defineAlias(draft, "created_at", () => draft.createdAt);
-  defineAlias(draft, "projectId", () => draft.__storedProjectId);
+  defineAlias(draft, "projectId", () => inferStoredProjectId(draft));
   defineAlias(draft, "partition", () => inferStoredPartition(draft));
   defineAlias(draft, "type", () => getStoredEventSchema(draft));
   defineAlias(draft, "schemaVersion", () => getStoredSchemaVersion(draft));
@@ -212,9 +247,11 @@ export const withStoredDraftAliases = (draft) => {
 export const withStoredCommittedAliases = (event) => {
   defineAlias(event, "committedId", () => event.committed_id);
   defineAlias(event, "clientId", () => event.client_id);
+  defineAlias(event, "userId", () => getStoredUserId(event));
+  defineAlias(event, "user_id", () => getStoredUserId(event));
   defineAlias(event, "serverTs", () => event.status_updated_at);
   defineAlias(event, "createdAt", () => event.status_updated_at);
-  defineAlias(event, "projectId", () => event.__storedProjectId);
+  defineAlias(event, "projectId", () => inferStoredProjectId(event));
   defineAlias(event, "partition", () => inferStoredPartition(event));
   defineAlias(event, "type", () => getStoredEventSchema(event));
   defineAlias(event, "schemaVersion", () => getStoredSchemaVersion(event));
@@ -225,6 +262,14 @@ export const withStoredCommittedAliases = (event) => {
   }));
   defineAlias(event, "clientTs", () => event.status_updated_at);
   return event;
+};
+
+const withStoredEventMetadata = (event, { userId } = {}) => {
+  const storedEvent = structuredClone(event);
+  if (isNonEmptyString(userId)) {
+    storedEvent.__storedUserId = userId;
+  }
+  return storedEvent;
 };
 
 export const toPublicCommittedEvent = (
@@ -255,17 +300,14 @@ export const toPublicCommittedEvent = (
     defaultClientId: clientId,
     defaultClientTs: clientTs,
   });
+  const userId = getStoredUserId(event);
 
   return {
     committedId: getStoredCommittedId(event),
     committed_id: getStoredCommittedId(event),
     id: event?.id,
     projectId,
-    userId: isNonEmptyString(event?.userId)
-      ? event.userId
-      : isNonEmptyString(event?.user_id)
-        ? event.user_id
-        : undefined,
+    userId,
     partition,
     partitions,
     type: getStoredEventSchema(event),
@@ -308,12 +350,14 @@ export const toStoredDraft = (
     input?.projectId ?? input?.__storedProjectId ?? defaultProjectId,
     input?.partition ?? input?.__storedPartition,
   ]);
+  const userId = getStoredUserId(input);
 
   const draft = {
     id: isNonEmptyString(input?.id) ? input.id : defaultId,
     clientId,
+    userId,
     partitions,
-    event: getStoredDomainEvent(input),
+    event: withStoredEventMetadata(getStoredDomainEvent(input), { userId }),
     createdAt,
   };
   setStoredContext(draft, {
@@ -341,6 +385,7 @@ export const toStoredCommitted = (
     committed_id: getStoredCommittedId(input) || defaultCommittedId,
     id: draft.id,
     client_id: draft.clientId,
+    userId: draft.userId,
     partitions: draft.partitions,
     event: draft.event,
     status_updated_at: getStoredStatusUpdatedAt(input) || defaultStatusUpdatedAt,
@@ -391,7 +436,9 @@ const getComparisonPartitions = (event) => {
 export const toStoredComparisonKey = (event) =>
   canonicalizeSubmitItem({
     partitions: getComparisonPartitions(event),
-    event: getStoredDomainEvent(event),
+    event: withStoredEventMetadata(getStoredDomainEvent(event), {
+      userId: getStoredUserId(event),
+    }),
   });
 
 export const toReducerEvent = (event) => {

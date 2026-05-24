@@ -1,6 +1,9 @@
+import { normalizePartitionSet } from "./canonicalize.js";
 import { parseIntSafe } from "./libsql-driver.js";
 import { normalizeMaterializedViewDefinitions } from "./materialized-view.js";
 import { createMaterializedViewRuntime } from "./materialized-view-runtime.js";
+import { deserializePayload } from "./payload-codec.js";
+import { buildProjectScopePartition } from "./partition-scope.js";
 import {
   createClosedResourceError,
   throwIfClosed,
@@ -84,6 +87,64 @@ const getTableColumnType = async (tx, tableName, columnName) => {
   const column = rows.find((row) => row.name === columnName);
   return typeof column?.type === "string" ? column.type.toUpperCase() : null;
 };
+
+const tableExists = async (tx, tableName) => {
+  const rows = await tx.query(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+    [tableName],
+  );
+  return rows.length > 0;
+};
+
+const hasCompatibleClientSchema = async (tx) => {
+  const hasDraftClientId = await tableHasColumn(tx, "local_drafts", "client_id");
+  const hasDraftPartitions = await tableHasColumn(
+    tx,
+    "local_drafts",
+    "partitions",
+  );
+  const hasDraftEvent = await tableHasColumn(tx, "local_drafts", "event");
+  const hasCommittedClientId = await tableHasColumn(
+    tx,
+    "committed_events",
+    "client_id",
+  );
+  const hasCommittedPartitions = await tableHasColumn(
+    tx,
+    "committed_events",
+    "partitions",
+  );
+  const hasCommittedEvent = await tableHasColumn(tx, "committed_events", "event");
+  const hasCommittedStatusUpdatedAt = await tableHasColumn(
+    tx,
+    "committed_events",
+    "status_updated_at",
+  );
+  const draftEventType = await getTableColumnType(tx, "local_drafts", "event");
+  const committedEventType = await getTableColumnType(tx, "committed_events", "event");
+  return (
+    hasDraftClientId &&
+    hasDraftPartitions &&
+    hasDraftEvent &&
+    hasCommittedClientId &&
+    hasCommittedPartitions &&
+    hasCommittedEvent &&
+    hasCommittedStatusUpdatedAt &&
+    draftEventType === "TEXT" &&
+    committedEventType === "TEXT"
+  );
+};
+
+const hasLegacyFlatClientSchema = async (tx) =>
+  (await tableHasColumn(tx, "local_drafts", "partition")) &&
+  (await tableHasColumn(tx, "local_drafts", "type")) &&
+  (await tableHasColumn(tx, "local_drafts", "schema_version")) &&
+  (await tableHasColumn(tx, "local_drafts", "payload")) &&
+  (await tableHasColumn(tx, "committed_events", "partition")) &&
+  (await tableHasColumn(tx, "committed_events", "type")) &&
+  (await tableHasColumn(tx, "committed_events", "schema_version")) &&
+  (await tableHasColumn(tx, "committed_events", "payload")) &&
+  (await tableHasColumn(tx, "committed_events", "server_ts"));
 
 const ensureMaterializedViewStateCheckpointColumns = async (tx) => {
   if (!(await tableHasColumn(tx, "materialized_view_state", "view_version"))) {
@@ -293,44 +354,129 @@ export const createAsyncSqliteClientStore = ({
   };
 
   const validateSchema = async (tx) => {
-    const hasDraftClientId = await tableHasColumn(tx, "local_drafts", "client_id");
-    const hasDraftPartitions = await tableHasColumn(
-      tx,
-      "local_drafts",
-      "partitions",
-    );
-    const hasDraftEvent = await tableHasColumn(tx, "local_drafts", "event");
-    const hasCommittedClientId = await tableHasColumn(
-      tx,
-      "committed_events",
-      "client_id",
-    );
-    const hasCommittedPartitions = await tableHasColumn(
-      tx,
-      "committed_events",
-      "partitions",
-    );
-    const hasCommittedEvent = await tableHasColumn(tx, "committed_events", "event");
-    const hasCommittedStatusUpdatedAt = await tableHasColumn(
-      tx,
-      "committed_events",
-      "status_updated_at",
-    );
-    const draftEventType = await getTableColumnType(tx, "local_drafts", "event");
-    const committedEventType = await getTableColumnType(tx, "committed_events", "event");
-    if (
-      !hasDraftClientId ||
-      !hasDraftPartitions ||
-      !hasDraftEvent ||
-      !hasCommittedClientId ||
-      !hasCommittedPartitions ||
-      !hasCommittedEvent ||
-      !hasCommittedStatusUpdatedAt ||
-      draftEventType !== "TEXT" ||
-      committedEventType !== "TEXT"
-    ) {
+    if (!(await hasCompatibleClientSchema(tx))) {
       throw new Error("Client store schema is incompatible; reset required");
     }
+  };
+
+  const migrateLegacyFlatSchema = async (tx) => {
+    await tx.execute("ALTER TABLE local_drafts RENAME TO local_drafts_legacy_v6");
+    await tx.execute("ALTER TABLE committed_events RENAME TO committed_events_legacy_v6");
+    await createSchema(tx);
+
+    const draftRows = await tx.query(`
+      SELECT
+        draft_clock,
+        id,
+        partition,
+        type,
+        schema_version,
+        payload,
+        client_ts,
+        created_at
+      FROM local_drafts_legacy_v6
+      ORDER BY draft_clock ASC, id ASC
+    `);
+    const committedRows = await tx.query(`
+      SELECT
+        committed_id,
+        id,
+        project_id,
+        user_id,
+        partition,
+        type,
+        schema_version,
+        payload,
+        client_ts,
+        server_ts,
+        created_at
+      FROM committed_events_legacy_v6
+      ORDER BY committed_id ASC
+    `);
+
+    for (const row of draftRows) {
+      const draft = toStoredDraft({
+        id: row.id,
+        clientId: "",
+        partition: row.partition || undefined,
+        partitions: normalizePartitionSet([row.partition || undefined]),
+        type: row.type,
+        schemaVersion: parseIntSafe(row.schema_version, 0),
+        payload: deserializePayload(row.payload),
+        meta: { clientTs: parseIntSafe(row.client_ts, 0) },
+        createdAt: parseIntSafe(row.created_at, 0),
+      });
+      await tx.execute(
+        `
+          INSERT INTO local_drafts(
+            draft_clock,
+            id,
+            client_id,
+            partitions,
+            event,
+            created_at
+          ) VALUES (?, ?, ?, ?, ?, ?)
+        `,
+        [
+          parseIntSafe(row.draft_clock, 0),
+          draft.id,
+          draft.clientId || "",
+          JSON.stringify(draft.partitions),
+          JSON.stringify(draft.event),
+          draft.createdAt,
+        ],
+      );
+    }
+
+    for (const row of committedRows) {
+      const projectId = row.project_id || undefined;
+      const partition = row.partition || undefined;
+      const statusUpdatedAt =
+        parseIntSafe(row.server_ts, 0) || parseIntSafe(row.created_at, 0);
+      const committed = toStoredCommitted({
+        committed_id: parseIntSafe(row.committed_id, 0),
+        id: row.id,
+        clientId: "",
+        projectId,
+        userId: row.user_id || undefined,
+        partition,
+        partitions: normalizePartitionSet([
+          projectId,
+          projectId ? buildProjectScopePartition(projectId) : undefined,
+          partition,
+        ]),
+        type: row.type,
+        schemaVersion: parseIntSafe(row.schema_version, 0),
+        payload: deserializePayload(row.payload),
+        meta: { clientTs: parseIntSafe(row.client_ts, 0) },
+        status_updated_at: statusUpdatedAt,
+        serverTs: statusUpdatedAt,
+      });
+      await tx.execute(
+        `
+          INSERT INTO committed_events(
+            committed_id,
+            id,
+            client_id,
+            partitions,
+            event,
+            status_updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?)
+        `,
+        [
+          committed.committed_id,
+          committed.id,
+          committed.client_id || "",
+          JSON.stringify(committed.partitions),
+          JSON.stringify(committed.event),
+          committed.status_updated_at,
+        ],
+      );
+    }
+
+    await tx.execute("DROP TABLE local_drafts_legacy_v6");
+    await tx.execute("DROP TABLE committed_events_legacy_v6");
+    await validateSchema(tx);
   };
 
   const initializeSchema = async () => {
@@ -343,22 +489,35 @@ export const createAsyncSqliteClientStore = ({
         );
       }
 
-      if (nextCurrent === 0) {
-        await createSchema(tx);
-        await validateSchema(tx);
-        await setUserVersion(tx, SCHEMA_VERSION);
-        return SCHEMA_VERSION;
+      const hasClientTables =
+        (await tableExists(tx, "local_drafts")) &&
+        (await tableExists(tx, "committed_events"));
+      if (!hasClientTables) {
+        if (nextCurrent === 0) {
+          await createSchema(tx);
+          await validateSchema(tx);
+          await setUserVersion(tx, SCHEMA_VERSION);
+          return SCHEMA_VERSION;
+        }
+        throw new Error("Client store schema is incompatible; reset required");
       }
 
-      if (nextCurrent < SCHEMA_VERSION) {
+      if (await hasCompatibleClientSchema(tx)) {
         await createMaterializedSchema(tx);
         await validateSchema(tx);
+        if (nextCurrent !== SCHEMA_VERSION) {
+          await setUserVersion(tx, SCHEMA_VERSION);
+        }
+        return SCHEMA_VERSION;
+      }
+
+      if (await hasLegacyFlatClientSchema(tx)) {
+        await migrateLegacyFlatSchema(tx);
         await setUserVersion(tx, SCHEMA_VERSION);
         return SCHEMA_VERSION;
       }
 
-      await createMaterializedSchema(tx);
-      return nextCurrent;
+      throw new Error("Client store schema is incompatible; reset required");
     });
 
     if (current !== SCHEMA_VERSION) {

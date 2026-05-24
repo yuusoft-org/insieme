@@ -169,6 +169,87 @@ describe("src createSyncServer", () => {
     });
   });
 
+  it("preserves submitted userId through validation and broadcast", async () => {
+    const seenValidationItems = [];
+    const { server } = createServer({
+      validate: async (item) => {
+        seenValidationItems.push(item);
+      },
+      verifyToken: async (token) => ({
+        clientId: token === "jwt-c2" ? "C2" : "C1",
+        claims: { userId: token === "jwt-c2" ? "user-2" : "user-1" },
+      }),
+    });
+
+    const c1 = createConnectionTransport("c1");
+    const c2 = createConnectionTransport("c2");
+    const s1 = server.attachConnection(c1);
+    const s2 = server.attachConnection(c2);
+
+    await connectSession({ session: s1, clientId: "C1", token: "jwt-c1" });
+    await connectSession({ session: s2, clientId: "C2", token: "jwt-c2" });
+    await syncSession({ session: s1 });
+    await syncSession({ session: s2 });
+
+    await s1.receive({
+      type: "submit_events",
+      protocolVersion: "1.0",
+      payload: {
+        events: [
+          toSubmitItem({
+            id: "evt-user-1",
+            userId: "user-1",
+            event: { type: "x", payload: { n: 1 } },
+          }),
+        ],
+      },
+    });
+
+    expect(seenValidationItems[0].userId).toBe("user-1");
+    const c2Broadcast = c2.sent.find((message) => message.type === "event_broadcast");
+    expect(c2Broadcast.payload).toMatchObject({
+      id: "evt-user-1",
+      userId: "user-1",
+      projectId: "proj-1",
+      partition: "P1",
+    });
+    expect(c2Broadcast.payload.event.__storedUserId).toBeUndefined();
+  });
+
+  it("rejects submitted userId that does not match authenticated claims", async () => {
+    const { server } = createServer({
+      verifyToken: async () => ({
+        clientId: "C1",
+        claims: { userId: "user-1" },
+      }),
+    });
+    const c1 = createConnectionTransport("c1");
+    const s1 = server.attachConnection(c1);
+
+    await connectSession({ session: s1 });
+    await syncSession({ session: s1 });
+
+    await s1.receive({
+      type: "submit_events",
+      protocolVersion: "1.0",
+      payload: {
+        events: [
+          toSubmitItem({
+            id: "evt-spoof-user",
+            userId: "user-2",
+          }),
+        ],
+      },
+    });
+
+    const result = c1.sent.find((message) => message.type === "submit_events_result");
+    expect(result.payload.results[0]).toMatchObject({
+      id: "evt-spoof-user",
+      status: "rejected",
+      reason: "forbidden",
+    });
+  });
+
   it("PT-SC-02 [SC-02]: rejected submit on validation failure", async () => {
     const { server } = createServer({
       validate: async () => {
