@@ -56,7 +56,7 @@ const connectSession = async ({
 
 describe("chaos: connection drop mid-sync", () => {
   it("does not affect other sessions when one connection closes mid-submit", async () => {
-    const { server, store } = createServer({
+    const { server } = createServer({
       authorize: async () => true,
     });
 

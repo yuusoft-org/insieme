@@ -159,12 +159,14 @@ describe("regression: auth session validation", () => {
     const s1 = server.attachConnection(c1);
     await connectSession({ session: s1 });
 
-    const firstSync = await s1.receive({
-      type: "sync",
-      protocolVersion: "1.0",
-      msgId: "sync-ok",
-      payload: { projectId: "proj-1", sinceCommittedId: 0, limit: 10 },
-    });
+    await expect(
+      s1.receive({
+        type: "sync",
+        protocolVersion: "1.0",
+        msgId: "sync-ok",
+        payload: { projectId: "proj-1", sinceCommittedId: 0, limit: 10 },
+      }),
+    ).resolves.toBeUndefined();
     expect(c1.sent.find((m) => m.msgId === "sync-ok").type).toBe(
       "sync_response",
     );

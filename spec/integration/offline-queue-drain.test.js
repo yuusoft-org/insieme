@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createTestServer } from "../harness/create-test-server.js";
 import { createTestClient } from "../harness/create-test-client.js";
-import { createInMemoryClientStore } from "../../src/in-memory-client-store.js";
 import { tick } from "../harness/event-helpers.js";
 
 /**
@@ -13,7 +12,6 @@ describe("integration offline-queue-drain", () => {
   it("drafts queued while stopped are drained after restart", async () => {
     const { server } = createTestServer();
 
-    const sharedStore = createInMemoryClientStore();
     const clientId = "C1";
 
     let node = createTestClient({ server, clientId, store: undefined });

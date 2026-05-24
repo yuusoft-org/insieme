@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
 const docsDir = path.resolve("docs/sync-scenarios");
-const testsDir = path.resolve("spec/protocol");
+const testsDir = path.resolve("spec");
 
 const collectFiles = (dir, predicate) => {
   const out = [];

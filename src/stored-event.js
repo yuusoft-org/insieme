@@ -5,6 +5,7 @@ import {
 import {
   isNonEmptyString,
   isObject,
+  normalizeClientTs,
   normalizeMeta,
   toFiniteNumberOrNull,
   toPositiveIntegerOrNull,
@@ -89,13 +90,16 @@ export const getStoredDomainEvent = (event) => {
     return domainEvent;
   }
 
-  if (isNonEmptyString(event?.type) && isObject(event?.payload)) {
+  const type = ownValue(event, "type");
+  const payload = ownValue(event, "payload");
+  const schemaVersion = ownValue(event, "schemaVersion");
+  if (isNonEmptyString(type) && isObject(payload)) {
     return {
       type: "event",
       payload: {
-        schema: event.type,
-        schemaVersion: toPositiveIntegerOrNull(event.schemaVersion) ?? 1,
-        data: structuredClone(event.payload),
+        schema: type,
+        schemaVersion: toPositiveIntegerOrNull(schemaVersion) ?? 1,
+        data: structuredClone(payload),
       },
     };
   }
@@ -223,6 +227,61 @@ export const withStoredCommittedAliases = (event) => {
   return event;
 };
 
+export const toPublicCommittedEvent = (
+  event,
+  { defaultProjectId, defaultPartition } = {},
+) => {
+  const partitions = getStoredPartitions(event);
+  const scopedProjectIds = extractProjectScopeIds(partitions);
+  const projectId = isNonEmptyString(event?.projectId)
+    ? event.projectId
+    : isNonEmptyString(event?.__storedProjectId)
+      ? event.__storedProjectId
+      : isNonEmptyString(defaultProjectId)
+        ? defaultProjectId
+        : scopedProjectIds[0];
+  const partition = isNonEmptyString(event?.partition)
+    ? event.partition
+    : isNonEmptyString(defaultPartition)
+      ? defaultPartition
+      : inferStoredPartition(event);
+  const clientId = getStoredClientId(event);
+  const statusUpdatedAt = getStoredStatusUpdatedAt(event);
+  const clientTs =
+    normalizeClientTs(event?.clientTs, {
+      defaultClientTs: event?.meta?.clientTs,
+    }) ?? statusUpdatedAt;
+  const meta = normalizeMeta(event?.meta, {
+    defaultClientId: clientId,
+    defaultClientTs: clientTs,
+  });
+
+  return {
+    committedId: getStoredCommittedId(event),
+    committed_id: getStoredCommittedId(event),
+    id: event?.id,
+    projectId,
+    userId: isNonEmptyString(event?.userId)
+      ? event.userId
+      : isNonEmptyString(event?.user_id)
+        ? event.user_id
+        : undefined,
+    partition,
+    partitions,
+    type: getStoredEventSchema(event),
+    schemaVersion: getStoredSchemaVersion(event),
+    payload: getStoredEventData(event),
+    event: getStoredDomainEvent(event),
+    clientId,
+    client_id: clientId,
+    meta,
+    clientTs,
+    serverTs: statusUpdatedAt,
+    status_updated_at: statusUpdatedAt,
+    createdAt: getStoredCreatedAt(event),
+  };
+};
+
 export const toStoredDraft = (
   input,
   {
@@ -296,11 +355,13 @@ export const toStoredCommitted = (
 export const buildStoredCommittedFromDraft = ({ draft, result }) => {
   const committedId = result.committed_id ?? result.committedId;
   const statusUpdatedAt = result.status_updated_at ?? result.serverTs;
+  const projectId = result.projectId ?? draft.projectId;
+  const partition = result.partition ?? draft.partition;
   return toStoredCommitted(
     {
       ...draft,
-      projectId: draft.projectId,
-      partition: draft.partition,
+      projectId,
+      partition,
       committed_id: committedId,
       status_updated_at: statusUpdatedAt,
     },

@@ -16,13 +16,6 @@ describe("integration auth-session-lifecycle", () => {
       },
     });
 
-    const { client, transport } = createTestClient({
-      server,
-      clientId: "C1",
-    });
-
-    // Client start sends connect with token="C1" by default in createTestClient.
-    // We need a client that sends a bad token.
     const { createSyncClient } = await import("../../src/sync-client.js");
     const { createLoopbackTransport } = await import(
       "../harness/create-loopback-transport.js"
@@ -32,26 +25,12 @@ describe("integration auth-session-lifecycle", () => {
       server,
       connectionId: "conn-bad",
     });
-    const badClient = createSyncClient({
-      transport: badTransport,
-      store: transport.getSentMessages
-        ? undefined
-        : undefined,
-      token: "bad-token",
-      clientId: "C1",
-      projectId: "proj-1",
-      now: () => Date.now(),
-      uuid: () => "evt-bad-1",
-    });
-
-    // Need to provide a store - use the one from createTestClient
-    // Actually let's just use the full createTestClient but override token via manual construction
     const { createInMemoryClientStore } = await import(
       "../../src/in-memory-client-store.js"
     );
     const store = createInMemoryClientStore();
 
-    const badClient2 = createSyncClient({
+    const badClient = createSyncClient({
       transport: badTransport,
       store,
       token: "bad-token",
@@ -61,7 +40,7 @@ describe("integration auth-session-lifecycle", () => {
       uuid: () => "evt-bad-1",
     });
 
-    await badClient2.start();
+    await badClient.start();
     await tick();
     await tick();
 

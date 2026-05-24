@@ -1,8 +1,11 @@
 // SQLite adapter for the simplified client store interface.
 // Expects a better-sqlite3 style DB object (exec/prepare/transaction APIs).
 
+import { normalizePartitionSet } from "./canonicalize.js";
 import { normalizeMaterializedViewDefinitions } from "./materialized-view.js";
 import { createMaterializedViewRuntime } from "./materialized-view-runtime.js";
+import { deserializePayload } from "./payload-codec.js";
+import { buildProjectScopePartition } from "./partition-scope.js";
 import {
   buildStoredCommittedFromDraft,
   getStoredCommittedId,
@@ -58,6 +61,57 @@ const getTableColumnType = (db, tableName, columnName) => {
   const column = rows.find((row) => row.name === columnName);
   return typeof column?.type === "string" ? column.type.toUpperCase() : null;
 };
+
+const tableExists = (db, tableName) =>
+  db
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
+    .get(tableName) !== undefined;
+
+const hasCompatibleClientSchema = (db) => {
+  const hasDraftClientId = tableHasColumn(db, "local_drafts", "client_id");
+  const hasDraftPartitions = tableHasColumn(db, "local_drafts", "partitions");
+  const hasDraftEvent = tableHasColumn(db, "local_drafts", "event");
+  const hasCommittedClientId = tableHasColumn(
+    db,
+    "committed_events",
+    "client_id",
+  );
+  const hasCommittedPartitions = tableHasColumn(
+    db,
+    "committed_events",
+    "partitions",
+  );
+  const hasCommittedEvent = tableHasColumn(db, "committed_events", "event");
+  const hasCommittedStatusUpdatedAt = tableHasColumn(
+    db,
+    "committed_events",
+    "status_updated_at",
+  );
+  const draftEventType = getTableColumnType(db, "local_drafts", "event");
+  const committedEventType = getTableColumnType(db, "committed_events", "event");
+  return (
+    hasDraftClientId &&
+    hasDraftPartitions &&
+    hasDraftEvent &&
+    hasCommittedClientId &&
+    hasCommittedPartitions &&
+    hasCommittedEvent &&
+    hasCommittedStatusUpdatedAt &&
+    draftEventType === "TEXT" &&
+    committedEventType === "TEXT"
+  );
+};
+
+const hasLegacyFlatClientSchema = (db) =>
+  tableHasColumn(db, "local_drafts", "partition") &&
+  tableHasColumn(db, "local_drafts", "type") &&
+  tableHasColumn(db, "local_drafts", "schema_version") &&
+  tableHasColumn(db, "local_drafts", "payload") &&
+  tableHasColumn(db, "committed_events", "partition") &&
+  tableHasColumn(db, "committed_events", "type") &&
+  tableHasColumn(db, "committed_events", "schema_version") &&
+  tableHasColumn(db, "committed_events", "payload") &&
+  tableHasColumn(db, "committed_events", "server_ts");
 
 export const createSqliteClientStore = (
   db,
@@ -195,41 +249,146 @@ export const createSqliteClientStore = (
   };
 
   const validateSchema = () => {
-    const hasDraftClientId = tableHasColumn(db, "local_drafts", "client_id");
-    const hasDraftPartitions = tableHasColumn(db, "local_drafts", "partitions");
-    const hasDraftEvent = tableHasColumn(db, "local_drafts", "event");
-    const hasCommittedClientId = tableHasColumn(
-      db,
-      "committed_events",
-      "client_id",
-    );
-    const hasCommittedPartitions = tableHasColumn(
-      db,
-      "committed_events",
-      "partitions",
-    );
-    const hasCommittedEvent = tableHasColumn(db, "committed_events", "event");
-    const hasCommittedStatusUpdatedAt = tableHasColumn(
-      db,
-      "committed_events",
-      "status_updated_at",
-    );
-    const draftEventType = getTableColumnType(db, "local_drafts", "event");
-    const committedEventType = getTableColumnType(db, "committed_events", "event");
-
-    if (
-      !hasDraftClientId ||
-      !hasDraftPartitions ||
-      !hasDraftEvent ||
-      !hasCommittedClientId ||
-      !hasCommittedPartitions ||
-      !hasCommittedEvent ||
-      !hasCommittedStatusUpdatedAt ||
-      draftEventType !== "TEXT" ||
-      committedEventType !== "TEXT"
-    ) {
+    if (!hasCompatibleClientSchema(db)) {
       throw new Error("Client store schema is incompatible; reset required");
     }
+  };
+
+  const migrateLegacyFlatSchema = () => {
+    db.exec(`
+      ALTER TABLE local_drafts RENAME TO local_drafts_legacy_v6;
+      ALTER TABLE committed_events RENAME TO committed_events_legacy_v6;
+    `);
+    createSchema();
+
+    const draftRows = db
+      .prepare(`
+        SELECT
+          draft_clock,
+          id,
+          partition,
+          type,
+          schema_version,
+          payload,
+          client_ts,
+          created_at
+        FROM local_drafts_legacy_v6
+        ORDER BY draft_clock ASC, id ASC
+      `)
+      .all();
+    const committedRows = db
+      .prepare(`
+        SELECT
+          committed_id,
+          id,
+          project_id,
+          user_id,
+          partition,
+          type,
+          schema_version,
+          payload,
+          client_ts,
+          server_ts,
+          created_at
+        FROM committed_events_legacy_v6
+        ORDER BY committed_id ASC
+      `)
+      .all();
+    const insertDraft = db.prepare(`
+      INSERT INTO local_drafts(
+        draft_clock,
+        id,
+        client_id,
+        partitions,
+        event,
+        created_at
+      ) VALUES (
+        @draft_clock,
+        @id,
+        @client_id,
+        @partitions,
+        @event,
+        @created_at
+      )
+    `);
+    const insertCommitted = db.prepare(`
+      INSERT INTO committed_events(
+        committed_id,
+        id,
+        client_id,
+        partitions,
+        event,
+        status_updated_at
+      ) VALUES (
+        @committed_id,
+        @id,
+        @client_id,
+        @partitions,
+        @event,
+        @status_updated_at
+      )
+    `);
+
+    for (const row of draftRows) {
+      const draft = toStoredDraft({
+        id: row.id,
+        clientId: "",
+        partition: row.partition || undefined,
+        partitions: normalizePartitionSet([row.partition || undefined]),
+        type: row.type,
+        schemaVersion: parseIntSafe(row.schema_version),
+        payload: deserializePayload(row.payload),
+        meta: { clientTs: parseIntSafe(row.client_ts) },
+        createdAt: parseIntSafe(row.created_at),
+      });
+      insertDraft.run({
+        draft_clock: parseIntSafe(row.draft_clock),
+        id: draft.id,
+        client_id: draft.clientId || "",
+        partitions: JSON.stringify(draft.partitions),
+        event: JSON.stringify(draft.event),
+        created_at: draft.createdAt,
+      });
+    }
+
+    for (const row of committedRows) {
+      const projectId = row.project_id || undefined;
+      const partition = row.partition || undefined;
+      const statusUpdatedAt = parseIntSafe(row.server_ts) || parseIntSafe(row.created_at);
+      const committed = toStoredCommitted({
+        committed_id: parseIntSafe(row.committed_id),
+        id: row.id,
+        clientId: "",
+        projectId,
+        userId: row.user_id || undefined,
+        partition,
+        partitions: normalizePartitionSet([
+          projectId,
+          projectId ? buildProjectScopePartition(projectId) : undefined,
+          partition,
+        ]),
+        type: row.type,
+        schemaVersion: parseIntSafe(row.schema_version),
+        payload: deserializePayload(row.payload),
+        meta: { clientTs: parseIntSafe(row.client_ts) },
+        status_updated_at: statusUpdatedAt,
+        serverTs: statusUpdatedAt,
+      });
+      insertCommitted.run({
+        committed_id: committed.committed_id,
+        id: committed.id,
+        client_id: committed.client_id || "",
+        partitions: JSON.stringify(committed.partitions),
+        event: JSON.stringify(committed.event),
+        status_updated_at: committed.status_updated_at,
+      });
+    }
+
+    db.exec(`
+      DROP TABLE local_drafts_legacy_v6;
+      DROP TABLE committed_events_legacy_v6;
+    `);
+    validateSchema();
   };
 
   const initializeSchema = () => {
@@ -240,7 +399,9 @@ export const createSqliteClientStore = (
       );
     }
 
-    if (current === 0) {
+    const hasClientTables =
+      tableExists(db, "local_drafts") && tableExists(db, "committed_events");
+    if (current === 0 && !hasClientTables) {
       const initializeTxn = createTransaction(db, () => {
         createSchema();
         validateSchema();
@@ -250,10 +411,18 @@ export const createSqliteClientStore = (
       return;
     }
 
-    if (current < SCHEMA_VERSION) {
+    if (hasClientTables && hasCompatibleClientSchema(db)) {
+      createMaterializedSchema();
+      validateSchema();
+      if (current !== SCHEMA_VERSION) {
+        setUserVersion(SCHEMA_VERSION);
+      }
+      return;
+    }
+
+    if (hasClientTables && hasLegacyFlatClientSchema(db)) {
       const migrationTxn = createTransaction(db, () => {
-        createMaterializedSchema();
-        validateSchema();
+        migrateLegacyFlatSchema();
         setUserVersion(SCHEMA_VERSION);
       });
       migrationTxn();

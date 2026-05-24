@@ -2,6 +2,7 @@ import { commandToSyncEvent, committedSyncEventToCommand } from "./command-profi
 import { createInMemoryClientStore } from "./in-memory-client-store.js";
 import { createOfflineTransport } from "./offline-transport.js";
 import { createSyncClient } from "./sync-client.js";
+import { toPublicCommittedEvent } from "./stored-event.js";
 
 const toNonEmptyString = (value) =>
   typeof value === "string" && value.length > 0 ? value : null;
@@ -97,9 +98,12 @@ export const createCommandSyncSession = ({
     isFromCurrentActor,
   }) => {
     try {
+      const publicCommittedEvent = toPublicCommittedEvent(committedEvent, {
+        defaultProjectId: projectId,
+      });
       const maybePromise = onCommittedCommand({
         command: structuredClone(command),
-        committedEvent: structuredClone(committedEvent),
+        committedEvent: structuredClone(publicCommittedEvent),
         sourceType,
         isFromCurrentActor,
       });

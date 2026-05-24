@@ -3,9 +3,11 @@ import {
   normalizePartitionSet,
 } from "./canonicalize.js";
 import {
+  buildProjectScopePartition,
   getProjectPartitions,
   partitionSetBelongsToProject,
 } from "./partition-scope.js";
+import { deserializePayload } from "./payload-codec.js";
 import {
   parseStoredEvent,
   parseStoredPartitions,
@@ -14,7 +16,7 @@ import {
   withStoredCommittedAliases,
 } from "./stored-event.js";
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 5;
 const DEFAULT_SCAN_CHUNK_SIZE = 512;
 
 const createTransaction = (db, fn) => {
@@ -54,6 +56,40 @@ const getTableColumnType = (db, tableName, columnName) => {
   const column = rows.find((row) => row.name === columnName);
   return typeof column?.type === "string" ? column.type.toUpperCase() : null;
 };
+
+const tableExists = (db, tableName) =>
+  db
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
+    .get(tableName) !== undefined;
+
+const hasCompatibleSchema = (db) => {
+  const hasClientId = tableHasColumn(db, "committed_events", "client_id");
+  const hasPartitions = tableHasColumn(db, "committed_events", "partitions");
+  const hasEvent = tableHasColumn(db, "committed_events", "event");
+  const hasCanonical = tableHasColumn(db, "committed_events", "canonical");
+  const hasStatusUpdatedAt = tableHasColumn(
+    db,
+    "committed_events",
+    "status_updated_at",
+  );
+  const eventType = getTableColumnType(db, "committed_events", "event");
+  return (
+    hasClientId &&
+    hasPartitions &&
+    hasEvent &&
+    hasCanonical &&
+    hasStatusUpdatedAt &&
+    eventType === "TEXT"
+  );
+};
+
+const hasLegacyFlatSchema = (db) =>
+  tableHasColumn(db, "committed_events", "project_id") &&
+  tableHasColumn(db, "committed_events", "partition") &&
+  tableHasColumn(db, "committed_events", "type") &&
+  tableHasColumn(db, "committed_events", "schema_version") &&
+  tableHasColumn(db, "committed_events", "payload") &&
+  tableHasColumn(db, "committed_events", "server_ts");
 
 export const createSqliteSyncStore = (
   db,
@@ -111,26 +147,91 @@ export const createSqliteSyncStore = (
   };
 
   const validateSchema = () => {
-    const hasClientId = tableHasColumn(db, "committed_events", "client_id");
-    const hasPartitions = tableHasColumn(db, "committed_events", "partitions");
-    const hasEvent = tableHasColumn(db, "committed_events", "event");
-    const hasCanonical = tableHasColumn(db, "committed_events", "canonical");
-    const hasStatusUpdatedAt = tableHasColumn(
-      db,
-      "committed_events",
-      "status_updated_at",
-    );
-    const eventType = getTableColumnType(db, "committed_events", "event");
-    if (
-      !hasClientId ||
-      !hasPartitions ||
-      !hasEvent ||
-      !hasCanonical ||
-      !hasStatusUpdatedAt ||
-      eventType !== "TEXT"
-    ) {
+    if (!hasCompatibleSchema(db)) {
       throw new Error("Sync store schema is incompatible; reset required");
     }
+  };
+
+  const migrateLegacyFlatSchema = () => {
+    db.exec(`
+      ALTER TABLE committed_events RENAME TO committed_events_legacy_v4;
+    `);
+    createSchema();
+
+    const rows = db
+      .prepare(`
+        SELECT
+          committed_id,
+          id,
+          project_id,
+          user_id,
+          partition,
+          type,
+          schema_version,
+          payload,
+          client_ts,
+          server_ts,
+          created_at
+        FROM committed_events_legacy_v4
+        ORDER BY committed_id ASC
+      `)
+      .all();
+    const insertMigrated = db.prepare(`
+      INSERT INTO committed_events(
+        committed_id,
+        id,
+        client_id,
+        partitions,
+        event,
+        canonical,
+        status_updated_at
+      ) VALUES (
+        @committed_id,
+        @id,
+        @client_id,
+        @partitions,
+        @event,
+        @canonical,
+        @status_updated_at
+      )
+    `);
+
+    for (const row of rows) {
+      const projectId = row.project_id || undefined;
+      const partition = row.partition || undefined;
+      const statusUpdatedAt = parseIntSafe(row.server_ts, row.created_at || 0);
+      const storedEvent = toStoredCommitted({
+        committed_id: parseIntSafe(row.committed_id, 0),
+        id: row.id,
+        clientId: "",
+        projectId,
+        userId: row.user_id || undefined,
+        partition,
+        partitions: normalizePartitionSet([
+          projectId,
+          projectId ? buildProjectScopePartition(projectId) : undefined,
+          partition,
+        ]),
+        type: row.type,
+        schemaVersion: parseIntSafe(row.schema_version, 1),
+        payload: deserializePayload(row.payload),
+        meta: { clientTs: parseIntSafe(row.client_ts, 0) },
+        status_updated_at: statusUpdatedAt,
+        serverTs: statusUpdatedAt,
+      });
+      insertMigrated.run({
+        committed_id: storedEvent.committed_id,
+        id: storedEvent.id,
+        client_id: storedEvent.client_id || "",
+        partitions: JSON.stringify(storedEvent.partitions),
+        event: JSON.stringify(storedEvent.event),
+        canonical: toComparisonKey(storedEvent),
+        status_updated_at: storedEvent.status_updated_at,
+      });
+    }
+
+    db.exec("DROP TABLE committed_events_legacy_v4;");
+    validateSchema();
   };
 
   const initializeSchema = () => {
@@ -141,13 +242,31 @@ export const createSqliteSyncStore = (
       );
     }
 
-    if (current === 0) {
+    const hasCommittedEventsTable = tableExists(db, "committed_events");
+    if (current === 0 && !hasCommittedEventsTable) {
       const initializeTxn = createTransaction(db, () => {
         createSchema();
         validateSchema();
         setUserVersion(SCHEMA_VERSION);
       });
       initializeTxn();
+      return;
+    }
+
+    if (hasCommittedEventsTable && hasCompatibleSchema(db)) {
+      validateSchema();
+      if (current !== SCHEMA_VERSION) {
+        setUserVersion(SCHEMA_VERSION);
+      }
+      return;
+    }
+
+    if (hasCommittedEventsTable && hasLegacyFlatSchema(db)) {
+      const migrationTxn = createTransaction(db, () => {
+        migrateLegacyFlatSchema();
+        setUserVersion(SCHEMA_VERSION);
+      });
+      migrationTxn();
       return;
     }
 

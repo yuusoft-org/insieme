@@ -249,7 +249,7 @@ describe("chaos: store commit failure", () => {
     const { server } = createServer({
       store: {
         ...realStore,
-        commitOrGetExisting: async (input) => {
+        commitOrGetExisting: async () => {
           const err = new Error("same id submitted with different payload");
           err.code = "validation_failed";
           throw err;

@@ -62,7 +62,7 @@ describeSqlite("src createSqliteSyncStore", () => {
     expect(second.committedEvent.committedId).toBe(1);
 
     const schema = db._raw.prepare("PRAGMA user_version").get();
-    expect(schema.user_version).toBe(1);
+    expect(schema.user_version).toBe(5);
     const event = db._raw
       .prepare(
         "SELECT type FROM pragma_table_info('committed_events') WHERE name = 'event'",
@@ -244,6 +244,88 @@ describeSqlite("src createSqliteSyncStore", () => {
     db.close();
   });
 
+  it("migrates a legacy flat RouteVN sync database without data loss", async () => {
+    const db = createSqliteDb(":memory:");
+    db.exec(`
+      CREATE TABLE committed_events (
+        committed_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT NOT NULL UNIQUE,
+        project_id TEXT NOT NULL,
+        user_id TEXT,
+        partition TEXT NOT NULL,
+        type TEXT NOT NULL,
+        schema_version INTEGER NOT NULL,
+        payload TEXT NOT NULL,
+        payload_compression TEXT DEFAULT NULL,
+        client_ts INTEGER NOT NULL,
+        server_ts INTEGER NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+    `);
+    db._raw
+      .prepare(
+        `INSERT INTO committed_events(
+          committed_id,
+          id,
+          project_id,
+          user_id,
+          partition,
+          type,
+          schema_version,
+          payload,
+          client_ts,
+          server_ts,
+          created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        7,
+        "routevn-legacy-1",
+        "proj-1",
+        "user-1",
+        "project:proj-1:story",
+        "scene.create",
+        2,
+        JSON.stringify({ sceneId: "s1" }),
+        101,
+        202,
+        203,
+      );
+    db.exec("PRAGMA user_version=4;");
+
+    const store = createSqliteSyncStore(db);
+    await store.init();
+
+    expect(db._raw.prepare("PRAGMA user_version").get().user_version).toBe(5);
+    expect(
+      db._raw
+        .prepare(
+          "SELECT name FROM pragma_table_info('committed_events') WHERE name = 'project_id'",
+        )
+        .get(),
+    ).toBeUndefined();
+
+    const page = await store.listCommittedSince({
+      projectId: "proj-1",
+      sinceCommittedId: 0,
+      limit: 10,
+    });
+
+    expect(page.events).toEqual([
+      expect.objectContaining({
+        committedId: 7,
+        id: "routevn-legacy-1",
+        partition: "project:proj-1:story",
+        type: "scene.create",
+        schemaVersion: 2,
+        payload: { sceneId: "s1" },
+        serverTs: 202,
+      }),
+    ]);
+
+    db.close();
+  });
+
   it("reads existing legacy rows with configured project metadata", async () => {
     const db = createSqliteDb(":memory:");
     const store = createSqliteSyncStore(db);
@@ -313,11 +395,11 @@ describeSqlite("src createSqliteSyncStore", () => {
 
   it("fails fast on incompatible future on-disk schema versions", async () => {
     const db = createSqliteDb(":memory:");
-    db.exec("PRAGMA user_version=3;");
+    db.exec("PRAGMA user_version=8;");
     const store = createSqliteSyncStore(db);
 
     await expect(store.init()).rejects.toThrow(
-      "Unsupported schema version 3; runtime supports up to 1",
+      "Unsupported schema version 8; runtime supports up to 5",
     );
 
     db.close();

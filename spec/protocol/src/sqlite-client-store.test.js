@@ -284,13 +284,115 @@ describeSqlite("src createSqliteClientStore", () => {
     db.close();
   });
 
+  it("migrates legacy flat SQLite project stores without losing drafts or commits", async () => {
+    const db = createSqliteDb(":memory:");
+    db.exec(`
+      CREATE TABLE local_drafts (
+        draft_clock INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT NOT NULL UNIQUE,
+        partition TEXT NOT NULL,
+        type TEXT NOT NULL,
+        schema_version INTEGER NOT NULL,
+        payload BLOB NOT NULL,
+        payload_compression TEXT DEFAULT NULL,
+        client_ts INTEGER NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE committed_events (
+        committed_id INTEGER PRIMARY KEY,
+        id TEXT NOT NULL UNIQUE,
+        project_id TEXT,
+        user_id TEXT,
+        partition TEXT NOT NULL,
+        type TEXT NOT NULL,
+        schema_version INTEGER NOT NULL,
+        payload BLOB NOT NULL,
+        payload_compression TEXT DEFAULT NULL,
+        client_ts INTEGER NOT NULL,
+        server_ts INTEGER NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE app_state (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+
+      PRAGMA user_version=6;
+    `);
+    db._raw
+      .prepare(
+        "INSERT INTO local_drafts(draft_clock, id, partition, type, schema_version, payload, client_ts, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        3,
+        "draft-routevn-1",
+        "project:proj-1:story",
+        "scene.rename",
+        2,
+        JSON.stringify({ sceneId: "s1", title: "Intro" }),
+        101,
+        102,
+      );
+    db._raw
+      .prepare(
+        "INSERT INTO committed_events(committed_id, id, project_id, user_id, partition, type, schema_version, payload, client_ts, server_ts, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        7,
+        "committed-routevn-1",
+        "proj-1",
+        "user-1",
+        "project:proj-1:story",
+        "scene.create",
+        1,
+        JSON.stringify({ sceneId: "s1" }),
+        201,
+        202,
+        203,
+      );
+    db._raw
+      .prepare("INSERT INTO app_state(key, value) VALUES (?, ?)")
+      .run("cursor_committed_id", "7");
+
+    const store = createSqliteClientStore(db);
+    await store.init();
+
+    expect(db._raw.prepare("PRAGMA user_version").get().user_version).toBe(7);
+    expect(await store.loadCursor()).toBe(7);
+    expect(await store.loadDraftsOrdered()).toEqual([
+      expect.objectContaining({
+        draftClock: 3,
+        id: "draft-routevn-1",
+        partition: "project:proj-1:story",
+        type: "scene.rename",
+        schemaVersion: 2,
+        payload: { sceneId: "s1", title: "Intro" },
+      }),
+    ]);
+    expect(await store.listCommitted()).toEqual([
+      expect.objectContaining({
+        committedId: 7,
+        id: "committed-routevn-1",
+        partition: "project:proj-1:story",
+        type: "scene.create",
+        schemaVersion: 1,
+        payload: { sceneId: "s1" },
+        serverTs: 202,
+      }),
+    ]);
+
+    db.close();
+  });
+
   it("fails fast on incompatible lower on-disk schema versions", async () => {
     const db = createSqliteDb(":memory:");
     db.exec("PRAGMA user_version=6;");
     const store = createSqliteClientStore(db);
 
     await expect(store.init()).rejects.toThrow(
-      "Client store schema is incompatible; reset required",
+      "Client store requires reset for schema version 6; runtime expects 7",
     );
 
     db.close();

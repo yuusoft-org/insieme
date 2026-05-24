@@ -226,4 +226,66 @@ describe("regression: sync pagination", () => {
 
     expect(page.events.map((e) => e.id)).toEqual(["evt-3", "evt-4", "evt-5"]);
   });
+
+  it("paginates partition-filtered sync without leaking unrelated partitions", async () => {
+    const { server, store } = createServer();
+    const c1 = createConnectionTransport("c1");
+    const s1 = server.attachConnection(c1);
+    await connectSession({ session: s1 });
+
+    for (const [id, partition] of [
+      ["evt-p1-1", "P1"],
+      ["evt-p1-2", "P1"],
+      ["evt-p2-1", "P2"],
+      ["evt-p2-2", "P2"],
+    ]) {
+      await store.commitOrGetExisting({
+        id,
+        partition,
+        projectId: "proj-1",
+        type: "x",
+        schemaVersion: 1,
+        payload: { partition },
+        meta: { clientId: "C0", clientTs: 1 },
+        now: 100,
+      });
+    }
+
+    await s1.receive({
+      type: "sync",
+      protocolVersion: "1.0",
+      msgId: "sync-p2-page-1",
+      payload: {
+        projectId: "proj-1",
+        partitions: ["P2"],
+        sinceCommittedId: 0,
+        limit: 2,
+      },
+    });
+
+    const page1 = c1.sent.find((m) => m.msgId === "sync-p2-page-1");
+    expect(page1.payload.events).toEqual([]);
+    expect(page1.payload.hasMore).toBe(true);
+    expect(page1.payload.nextSinceCommittedId).toBe(2);
+
+    await s1.receive({
+      type: "sync",
+      protocolVersion: "1.0",
+      msgId: "sync-p2-page-2",
+      payload: {
+        projectId: "proj-1",
+        partitions: ["P2"],
+        sinceCommittedId: page1.payload.nextSinceCommittedId,
+        limit: 2,
+      },
+    });
+
+    const page2 = c1.sent.find((m) => m.msgId === "sync-p2-page-2");
+    expect(page2.payload.events.map((e) => e.id)).toEqual([
+      "evt-p2-1",
+      "evt-p2-2",
+    ]);
+    expect(page2.payload.hasMore).toBe(false);
+    expect(page2.payload.nextSinceCommittedId).toBe(4);
+  });
 });

@@ -106,7 +106,7 @@ describe("chaos: auth service failure", () => {
     const store = createInMemorySyncStore();
     const server = createSyncServer({
       auth: {
-        verifyToken: async (token) => {
+        verifyToken: async () => {
           if (authShouldFail) {
             throw new Error("auth down");
           }

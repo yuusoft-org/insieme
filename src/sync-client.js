@@ -8,6 +8,7 @@ import { generateId } from "./id.js";
 import { buildProjectScopePartition } from "./partition-scope.js";
 import {
   setStoredContext,
+  toPublicCommittedEvent,
   toStoredDraft,
   withStoredCommittedAliases,
   withStoredDraftAliases,
@@ -752,7 +753,13 @@ export const createSyncClient = ({
     }
 
     for (const result of payload.results || []) {
-      await store.applySubmitResult({ result });
+      const contextualResult = {
+        ...result,
+        projectId: isNonEmptyString(result.projectId)
+          ? result.projectId
+          : activeProjectId,
+      };
+      await store.applySubmitResult({ result: contextualResult });
 
       if (result.status === "committed") {
         log({
@@ -787,12 +794,21 @@ export const createSyncClient = ({
   };
 
   const onSyncResponse = async (payload, messageContext = {}) => {
+    const inboundEvents = (payload.events || []).map(withInboundEventContext);
     await store.applyCommittedBatch({
-      events: (payload.events || []).map(withInboundEventContext),
+      events: inboundEvents,
       nextCursor: payload.nextSinceCommittedId,
     });
 
-    emit("sync_page", payload);
+    const publicPayload = {
+      ...payload,
+      events: inboundEvents.map((event) =>
+        toPublicCommittedEvent(event, {
+          defaultProjectId: activeProjectId,
+        }),
+      ),
+    };
+    emit("sync_page", publicPayload);
     log({
       event: "sync_page_applied",
       eventCount: (payload.events || []).length,
@@ -833,14 +849,18 @@ export const createSyncClient = ({
   };
 
   const onBroadcast = async (payload, messageContext = {}) => {
-    await store.applyCommittedBatch({ events: [withInboundEventContext(payload)] });
+    const inboundEvent = withInboundEventContext(payload);
+    await store.applyCommittedBatch({ events: [inboundEvent] });
+    const publicPayload = toPublicCommittedEvent(inboundEvent, {
+      defaultProjectId: activeProjectId,
+    });
     log({
       event: "broadcast_applied",
-      id: payload.id,
-      committedId: payload.committedId,
+      id: publicPayload.id,
+      committedId: publicPayload.committedId,
       msgId: messageContext.msgId,
     });
-    emit("broadcast", payload);
+    emit("broadcast", publicPayload);
   };
 
   const onError = async (payload, messageContext = {}) => {

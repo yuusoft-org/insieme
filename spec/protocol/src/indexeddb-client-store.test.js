@@ -360,6 +360,180 @@ describe("src createIndexedDbClientStore", () => {
     ).toEqual({ count: 2 });
   });
 
+  it("exposes batch draft APIs, aliases, debug inspectors, and close behavior", async () => {
+    const dbName = createDbName();
+    createdDbNames.push(dbName);
+    const store = createIndexedDbClientStore({
+      indexedDB,
+      dbName,
+    });
+    await store.init();
+
+    await store.insertDrafts([
+      makeDraft({
+        id: "evt-a",
+        createdAt: 100,
+        payload: { n: 1 },
+      }),
+      makeDraft({
+        id: "evt-b",
+        createdAt: 101,
+        payload: { n: 2 },
+      }),
+      makeDraft({
+        id: "evt-r",
+        createdAt: 102,
+        payload: { n: 3 },
+      }),
+    ]);
+
+    expect((await store.listDraftsOrdered()).map((draft) => draft.id)).toEqual([
+      "evt-a",
+      "evt-b",
+      "evt-r",
+    ]);
+
+    await store.applySubmitResult({
+      result: {
+        id: "evt-a",
+        status: "committed",
+        committedId: 1,
+        serverTs: 1000,
+      },
+    });
+    await store.applySubmitResult({
+      result: {
+        id: "evt-r",
+        status: "rejected",
+        reason: "validation_failed",
+      },
+    });
+
+    expect((await store.listDraftsOrdered()).map((draft) => draft.id)).toEqual([
+      "evt-b",
+    ]);
+    expect((await store._debug.getDrafts()).map((draft) => draft.id)).toEqual([
+      "evt-b",
+    ]);
+    expect((await store.listCommitted()).map((event) => event.id)).toEqual([
+      "evt-a",
+    ]);
+    expect(
+      (
+        await store.listCommittedAfter({
+          sinceCommittedId: 0,
+          limit: 1,
+        })
+      ).map((event) => event.id),
+    ).toEqual(["evt-a"]);
+    expect(await store.getCursor()).toBe(0);
+    expect(await store._debug.getCursor()).toBe(0);
+
+    await store.close();
+    await store.close();
+
+    await expect(store.loadCursor()).rejects.toMatchObject({
+      code: "client_store_closed",
+    });
+  });
+
+  it("notifies materialized view subscribers through commit, evict, and invalidate", async () => {
+    const dbName = createDbName();
+    createdDbNames.push(dbName);
+    const store = createIndexedDbClientStore({
+      indexedDB,
+      dbName,
+      materializedViews: [
+        {
+          name: "counter",
+          checkpoint: { mode: "manual" },
+          initialState: () => ({ count: 0 }),
+          reduce: ({ state, event }) => ({
+            count: state.count + (event.type === "increment" ? 1 : 0),
+          }),
+        },
+      ],
+    });
+    await store.init();
+
+    const notifications = [];
+    const unsubscribe = await store.subscribeMaterializedView({
+      viewName: "counter",
+      partition: "P1",
+      onChange: (payload) => {
+        notifications.push(payload);
+      },
+    });
+
+    await store.applyCommittedBatch({
+      events: [
+        makeCommitted({
+          id: "evt-1",
+          committedId: 1,
+          type: "increment",
+          payload: {},
+          serverTs: 10,
+        }),
+      ],
+      nextCursor: 1,
+    });
+    await store.flushMaterializedViews();
+    await store.evictMaterializedView({
+      viewName: "counter",
+      partition: "P1",
+    });
+    await store.invalidateMaterializedView({
+      viewName: "counter",
+      partition: "P1",
+    });
+
+    expect(notifications).toEqual([
+      {
+        viewName: "counter",
+        partition: "P1",
+        value: { count: 0 },
+        lastCommittedId: 0,
+        updatedAt: 0,
+      },
+      {
+        viewName: "counter",
+        partition: "P1",
+        value: { count: 1 },
+        lastCommittedId: 1,
+        updatedAt: 10,
+      },
+      {
+        viewName: "counter",
+        partition: "P1",
+        value: { count: 1 },
+        lastCommittedId: 1,
+        updatedAt: 10,
+      },
+      {
+        viewName: "counter",
+        partition: "P1",
+        value: { count: 1 },
+        lastCommittedId: 1,
+        updatedAt: 10,
+      },
+    ]);
+
+    unsubscribe();
+    await store.applyCommittedBatch({
+      events: [
+        makeCommitted({
+          id: "evt-2",
+          committedId: 2,
+          type: "increment",
+          payload: {},
+          serverTs: 11,
+        }),
+      ],
+      nextCursor: 2,
+    });
+    expect(notifications).toHaveLength(4);
+  });
+
   it("rebuilds exact materialized views after restart without a flushed checkpoint", async () => {
     const dbName = createDbName();
     createdDbNames.push(dbName);

@@ -15,6 +15,7 @@ import {
 import {
   getStoredCommittedId,
   getStoredStatusUpdatedAt,
+  toPublicCommittedEvent,
   toStoredDraft,
 } from "./stored-event.js";
 
@@ -454,7 +455,10 @@ export const createSyncServer = ({
 
     for (const session of recipients) {
       const broadcastMsgId = createServerMsgId();
-      await sendMessage(session.transport, "event_broadcast", committedEvent, {
+      const publicCommittedEvent = toPublicCommittedEvent(committedEvent, {
+        defaultProjectId: session.activeProjectId,
+      });
+      await sendMessage(session.transport, "event_broadcast", publicCommittedEvent, {
         msgId: broadcastMsgId,
       });
       log({
@@ -927,7 +931,11 @@ export const createSyncServer = ({
       "sync_response",
       {
         projectId: normalizedProjectId,
-        events: scopedEvents,
+        events: scopedEvents.map((event) =>
+          toPublicCommittedEvent(event, {
+            defaultProjectId: normalizedProjectId,
+          }),
+        ),
         nextSinceCommittedId: page.nextSinceCommittedId,
         hasMore: page.hasMore,
         syncToCommittedId: session.syncToCommittedId,
