@@ -926,6 +926,139 @@ describe("src createSyncServer", () => {
     expect(c1.closed).toBe(true);
   });
 
+  it("rechecks project authorization before sync after access revocation", async () => {
+    let allowProject = true;
+    const { server } = createServer({
+      authorize: async () => allowProject,
+    });
+    const c1 = createConnectionTransport("c1");
+    const s1 = server.attachConnection(c1);
+
+    await connectSession({ session: s1 });
+    expect(c1.sent[0].type).toBe("connected");
+
+    allowProject = false;
+    await syncSession({ session: s1 });
+
+    const last = c1.sent[c1.sent.length - 1];
+    expect(last).toMatchObject({
+      type: "error",
+      payload: {
+        code: "forbidden",
+        message: "project access denied",
+      },
+    });
+    expect(c1.closed).toBe(true);
+  });
+
+  it("rechecks project authorization before broadcasting to idle recipients", async () => {
+    let revokedClientId;
+    const { server } = createServer({
+      verifyToken: async (token) => ({
+        clientId: token === "jwt-c2" ? "C2" : "C1",
+        claims: {},
+      }),
+      authorize: async (identity) => identity.clientId !== revokedClientId,
+    });
+    const c1 = createConnectionTransport("c1");
+    const c2 = createConnectionTransport("c2");
+    const s1 = server.attachConnection(c1);
+    const s2 = server.attachConnection(c2);
+
+    await connectSession({ session: s1, clientId: "C1", token: "jwt-c1" });
+    await connectSession({ session: s2, clientId: "C2", token: "jwt-c2" });
+
+    revokedClientId = "C2";
+    await s1.receive({
+      type: "submit_events",
+      protocolVersion: "1.0",
+      payload: {
+        events: [toSubmitItem({ id: "evt-revoke-broadcast" })],
+      },
+    });
+
+    expect(c2.sent.some((message) => message.type === "event_broadcast")).toBe(false);
+    expect(c2.sent[c2.sent.length - 1]).toMatchObject({
+      type: "error",
+      payload: {
+        code: "forbidden",
+        message: "project access denied",
+      },
+    });
+    expect(c2.closed).toBe(true);
+  });
+
+  it("broadcasts commits that happen while a recipient has a paged sync in progress", async () => {
+    const { server } = createServer({
+      verifyToken: async (token) => ({
+        clientId: token === "jwt-c2" ? "C2" : "C1",
+        claims: {},
+      }),
+    });
+    const c1 = createConnectionTransport("c1");
+    const c2 = createConnectionTransport("c2");
+    const s1 = server.attachConnection(c1);
+    const s2 = server.attachConnection(c2);
+
+    await connectSession({ session: s1, clientId: "C1", token: "jwt-c1" });
+    await connectSession({ session: s2, clientId: "C2", token: "jwt-c2" });
+    await s1.receive({
+      type: "submit_events",
+      protocolVersion: "1.0",
+      payload: { events: [toSubmitItem({ id: "evt-before-sync" })] },
+    });
+    await s1.receive({
+      type: "submit_events",
+      protocolVersion: "1.0",
+      payload: { events: [toSubmitItem({ id: "evt-before-sync-2" })] },
+    });
+
+    await s2.receive({
+      type: "sync",
+      protocolVersion: "1.0",
+      payload: { projectId: "proj-1", sinceCommittedId: 0, limit: 1 },
+    });
+    expect(c2.sent.find((message) => message.type === "sync_response")).toMatchObject({
+      payload: { hasMore: true, syncToCommittedId: 2 },
+    });
+
+    await s1.receive({
+      type: "submit_events",
+      protocolVersion: "1.0",
+      payload: { events: [toSubmitItem({ id: "evt-during-sync" })] },
+    });
+
+    expect(c2.sent.filter((message) => message.type === "event_broadcast").map((message) => message.payload.id)).toContain("evt-during-sync");
+  });
+
+  it("does not rebroadcast idempotent submit retries", async () => {
+    const { server } = createServer({
+      verifyToken: async (token) => ({
+        clientId: token === "jwt-c2" ? "C2" : "C1",
+        claims: {},
+      }),
+    });
+    const c1 = createConnectionTransport("c1");
+    const c2 = createConnectionTransport("c2");
+    const s1 = server.attachConnection(c1);
+    const s2 = server.attachConnection(c2);
+
+    await connectSession({ session: s1, clientId: "C1", token: "jwt-c1" });
+    await connectSession({ session: s2, clientId: "C2", token: "jwt-c2" });
+
+    const submit = () =>
+      s1.receive({
+        type: "submit_events",
+        protocolVersion: "1.0",
+        payload: { events: [toSubmitItem({ id: "evt-retry-once" })] },
+      });
+
+    await submit();
+    await submit();
+
+    expect(c2.sent.filter((message) => message.type === "event_broadcast")).toHaveLength(1);
+  });
+
   it("clamps sync.limit to protocol default/min/max bounds", async () => {
     const seenLimits = [];
     const server = createSyncServer({

@@ -237,6 +237,19 @@ export const createSyncServer = ({
 
   const isSupportedVersion = (version) => version === PROTOCOL_VERSION;
 
+  const failAuthorizedSession = async (session, code, message, msgId) => {
+    await sendError(session.transport, code, message, {}, { msgId });
+    log({
+      event: code === "auth_failed" ? "session_auth_failed" : "session_forbidden",
+      connectionId: session.transport.connectionId,
+      clientId: session.identity?.clientId,
+      projectId: session.activeProjectId,
+      msgId: msgId,
+    });
+    await closeSession(session.transport.connectionId, code);
+    return false;
+  };
+
   const ensureSessionAuthorized = async (session, msgId) => {
     if (!validateSession || !session.identity) return true;
 
@@ -249,21 +262,39 @@ export const createSyncServer = ({
 
     if (authorized) return true;
 
-    await sendError(
-      session.transport,
+    return failAuthorizedSession(
+      session,
       "auth_failed",
       "Session is no longer authorized",
-      {},
-      { msgId },
+      msgId,
     );
-    log({
-      event: "session_auth_failed",
-      connectionId: session.transport.connectionId,
-      clientId: session.identity.clientId,
-      msgId: msgId,
-    });
-    await closeSession(session.transport.connectionId, "auth_failed");
-    return false;
+  };
+
+  const ensureProjectAuthorized = async (session, projectId, msgId) => {
+    if (!session.identity) {
+      return failAuthorizedSession(
+        session,
+        "auth_failed",
+        "Unauthenticated session",
+        msgId,
+      );
+    }
+
+    let authorized = false;
+    try {
+      authorized = Boolean(await authz.authorizeProject(session.identity, projectId));
+    } catch {
+      authorized = false;
+    }
+
+    if (authorized) return true;
+
+    return failAuthorizedSession(
+      session,
+      "forbidden",
+      "project access denied",
+      msgId,
+    );
   };
 
   const getApproxEnvelopeBytes = (message) => {
@@ -446,7 +477,6 @@ export const createSyncServer = ({
       (session) =>
         session.state === "active" &&
         session.transport.connectionId !== originConnectionId &&
-        !session.syncInProgress &&
         Array.isArray(committedEvent.partitions) &&
         partitionSetBelongsToProject(
           committedEvent.partitions,
@@ -456,6 +486,18 @@ export const createSyncServer = ({
 
     for (const session of recipients) {
       const broadcastMsgId = createServerMsgId();
+      if (!(await ensureSessionAuthorized(session, broadcastMsgId))) {
+        continue;
+      }
+      if (
+        !(await ensureProjectAuthorized(
+          session,
+          session.activeProjectId,
+          broadcastMsgId,
+        ))
+      ) {
+        continue;
+      }
       const publicCommittedEvent = toPublicCommittedEvent(committedEvent, {
         defaultProjectId: session.activeProjectId,
       });
@@ -757,7 +799,9 @@ export const createSyncServer = ({
           serverTs: getStoredStatusUpdatedAt(committedEvent),
           status_updated_at: getStoredStatusUpdatedAt(committedEvent),
         });
-        committedEvents.push(committedEvent);
+        if (!deduped) {
+          committedEvents.push(committedEvent);
+        }
         log({
           event: "submit_committed",
           connectionId: session.transport.connectionId,
@@ -852,6 +896,10 @@ export const createSyncServer = ({
         {},
         { msgId: context.msgId },
       );
+      return;
+    }
+
+    if (!(await ensureProjectAuthorized(session, normalizedProjectId, context.msgId))) {
       return;
     }
 

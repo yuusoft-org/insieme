@@ -243,7 +243,7 @@ describe("src createSyncServer conformance", () => {
     });
   });
 
-  it("keeps sync cycle bounded and suppresses broadcasts until final page [SC-05]", async () => {
+  it("keeps sync cycle bounded and broadcasts new commits during paged sync [SC-05]", async () => {
     const { server } = createServer({
       verifyToken: async (token) => ({
         clientId: token === "jwt-c2" ? "C2" : "C1",
@@ -279,7 +279,8 @@ describe("src createSyncServer conformance", () => {
     const broadcastsDuringSync = c2.sent.filter(
       (message) => message.type === "event_broadcast",
     );
-    expect(broadcastsDuringSync).toHaveLength(0);
+    expect(broadcastsDuringSync).toHaveLength(1);
+    expect(broadcastsDuringSync[0].payload.id).toBe("evt-3");
 
     await syncSession({ session: s2, since: 1, limit: 1 });
 
