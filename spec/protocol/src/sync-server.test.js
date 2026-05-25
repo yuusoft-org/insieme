@@ -1059,6 +1059,84 @@ describe("src createSyncServer", () => {
     expect(c2.sent.filter((message) => message.type === "event_broadcast")).toHaveLength(1);
   });
 
+  it("rejects same event id from a different client even when payload matches", async () => {
+    const { server } = createServer({
+      verifyToken: async (token) => ({
+        clientId: token === "jwt-c2" ? "C2" : "C1",
+        claims: {},
+      }),
+    });
+    const c1 = createConnectionTransport("c1");
+    const c2 = createConnectionTransport("c2");
+    const s1 = server.attachConnection(c1);
+    const s2 = server.attachConnection(c2);
+
+    await connectSession({ session: s1, clientId: "C1", token: "jwt-c1" });
+    await connectSession({ session: s2, clientId: "C2", token: "jwt-c2" });
+
+    await s1.receive({
+      type: "submit_events",
+      protocolVersion: "1.0",
+      payload: { events: [toSubmitItem({ id: "evt-cross-client" })] },
+    });
+    await s2.receive({
+      type: "submit_events",
+      protocolVersion: "1.0",
+      payload: { events: [toSubmitItem({ id: "evt-cross-client" })] },
+    });
+
+    const c2Result = c2.sent.find(
+      (message) => message.type === "submit_events_result",
+    );
+    expect(c2Result.payload.results[0]).toMatchObject({
+      id: "evt-cross-client",
+      status: "rejected",
+      reason: "forbidden",
+    });
+  });
+
+  it("fails closed when submit authorization recheck throws", async () => {
+    let throwOnAuthorize = false;
+    const { server } = createServer({
+      authorize: async () => {
+        if (throwOnAuthorize) throw new Error("authz unavailable");
+        return true;
+      },
+    });
+    const c1 = createConnectionTransport("c1");
+    const s1 = server.attachConnection(c1);
+
+    await connectSession({ session: s1 });
+    throwOnAuthorize = true;
+    await s1.receive({
+      type: "submit_events",
+      protocolVersion: "1.0",
+      payload: { events: [toSubmitItem({ id: "evt-authz-throws" })] },
+    });
+
+    expect(c1.sent[c1.sent.length - 1]).toMatchObject({
+      type: "error",
+      payload: { code: "forbidden", message: "project access denied" },
+    });
+    expect(c1.closed).toBe(true);
+  });
+
+  it("rejects project ids that conflict with partition scope delimiters", async () => {
+    const { server } = createServer();
+    const c1 = createConnectionTransport("c1");
+    const s1 = server.attachConnection(c1);
+
+    await connectSession({ session: s1, projectId: "proj:bad" });
+
+    expect(c1.sent[c1.sent.length - 1]).toMatchObject({
+      type: "error",
+      payload: {
+        code: "bad_request",
+        message: "connect.payload.projectId must not contain ':'",
+      },
+    });
+  });
+
   it("clamps sync.limit to protocol default/min/max bounds", async () => {
     const seenLimits = [];
     const server = createSyncServer({

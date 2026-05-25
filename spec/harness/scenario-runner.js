@@ -30,7 +30,7 @@ export const createScenarioTrace = ({ name, seed }) => {
     },
     events: () => [...events],
     tail: (count = DEFAULT_TRACE_TAIL) => events.slice(-count),
-    formatFailure: ({ invariant, cause } = {}) => {
+    formatFailure: ({ invariant, cause, traceTail = DEFAULT_TRACE_TAIL } = {}) => {
       const lines = [
         `SCENARIO ${name}`,
         `SEED ${seed}`,
@@ -40,7 +40,7 @@ export const createScenarioTrace = ({ name, seed }) => {
       if (cause) lines.push(`CAUSE ${cause}`);
       lines.push(`REPLAY bunx vitest --run --testNamePattern="${name}"`);
       lines.push("TRACE");
-      for (const event of events.slice(-DEFAULT_TRACE_TAIL)) {
+      for (const event of events.slice(-traceTail)) {
         lines.push(formatTraceEvent(event));
       }
       return lines.join("\n");

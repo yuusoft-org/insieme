@@ -180,7 +180,7 @@ describe("src createSyncServer conformance", () => {
     expect(c1.closed).toBe(false);
   });
 
-  it("rejects unauthorized submit as forbidden result [SC-18]", async () => {
+  it("fails closed when submit authorization is revoked [SC-18]", async () => {
     let allowProject = true;
     const { server } = createServer({
       authorize: async () => allowProject,
@@ -193,15 +193,11 @@ describe("src createSyncServer conformance", () => {
     allowProject = false;
     await submitSession({ session: s1, id: "evt-1" });
 
-    const result = c1.sent.find(
-      (message) => message.type === "submit_events_result",
+    const forbidden = c1.sent.find(
+      (message) => message.type === "error" && message.payload.code === "forbidden",
     );
-    expect(result).toBeTruthy();
-    expect(result.payload.results[0]).toMatchObject({
-      id: "evt-1",
-      status: "rejected",
-      reason: "forbidden",
-    });
+    expect(forbidden).toBeTruthy();
+    expect(c1.closed).toBe(true);
   });
 
   it("rejects duplicate retry when same id has different canonical payload [SC-09]", async () => {

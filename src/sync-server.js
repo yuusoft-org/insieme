@@ -82,6 +82,13 @@ const validateProjectId = (projectId, path = "payload.projectId") => {
       message: `${path} must be a non-empty string`,
     };
   }
+  if (projectId.includes(":")) {
+    return {
+      ok: false,
+      code: "bad_request",
+      message: `${path} must not contain ':'`,
+    };
+  }
   return { ok: true, value: projectId };
 };
 
@@ -433,7 +440,12 @@ export const createSyncServer = ({
     }
 
     const projectId = projectIdCheck.value;
-    const authorized = await authz.authorizeProject(identity, projectId);
+    let authorized = false;
+    try {
+      authorized = Boolean(await authz.authorizeProject(identity, projectId));
+    } catch {
+      authorized = false;
+    }
     if (!authorized) {
       await sendError(
         session.transport,
@@ -576,6 +588,9 @@ export const createSyncServer = ({
     const claimsUserId = isNonEmptyString(session.identity?.claims?.userId)
       ? session.identity.claims.userId
       : undefined;
+    if (!(await ensureProjectAuthorized(session, session.activeProjectId, context.msgId))) {
+      return;
+    }
     /** @type {object[]} */
     const results = [];
     /** @type {object[]} */
@@ -753,15 +768,6 @@ export const createSyncServer = ({
           "validation_failed",
           `events[${index}].event.payload schema and schemaVersion are required`,
         );
-        continue;
-      }
-
-      const authorized = await authz.authorizeProject(
-        session.identity,
-        session.activeProjectId,
-      );
-      if (!authorized) {
-        pushRejected(item.id, "forbidden", "project access denied");
         continue;
       }
 

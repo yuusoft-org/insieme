@@ -4,6 +4,7 @@ import {
   getStoredCommittedId,
   parseStoredEvent,
   parseStoredPartitions,
+  toPublicCommittedEvent,
   toStoredCommitted,
   toStoredComparisonKey,
   toStoredDraft,
@@ -389,7 +390,7 @@ export const createLibsqlClientStore = (
     }
 
     if (hasClientTables && (await hasCompatibleClientSchema(db))) {
-      await createMaterializedSchema();
+      await createSchema();
       await validateSchema();
       if (current !== SCHEMA_VERSION) {
         await setUserVersion(SCHEMA_VERSION);
@@ -880,7 +881,8 @@ export const createLibsqlClientStore = (
         FROM committed_events
         ORDER BY committed_id ASC
       `);
-      return rows.map(parseCommittedRow);
+      return rows.map(parseCommittedRow)
+        .map(toPublicCommittedEvent);
     },
 
     listCommittedAfter: async ({
@@ -904,7 +906,8 @@ export const createLibsqlClientStore = (
         `,
         [sinceCommittedId, limit],
       );
-      return rows.map(parseCommittedRow);
+      return rows.map(parseCommittedRow)
+        .map(toPublicCommittedEvent);
     },
 
     _debug: {

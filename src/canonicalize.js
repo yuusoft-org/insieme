@@ -68,6 +68,7 @@ export const intersectsPartitions = (left, right) => {
  * @param {{
  *   partition?: string,
  *   projectId?: string,
+ *   clientId?: string,
  *   userId?: string,
  *   type?: string,
  *   schemaVersion?: number,
@@ -82,6 +83,7 @@ export const canonicalizeSubmitItem = ({
   event,
   partition,
   projectId,
+  clientId,
   userId,
   type,
   schemaVersion,
@@ -91,6 +93,7 @@ export const canonicalizeSubmitItem = ({
 }) => {
   if (Array.isArray(partitions) && event && typeof event === "object") {
     return JSON.stringify({
+      clientId: isNonEmptyString(clientId) ? clientId : undefined,
       partitions: normalizePartitionSet(partitions),
       event: deepSortKeys(event),
     });
@@ -104,6 +107,7 @@ export const canonicalizeSubmitItem = ({
   const canonicalInput = {
     partition: isNonEmptyString(partition) ? partition : undefined,
     projectId: isNonEmptyString(projectId) ? projectId : undefined,
+    clientId: isNonEmptyString(clientId) ? clientId : undefined,
     userId: isNonEmptyString(userId) ? userId : undefined,
     type: isNonEmptyString(type) ? type : undefined,
     schemaVersion: toPositiveIntegerOrNull(schemaVersion) ?? undefined,

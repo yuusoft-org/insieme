@@ -435,6 +435,7 @@ const getComparisonPartitions = (event) => {
 
 export const toStoredComparisonKey = (event) =>
   canonicalizeSubmitItem({
+    clientId: getStoredClientId(event),
     partitions: getComparisonPartitions(event),
     event: withStoredEventMetadata(getStoredDomainEvent(event), {
       userId: getStoredUserId(event),

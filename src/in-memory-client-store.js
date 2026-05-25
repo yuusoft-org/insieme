@@ -3,6 +3,7 @@ import { createMaterializedViewRuntime } from "./materialized-view-runtime.js";
 import {
   buildStoredCommittedFromDraft,
   getStoredCommittedId,
+  toPublicCommittedEvent,
   toStoredCommitted,
   toStoredComparisonKey,
   toStoredDraft,
@@ -254,7 +255,7 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
 
     listCommitted: async () => {
       ensureOpen();
-      return getCommittedSnapshot();
+      return getCommittedSnapshot().map(toPublicCommittedEvent);
     },
 
     listCommittedAfter: async ({
@@ -262,7 +263,7 @@ export const createInMemoryClientStore = ({ materializedViews } = {}) => {
       limit = Number.MAX_SAFE_INTEGER,
     } = {}) => {
       ensureOpen();
-      return getCommittedAfter(sinceCommittedId, limit);
+      return getCommittedAfter(sinceCommittedId, limit).map(toPublicCommittedEvent);
     },
 
     _debug: {

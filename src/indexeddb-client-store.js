@@ -4,6 +4,7 @@ import { throwIfClosed } from "./store-errors.js";
 import {
   buildStoredCommittedFromDraft,
   getStoredCommittedId,
+  toPublicCommittedEvent,
   toStoredCommitted,
   toStoredComparisonKey,
   toStoredDraft,
@@ -617,7 +618,7 @@ export const createIndexedDbClientStore = ({
         committed.sort(
           (left, right) => getStoredCommittedId(left) - getStoredCommittedId(right),
         );
-        return committed;
+        return committed.map(toPublicCommittedEvent);
       }),
 
     listCommittedAfter: async ({
@@ -631,7 +632,7 @@ export const createIndexedDbClientStore = ({
           limit,
           IDBKeyRange,
         );
-        return committed.map(parseCommittedRow);
+        return committed.map(parseCommittedRow).map(toPublicCommittedEvent);
       }),
 
     _debug: {

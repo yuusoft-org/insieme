@@ -13,6 +13,7 @@ import {
   getStoredCommittedId,
   parseStoredEvent,
   parseStoredPartitions,
+  toPublicCommittedEvent,
   toStoredCommitted,
   toStoredComparisonKey,
   toStoredDraft,
@@ -503,7 +504,7 @@ export const createAsyncSqliteClientStore = ({
       }
 
       if (await hasCompatibleClientSchema(tx)) {
-        await createMaterializedSchema(tx);
+        await createSchema(tx);
         await validateSchema(tx);
         if (nextCurrent !== SCHEMA_VERSION) {
           await setUserVersion(tx, SCHEMA_VERSION);
@@ -1042,7 +1043,7 @@ export const createAsyncSqliteClientStore = ({
           FROM committed_events
           ORDER BY committed_id ASC
         `);
-        return rows.map(parseCommittedRow);
+        return rows.map(parseCommittedRow).map(toPublicCommittedEvent);
       });
     },
 
@@ -1062,7 +1063,7 @@ export const createAsyncSqliteClientStore = ({
           `,
           [sinceCommittedId, limit],
         );
-        return rows.map(parseCommittedRow);
+        return rows.map(parseCommittedRow).map(toPublicCommittedEvent);
       });
     },
 
