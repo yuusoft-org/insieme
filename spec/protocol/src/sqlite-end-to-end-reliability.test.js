@@ -146,15 +146,27 @@ describeSqlite("src sqlite end-to-end reliability", () => {
     clientDb = createSqliteDb(clientDbPath);
     clientStore = createSqliteClientStore(clientDb);
     await clientStore.init();
-    await clientStore.insertDraft({
-      id: "offline-3",
-      partition: "P1",
-      type: "x",
-      schemaVersion: 1,
-      payload: { n: 3 },
-      meta: { clientId: "C1", clientTs: 3000 },
-      createdAt: 3000,
-    });
+    clientDb._raw
+      .prepare(
+        `
+          INSERT INTO local_drafts(id, client_id, partitions, event, created_at)
+          VALUES (?, ?, ?, ?, ?)
+        `,
+      )
+      .run(
+        "offline-3",
+        "C1",
+        JSON.stringify(["P1"]),
+        JSON.stringify({
+          type: "event",
+          payload: {
+            schema: "x",
+            schemaVersion: 1,
+            data: { n: 3 },
+          },
+        }),
+        3000,
+      );
     clientDb.close();
 
     serverDb = createSqliteDb(serverDbPath);

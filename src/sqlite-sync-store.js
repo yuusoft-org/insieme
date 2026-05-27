@@ -1,9 +1,31 @@
-import { canonicalizeSubmitItem } from "./canonicalize.js";
-import { normalizeMeta } from "./event-record.js";
-import { deserializePayload, serializePayload } from "./payload-codec.js";
+import {
+  intersectsPartitions,
+  normalizePartitionSet,
+} from "./canonicalize.js";
+import {
+  buildProjectScopePartition,
+  extractProjectScopeIds,
+  getProjectPartitions,
+  partitionSetBelongsToProject,
+} from "./partition-scope.js";
+import { deserializePayload } from "./payload-codec.js";
+import {
+  parseStoredEvent,
+  parseStoredPartitions,
+  toStoredCommitted,
+  toStoredComparisonKey,
+  withStoredCommittedAliases,
+} from "./stored-event.js";
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 const DEFAULT_SCAN_CHUNK_SIZE = 512;
+const LEGACY_PROJECT_KEY = "__global__";
+
+const deriveProjectKey = ({ projectId, partitions = [] } = {}) => {
+  if (typeof projectId === "string" && projectId.length > 0) return projectId;
+  const projectIds = extractProjectScopeIds(normalizePartitionSet(partitions));
+  return projectIds[0] || LEGACY_PROJECT_KEY;
+};
 
 const createTransaction = (db, fn) => {
   if (typeof db.transaction === "function") {
@@ -43,6 +65,65 @@ const getTableColumnType = (db, tableName, columnName) => {
   return typeof column?.type === "string" ? column.type.toUpperCase() : null;
 };
 
+const tableExists = (db, tableName) =>
+  db
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
+    .get(tableName) !== undefined;
+
+const hasCompatibleSchema = (db) => {
+  const hasProjectKey = tableHasColumn(db, "committed_events", "project_key");
+  const hasClientId = tableHasColumn(db, "committed_events", "client_id");
+  const hasPartitions = tableHasColumn(db, "committed_events", "partitions");
+  const hasEvent = tableHasColumn(db, "committed_events", "event");
+  const hasCanonical = tableHasColumn(db, "committed_events", "canonical");
+  const hasStatusUpdatedAt = tableHasColumn(
+    db,
+    "committed_events",
+    "status_updated_at",
+  );
+  const eventType = getTableColumnType(db, "committed_events", "event");
+  return (
+    hasProjectKey &&
+    hasClientId &&
+    hasPartitions &&
+    hasEvent &&
+    hasCanonical &&
+    hasStatusUpdatedAt &&
+    eventType === "TEXT"
+  );
+};
+
+const hasLegacyCanonicalSchema = (db) => {
+  const hasProjectKey = tableHasColumn(db, "committed_events", "project_key");
+  const hasClientId = tableHasColumn(db, "committed_events", "client_id");
+  const hasPartitions = tableHasColumn(db, "committed_events", "partitions");
+  const hasEvent = tableHasColumn(db, "committed_events", "event");
+  const hasCanonical = tableHasColumn(db, "committed_events", "canonical");
+  const hasStatusUpdatedAt = tableHasColumn(
+    db,
+    "committed_events",
+    "status_updated_at",
+  );
+  const eventType = getTableColumnType(db, "committed_events", "event");
+  return (
+    !hasProjectKey &&
+    hasClientId &&
+    hasPartitions &&
+    hasEvent &&
+    hasCanonical &&
+    hasStatusUpdatedAt &&
+    eventType === "TEXT"
+  );
+};
+
+const hasLegacyFlatSchema = (db) =>
+  tableHasColumn(db, "committed_events", "project_id") &&
+  tableHasColumn(db, "committed_events", "partition") &&
+  tableHasColumn(db, "committed_events", "type") &&
+  tableHasColumn(db, "committed_events", "schema_version") &&
+  tableHasColumn(db, "committed_events", "payload") &&
+  tableHasColumn(db, "committed_events", "server_ts");
+
 export const createSqliteSyncStore = (
   db,
   {
@@ -63,8 +144,6 @@ export const createSqliteSyncStore = (
   let listRangeStmt = null;
   /** @type {null|ReturnType<typeof db.prepare>} */
   let getMaxCommittedIdStmt = null;
-  /** @type {null|ReturnType<typeof db.prepare>} */
-  let getMaxCommittedIdForProjectStmt = null;
   /** @type {null|((arg: object) => { deduped: boolean, committedEvent: object })} */
   let commitTxn = null;
 
@@ -90,29 +169,178 @@ export const createSqliteSyncStore = (
     db.exec(`
       CREATE TABLE IF NOT EXISTS committed_events (
         committed_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        id TEXT NOT NULL UNIQUE,
-        project_id TEXT NOT NULL,
-        user_id TEXT,
-        partition TEXT NOT NULL,
-        type TEXT NOT NULL,
-        schema_version INTEGER NOT NULL,
-        payload BLOB NOT NULL,
-        payload_compression TEXT DEFAULT NULL,
-        client_ts INTEGER NOT NULL,
-        server_ts INTEGER NOT NULL,
-        created_at INTEGER NOT NULL
+        id TEXT NOT NULL,
+        project_key TEXT NOT NULL,
+        client_id TEXT NOT NULL,
+        partitions TEXT NOT NULL,
+        event TEXT NOT NULL,
+        canonical TEXT NOT NULL,
+        status_updated_at INTEGER NOT NULL,
+        UNIQUE(project_key, id)
       );
-      CREATE INDEX IF NOT EXISTS committed_events_project_committed_idx
-        ON committed_events(project_id, committed_id);
+    `);
+  };
+
+  const createProjectScanIndex = () => {
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_committed_events_project_committed_id
+      ON committed_events(project_key, committed_id);
     `);
   };
 
   const validateSchema = () => {
-    const hasPartition = tableHasColumn(db, "committed_events", "partition");
-    const payloadType = getTableColumnType(db, "committed_events", "payload");
-    if (!hasPartition || payloadType !== "BLOB") {
+    if (!hasCompatibleSchema(db)) {
       throw new Error("Sync store schema is incompatible; reset required");
     }
+  };
+
+  const migrateLegacyCanonicalSchema = () => {
+    db.exec(`
+      ALTER TABLE committed_events RENAME TO committed_events_legacy_v5;
+    `);
+    createSchema();
+
+    const rows = db
+      .prepare(`
+        SELECT
+          committed_id,
+          id,
+          client_id,
+          partitions,
+          event,
+          canonical,
+          status_updated_at
+        FROM committed_events_legacy_v5
+        ORDER BY committed_id ASC
+      `)
+      .all();
+    const insertMigrated = db.prepare(`
+      INSERT INTO committed_events(
+        committed_id,
+        id,
+        project_key,
+        client_id,
+        partitions,
+        event,
+        canonical,
+        status_updated_at
+      ) VALUES (
+        @committed_id,
+        @id,
+        @project_key,
+        @client_id,
+        @partitions,
+        @event,
+        @canonical,
+        @status_updated_at
+      )
+    `);
+
+    for (const row of rows) {
+      insertMigrated.run({
+        committed_id: row.committed_id,
+        id: row.id,
+        project_key: deriveProjectKey({
+          partitions: parseStoredPartitions(row.partitions),
+        }),
+        client_id: row.client_id || "",
+        partitions: row.partitions,
+        event: row.event,
+        canonical: row.canonical,
+        status_updated_at: row.status_updated_at,
+      });
+    }
+
+    db.exec("DROP TABLE committed_events_legacy_v5;");
+    validateSchema();
+  };
+
+  const migrateLegacyFlatSchema = () => {
+    db.exec(`
+      ALTER TABLE committed_events RENAME TO committed_events_legacy_v4;
+    `);
+    createSchema();
+
+    const rows = db
+      .prepare(`
+        SELECT
+          committed_id,
+          id,
+          project_id,
+          user_id,
+          partition,
+          type,
+          schema_version,
+          payload,
+          client_ts,
+          server_ts,
+          created_at
+        FROM committed_events_legacy_v4
+        ORDER BY committed_id ASC
+      `)
+      .all();
+    const insertMigrated = db.prepare(`
+      INSERT INTO committed_events(
+        committed_id,
+        id,
+        project_key,
+        client_id,
+        partitions,
+        event,
+        canonical,
+        status_updated_at
+      ) VALUES (
+        @committed_id,
+        @id,
+        @project_key,
+        @client_id,
+        @partitions,
+        @event,
+        @canonical,
+        @status_updated_at
+      )
+    `);
+
+    for (const row of rows) {
+      const projectId = row.project_id || undefined;
+      const partition = row.partition || undefined;
+      const statusUpdatedAt = parseIntSafe(row.server_ts, row.created_at || 0);
+      const storedEvent = toStoredCommitted({
+        committed_id: parseIntSafe(row.committed_id, 0),
+        id: row.id,
+        clientId: "",
+        projectId,
+        userId: row.user_id || undefined,
+        partition,
+        partitions: normalizePartitionSet([
+          projectId,
+          projectId ? buildProjectScopePartition(projectId) : undefined,
+          partition,
+        ]),
+        type: row.type,
+        schemaVersion: parseIntSafe(row.schema_version, 1),
+        payload: deserializePayload(row.payload),
+        meta: { clientTs: parseIntSafe(row.client_ts, 0) },
+        status_updated_at: statusUpdatedAt,
+        serverTs: statusUpdatedAt,
+      });
+      insertMigrated.run({
+        committed_id: storedEvent.committed_id,
+        id: storedEvent.id,
+        project_key: deriveProjectKey({
+          projectId,
+          partitions: storedEvent.partitions,
+        }),
+        client_id: storedEvent.client_id || "",
+        partitions: JSON.stringify(storedEvent.partitions),
+        event: JSON.stringify(storedEvent.event),
+        canonical: toComparisonKey(storedEvent),
+        status_updated_at: storedEvent.status_updated_at,
+      });
+    }
+
+    db.exec("DROP TABLE committed_events_legacy_v4;");
+    validateSchema();
   };
 
   const initializeSchema = () => {
@@ -123,13 +351,44 @@ export const createSqliteSyncStore = (
       );
     }
 
-    if (current === 0) {
+    const hasCommittedEventsTable = tableExists(db, "committed_events");
+    if (current === 0 && !hasCommittedEventsTable) {
       const initializeTxn = createTransaction(db, () => {
         createSchema();
+        createProjectScanIndex();
         validateSchema();
         setUserVersion(SCHEMA_VERSION);
       });
       initializeTxn();
+      return;
+    }
+
+    if (hasCommittedEventsTable && hasCompatibleSchema(db)) {
+      createProjectScanIndex();
+      validateSchema();
+      if (current !== SCHEMA_VERSION) {
+        setUserVersion(SCHEMA_VERSION);
+      }
+      return;
+    }
+
+    if (hasCommittedEventsTable && hasLegacyCanonicalSchema(db)) {
+      const migrationTxn = createTransaction(db, () => {
+        migrateLegacyCanonicalSchema();
+        createProjectScanIndex();
+        setUserVersion(SCHEMA_VERSION);
+      });
+      migrationTxn();
+      return;
+    }
+
+    if (hasCommittedEventsTable && hasLegacyFlatSchema(db)) {
+      const migrationTxn = createTransaction(db, () => {
+        migrateLegacyFlatSchema();
+        createProjectScanIndex();
+        setUserVersion(SCHEMA_VERSION);
+      });
+      migrationTxn();
       return;
     }
 
@@ -142,78 +401,50 @@ export const createSqliteSyncStore = (
     validateSchema();
   };
 
-  const parseCommittedRow = (row) => ({
-    id: row.id,
-    projectId: row.project_id || undefined,
-    userId: row.user_id || undefined,
-    partition: row.partition,
-    committedId: row.committed_id,
-    type: row.type,
-    schemaVersion: parseIntSafe(row.schema_version, 0),
-    payload: deserializePayload(row.payload),
-    payloadCompression: row.payload_compression || undefined,
-    meta: normalizeMeta({
-      clientTs: parseIntSafe(row.client_ts, 0),
-    }),
-    serverTs: row.server_ts,
-    createdAt: row.created_at,
-  });
-
-  const toComparisonKey = (event) =>
-    canonicalizeSubmitItem({
-      partition: event.partition,
-      projectId: event.projectId,
-      userId: event.userId,
-      type: event.type,
-      schemaVersion: event.schemaVersion,
-      payload: event.payload,
-      meta: event.meta,
+  const parseCommittedRow = (row) =>
+    withStoredCommittedAliases({
+      committed_id: row.committed_id,
+      id: row.id,
+      client_id: row.client_id,
+      partitions: parseStoredPartitions(row.partitions),
+      event: parseStoredEvent(row.event),
+      status_updated_at: row.status_updated_at,
     });
+
+  const toComparisonKey = (event) => toStoredComparisonKey(event);
 
   const prepareStatements = () => {
     getByIdStmt = db.prepare(`
       SELECT
         committed_id,
         id,
-        project_id,
-        user_id,
-        partition,
-        type,
-        schema_version,
-        payload,
-        payload_compression,
-        client_ts,
-        server_ts,
-        created_at
+        client_id,
+        partitions,
+        event,
+        canonical,
+        status_updated_at
       FROM committed_events
-      WHERE id = @id
+      WHERE project_key = @project_key
+        AND id = @id
     `);
 
     insertCommittedStmt = db.prepare(`
       INSERT INTO committed_events(
         id,
-        project_id,
-        user_id,
-        partition,
-        type,
-        schema_version,
-        payload,
-        payload_compression,
-        client_ts,
-        server_ts,
-        created_at
+        project_key,
+        client_id,
+        partitions,
+        event,
+        canonical,
+        status_updated_at
       ) VALUES (
         @id,
-        @project_id,
-        @user_id,
-        @partition,
-        @type,
-        @schema_version,
-        @payload,
-        @payload_compression,
-        @client_ts,
-        @server_ts,
-        @created_at
+        @project_key,
+        @client_id,
+        @partitions,
+        @event,
+        @canonical,
+        @status_updated_at
       )
     `);
 
@@ -221,18 +452,12 @@ export const createSqliteSyncStore = (
       SELECT
         committed_id,
         id,
-        project_id,
-        user_id,
-        partition,
-        type,
-        schema_version,
-        payload,
-        payload_compression,
-        client_ts,
-        server_ts,
-        created_at
+        client_id,
+        partitions,
+        event,
+        status_updated_at
       FROM committed_events
-      WHERE project_id = @project_id
+      WHERE project_key = @project_key
         AND committed_id > @since_committed_id
         AND committed_id <= @upper_bound
       ORDER BY committed_id ASC
@@ -244,36 +469,43 @@ export const createSqliteSyncStore = (
       FROM committed_events
     `);
 
-    getMaxCommittedIdForProjectStmt = db.prepare(`
-      SELECT COALESCE(MAX(committed_id), 0) AS max_committed_id
-      FROM committed_events
-      WHERE project_id = @project_id
-    `);
-
     commitTxn = createTransaction(
       db,
       ({
         id,
+        clientId,
         partition,
         projectId,
+        partitions,
         userId,
         type,
         schemaVersion,
         payload,
         meta,
+        event,
         now,
       }) => {
-        const existing = getByIdStmt.get({ id });
-        const normalizedMeta = normalizeMeta(meta);
-        const comparisonKey = canonicalizeSubmitItem({
+        const storedEvent = toStoredCommitted({
+          id,
+          clientId,
           partition,
           projectId,
           userId,
           type,
           schemaVersion,
           payload,
-          meta: normalizedMeta,
+          meta,
+          partitions,
+          event,
+          status_updated_at: now,
+          serverTs: now,
         });
+        const projectKey = deriveProjectKey({
+          projectId,
+          partitions: storedEvent.partitions,
+        });
+        const comparisonKey = toComparisonKey(storedEvent);
+        const existing = getByIdStmt.get({ id, project_key: projectKey });
 
         if (existing) {
           const parsedExisting = parseCommittedRow(existing);
@@ -292,19 +524,15 @@ export const createSqliteSyncStore = (
 
         insertCommittedStmt.run({
           id,
-          project_id: projectId,
-          user_id: userId ?? null,
-          partition,
-          type,
-          schema_version: schemaVersion,
-          payload: serializePayload(payload),
-          payload_compression: null,
-          client_ts: parseIntSafe(normalizedMeta.clientTs, 0),
-          server_ts: now,
-          created_at: now,
+          project_key: projectKey,
+          client_id: storedEvent.client_id || "unknown",
+          partitions: JSON.stringify(storedEvent.partitions),
+          event: JSON.stringify(storedEvent.event),
+          canonical: comparisonKey,
+          status_updated_at: now,
         });
 
-        const inserted = getByIdStmt.get({ id });
+        const inserted = getByIdStmt.get({ id, project_key: projectKey });
         if (!inserted) {
           throw new Error("commit insert succeeded but row was not readable");
         }
@@ -325,6 +553,39 @@ export const createSqliteSyncStore = (
     initialized = true;
   };
 
+  const getMaxCommittedIdForProjectInternal = (projectId) => {
+    const projectPartitions = normalizePartitionSet(getProjectPartitions(projectId));
+    if (projectPartitions.length === 0) return 0;
+    const pageSize =
+      Number.isInteger(scanChunkSize) && scanChunkSize > 0
+        ? scanChunkSize
+        : DEFAULT_SCAN_CHUNK_SIZE;
+    let maxCommittedId = 0;
+    let cursor = 0;
+    while (true) {
+      const rows = listRangeStmt.all({
+        project_key: projectId,
+        since_committed_id: cursor,
+        upper_bound: Number.MAX_SAFE_INTEGER,
+        limit: pageSize,
+      });
+      if (rows.length === 0) break;
+      cursor = rows[rows.length - 1].committed_id;
+      for (const row of rows) {
+        const parsed = parseCommittedRow(row);
+        if (
+          intersectsPartitions(projectPartitions, parsed.partitions) &&
+          partitionSetBelongsToProject(parsed.partitions, projectId) &&
+          parsed.committed_id > maxCommittedId
+        ) {
+          maxCommittedId = parsed.committed_id;
+        }
+      }
+      if (rows.length < pageSize) break;
+    }
+    return maxCommittedId;
+  };
+
   return {
     init: async () => {
       ensureInitialized();
@@ -332,37 +593,47 @@ export const createSqliteSyncStore = (
 
     commitOrGetExisting: async ({
       id,
+      clientId,
       partition,
       projectId,
+      partitions,
       userId,
       type,
       schemaVersion,
       payload,
       meta,
+      event,
       now,
     }) => {
       ensureInitialized();
       return commitTxn({
         id,
+        clientId,
         partition,
         projectId,
+        partitions,
         userId,
         type,
         schemaVersion,
         payload,
         meta,
+        event,
         now,
       });
     },
 
     listCommittedSince: async ({
       projectId,
+      partitions,
       sinceCommittedId,
       limit,
       syncToCommittedId,
     }) => {
       ensureInitialized();
-      if (!projectId) {
+      const requestedPartitions = normalizePartitionSet(
+        partitions || getProjectPartitions(projectId),
+      );
+      if (requestedPartitions.length === 0) {
         return {
           events: [],
           hasMore: false,
@@ -372,12 +643,7 @@ export const createSqliteSyncStore = (
       const upperBound =
         syncToCommittedId !== undefined
           ? syncToCommittedId
-          : await (async () => {
-              const row = getMaxCommittedIdForProjectStmt.get({
-                project_id: projectId,
-              });
-              return parseIntSafe(row.max_committed_id, 0);
-            })();
+          : parseIntSafe(getMaxCommittedIdStmt.get()?.max_committed_id, 0);
 
       const pageSize = Math.max(
         limit + 1,
@@ -393,7 +659,7 @@ export const createSqliteSyncStore = (
 
       while (!exhausted && matched.length <= limit) {
         const rows = listRangeStmt.all({
-          project_id: projectId,
+          project_key: projectId,
           since_committed_id: cursor,
           upper_bound: upperBound,
           limit: pageSize,
@@ -407,7 +673,13 @@ export const createSqliteSyncStore = (
         cursor = rows[rows.length - 1].committed_id;
 
         for (const row of rows) {
-          matched.push(parseCommittedRow(row));
+          const parsed = parseCommittedRow(row);
+          if (
+            intersectsPartitions(requestedPartitions, parsed.partitions) &&
+            partitionSetBelongsToProject(parsed.partitions, projectId)
+          ) {
+            matched.push(parsed);
+          }
           if (matched.length > limit) break;
         }
 
@@ -420,7 +692,7 @@ export const createSqliteSyncStore = (
       const hasMore = matched.length > limit;
       const nextSinceCommittedId =
         events.length > 0
-          ? events[events.length - 1].committedId
+          ? events[events.length - 1].committed_id
           : sinceCommittedId;
 
       return {
@@ -438,11 +710,7 @@ export const createSqliteSyncStore = (
 
     getMaxCommittedIdForProject: async ({ projectId }) => {
       ensureInitialized();
-      if (!projectId) return 0;
-      const row = getMaxCommittedIdForProjectStmt.get({
-        project_id: projectId,
-      });
-      return parseIntSafe(row?.max_committed_id, 0);
+      return getMaxCommittedIdForProjectInternal(projectId);
     },
   };
 };

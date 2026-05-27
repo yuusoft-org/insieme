@@ -1,23 +1,26 @@
 import {
   isNonEmptyString,
   isObject,
-  normalizeSubmitEventInput,
   toFiniteNumberOrNull,
   toPositiveIntegerOrNull,
 } from "./event-record.js";
 import { generateId } from "./id.js";
+import { buildProjectScopePartition } from "./partition-scope.js";
+import {
+  setStoredContext,
+  toPublicCommittedEvent,
+  toStoredDraft,
+  withStoredCommittedAliases,
+  withStoredDraftAliases,
+} from "./stored-event.js";
 import { throwIfClosed } from "./store-errors.js";
 
 /**
  * @typedef {{
  *   id: string,
- *   partition: string,
- *   projectId: string,
- *   userId?: string,
- *   type: string,
- *   schemaVersion: number,
- *   payload: object,
- *   clientTs: number,
+ *   clientId: string,
+ *   partitions: string[],
+ *   event: object,
  *   createdAt: number,
  * }} SubmitItem
  */
@@ -195,19 +198,36 @@ export const createSyncClient = ({
     return outboundMsgId;
   };
 
-  const toSubmitEnvelopeItem = (draft) => ({
-    id: draft.id,
-    partition: draft.partition,
-    projectId: draft.projectId || activeProjectId,
-    userId: draft.userId,
-    type: draft.type,
-    schemaVersion: draft.schemaVersion,
-    payload: draft.payload,
-    meta: {
-      clientId,
-      clientTs: draft.clientTs,
-    },
-  });
+  const toSubmitEnvelopeItem = (draft) => {
+    const item = {
+      id: draft.id,
+      clientId: draft.clientId || clientId,
+      partitions: draft.partitions,
+      event: draft.event,
+    };
+    setStoredContext(item, {
+      projectId: activeProjectId,
+      partition: draft.partition,
+    });
+    return withStoredDraftAliases(item);
+  };
+
+  const withInboundEventContext = (event) => {
+    if (!isObject(event)) return event;
+    const partitions = Array.isArray(event?.partitions) ? event.partitions : [];
+    const projectScopePartition = buildProjectScopePartition(activeProjectId);
+    const partition =
+      partitions.find(
+        (candidate) =>
+          candidate !== activeProjectId && candidate !== projectScopePartition,
+      ) ??
+      (isNonEmptyString(event?.partition) ? event.partition : partitions[0]);
+    setStoredContext(event, {
+      projectId: activeProjectId,
+      partition,
+    });
+    return withStoredCommittedAliases(event);
+  };
 
   const getApproxSubmitEnvelopeBytes = (events) => {
     try {
@@ -285,6 +305,93 @@ export const createSyncClient = ({
       actualBytes,
     };
     return error;
+  };
+
+  const isStoredEventEnvelope = (event) =>
+    isObject(event) &&
+    event.type === "event" &&
+    isObject(event.payload) &&
+    isNonEmptyString(event.payload.schema);
+
+  const assertSubmitPartitionInput = (input) => {
+    if (Array.isArray(input.partitions)) {
+      if (input.partitions.length === 0) {
+        throw new Error("submitEvents requires partition");
+      }
+      for (const partition of input.partitions) {
+        if (!isNonEmptyString(partition)) {
+          throw new Error("submitEvents requires partition");
+        }
+      }
+      return;
+    }
+
+    if (!isNonEmptyString(input.partition)) {
+      throw new Error("submitEvents requires partition");
+    }
+  };
+
+  const normalizeSubmitInput = (input) => {
+    if (!isObject(input?.event) || isStoredEventEnvelope(input.event)) {
+      return input;
+    }
+
+    return {
+      ...input,
+      event: undefined,
+      type: input.event.type,
+      schemaVersion: input.event.schemaVersion ?? input.schemaVersion,
+      payload: input.event.payload,
+    };
+  };
+
+  const assertSubmitInput = (input, index) => {
+    if (!isObject(input)) {
+      throw new Error(`submitEvents item ${index} must be an object`);
+    }
+    if (input.id !== undefined && !isNonEmptyString(input.id)) {
+      throw new Error("submitEvents requires each item to have a non-empty id");
+    }
+
+    if (isObject(input.event)) {
+      assertSubmitPartitionInput(input);
+      if (!isObject(input.event.payload)) {
+        throw new Error("submitEvents requires event payload object");
+      }
+
+      if (isStoredEventEnvelope(input.event)) {
+        if (
+          toPositiveIntegerOrNull(
+            input.event.payload.schemaVersion ?? input.event.schemaVersion,
+          ) === null
+        ) {
+          throw new Error("submitEvents requires event.payload.schemaVersion");
+        }
+        return;
+      }
+
+      if (!isNonEmptyString(input.event.type)) {
+        throw new Error("submitEvents requires type");
+      }
+      if (
+        toPositiveIntegerOrNull(input.event.schemaVersion ?? input.schemaVersion) ===
+        null
+      ) {
+        throw new Error("submitEvents requires schemaVersion");
+      }
+      return;
+    }
+
+    assertSubmitPartitionInput(input);
+    if (!isNonEmptyString(input.type)) {
+      throw new Error("submitEvents requires type");
+    }
+    if (toPositiveIntegerOrNull(input.schemaVersion) === null) {
+      throw new Error("submitEvents requires schemaVersion");
+    }
+    if (!isObject(input.payload)) {
+      throw new Error("submitEvents requires event payload object");
+    }
   };
 
   const rejectDraftLocally = async ({
@@ -646,7 +753,13 @@ export const createSyncClient = ({
     }
 
     for (const result of payload.results || []) {
-      await store.applySubmitResult({ result });
+      const contextualResult = {
+        ...result,
+        projectId: isNonEmptyString(result.projectId)
+          ? result.projectId
+          : activeProjectId,
+      };
+      await store.applySubmitResult({ result: contextualResult });
 
       if (result.status === "committed") {
         log({
@@ -681,12 +794,21 @@ export const createSyncClient = ({
   };
 
   const onSyncResponse = async (payload, messageContext = {}) => {
+    const inboundEvents = (payload.events || []).map(withInboundEventContext);
     await store.applyCommittedBatch({
-      events: payload.events || [],
+      events: inboundEvents,
       nextCursor: payload.nextSinceCommittedId,
     });
 
-    emit("sync_page", payload);
+    const publicPayload = {
+      ...payload,
+      events: inboundEvents.map((event) =>
+        toPublicCommittedEvent(event, {
+          defaultProjectId: activeProjectId,
+        }),
+      ),
+    };
+    emit("sync_page", publicPayload);
     log({
       event: "sync_page_applied",
       eventCount: (payload.events || []).length,
@@ -727,14 +849,18 @@ export const createSyncClient = ({
   };
 
   const onBroadcast = async (payload, messageContext = {}) => {
-    await store.applyCommittedBatch({ events: [payload] });
+    const inboundEvent = withInboundEventContext(payload);
+    await store.applyCommittedBatch({ events: [inboundEvent] });
+    const publicPayload = toPublicCommittedEvent(inboundEvent, {
+      defaultProjectId: activeProjectId,
+    });
     log({
       event: "broadcast_applied",
-      id: payload.id,
-      committedId: payload.committedId,
+      id: publicPayload.id,
+      committedId: publicPayload.committedId,
       msgId: messageContext.msgId,
     });
-    emit("broadcast", payload);
+    emit("broadcast", publicPayload);
   };
 
   const onError = async (payload, messageContext = {}) => {
@@ -827,27 +953,16 @@ export const createSyncClient = ({
     }
 
     const seenIds = new Set();
-    const drafts = inputs.map((input) => ({
-      ...(() => {
-        const normalized = normalizeSubmitEventInput(input, {
-          defaultId: uuid(),
-          defaultProjectId: activeProjectId,
-          defaultClientId: clientId,
-          defaultClientTs: now(),
-        });
-        return {
-          id: normalized.id,
-          partition: normalized.partition,
-          projectId: normalized.projectId,
-          userId: normalized.userId,
-          type: normalized.type,
-          schemaVersion: normalized.schemaVersion,
-          payload: normalized.payload,
-          clientTs: normalized.clientTs,
-        };
-      })(),
-      createdAt: now(),
-    }));
+    inputs.forEach(assertSubmitInput);
+    const drafts = inputs.map((input) =>
+      toStoredDraft(normalizeSubmitInput(input), {
+        defaultId: uuid(),
+        defaultClientId: clientId,
+        defaultProjectId: activeProjectId,
+        defaultClientTs: now(),
+        defaultCreatedAt: now(),
+      }),
+    );
 
     for (const draft of drafts) {
       if (!isNonEmptyString(draft.id)) {
@@ -857,22 +972,26 @@ export const createSyncClient = ({
         throw new Error(`submitEvents duplicate id: ${draft.id}`);
       }
       seenIds.add(draft.id);
-      if (!isNonEmptyString(draft.partition)) {
+      if (!isNonEmptyString(draft.clientId)) {
+        throw new Error("submitEvents requires clientId");
+      }
+      if (!Array.isArray(draft.partitions) || draft.partitions.length === 0) {
         throw new Error("submitEvents requires partition");
       }
-      if (!isNonEmptyString(draft.type)) {
+      if (!isObject(draft.event)) {
+        throw new Error("submitEvents requires event object");
+      }
+      if (!isNonEmptyString(draft.event?.type)) {
         throw new Error("submitEvents requires type");
       }
-      if (toPositiveIntegerOrNull(draft.schemaVersion) === null) {
-        throw new Error(
-          "submitEvents requires schemaVersion as a positive integer",
-        );
+      if (!isObject(draft.event?.payload)) {
+        throw new Error("submitEvents requires event payload object");
       }
-      if (toFiniteNumberOrNull(draft.clientTs) === null) {
-        throw new Error("submitEvents requires clientTs as a finite number");
+      if (draft.event.type === "event" && !isNonEmptyString(draft.event.payload.schema)) {
+        throw new Error("submitEvents requires event.payload.schema");
       }
-      if (!isObject(draft.payload)) {
-        throw new Error("submitEvents requires payload object");
+      if (toFiniteNumberOrNull(draft.createdAt) === null) {
+        throw new Error("submitEvents requires createdAt as a finite number");
       }
       validateLocalEvent(draft);
       const singleEventBytes = getApproxSubmitEnvelopeBytes([

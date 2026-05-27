@@ -50,8 +50,15 @@ export const attachWsConnection = ({
     connectionId,
     send: async (message) => {
       if (ws.readyState !== ws.OPEN) return;
-      ws.send(JSON.stringify(message));
-      log("message_sent", { messageType: message?.type || null });
+      try {
+        ws.send(JSON.stringify(message));
+        log("message_sent", { messageType: message?.type || null });
+      } catch (error) {
+        log("send_failed", {
+          messageType: message?.type || null,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
     },
     close: async (reason = "server_close") => {
       if (closed) return;

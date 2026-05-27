@@ -111,13 +111,16 @@ Built-in SQL adapters also create:
 CREATE TABLE materialized_view_state (
   view_name TEXT NOT NULL,
   partition TEXT NOT NULL,
-  view_version TEXT NOT NULL,
-  last_committed_id INTEGER NOT NULL,
+  view_version TEXT,
+  last_committed_id INTEGER,
   value TEXT NOT NULL,
   updated_at INTEGER NOT NULL,
   PRIMARY KEY(view_name, partition)
 );
 ```
+
+Existing checkpoint rows without `view_version` or `last_committed_id` are treated
+as stale cache and rebuilt from `committed_events`.
 
 ## Query Patterns
 

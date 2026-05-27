@@ -62,13 +62,128 @@ describeSqlite("src createSqliteSyncStore", () => {
     expect(second.committedEvent.committedId).toBe(1);
 
     const schema = db._raw.prepare("PRAGMA user_version").get();
-    expect(schema.user_version).toBe(4);
-    const payload = db._raw
+    expect(schema.user_version).toBe(5);
+    const event = db._raw
       .prepare(
-        "SELECT type FROM pragma_table_info('committed_events') WHERE name = 'payload'",
+        "SELECT type FROM pragma_table_info('committed_events') WHERE name = 'event'",
       )
       .get();
-    expect(payload.type).toBe("BLOB");
+    const canonical = db._raw
+      .prepare(
+        "SELECT type FROM pragma_table_info('committed_events') WHERE name = 'canonical'",
+      )
+      .get();
+    const statusUpdatedAt = db._raw
+      .prepare(
+        "SELECT type FROM pragma_table_info('committed_events') WHERE name = 'status_updated_at'",
+      )
+      .get();
+    expect(event.type).toBe("TEXT");
+    expect(canonical.type).toBe("TEXT");
+    expect(statusUpdatedAt.type).toBe("INTEGER");
+
+    db.close();
+  });
+
+  it("creates and uses a project-scoped committed-id index for sparse multi-project sync", async () => {
+    const db = createSqliteDb(":memory:");
+    const store = createSqliteSyncStore(db);
+    await store.init();
+
+    const indexes = db._raw.prepare("PRAGMA index_list('committed_events')").all();
+    expect(indexes.map((index) => index.name)).toContain(
+      "idx_committed_events_project_committed_id",
+    );
+
+    const plan = db._raw
+      .prepare(
+        `EXPLAIN QUERY PLAN
+         SELECT committed_id, id, client_id, partitions, event, status_updated_at
+         FROM committed_events
+         WHERE project_key = @project_key
+           AND committed_id > @since_committed_id
+           AND committed_id <= @upper_bound
+         ORDER BY committed_id ASC
+         LIMIT @limit`,
+      )
+      .all({
+        project_key: "proj-needle",
+        since_committed_id: 0,
+        upper_bound: Number.MAX_SAFE_INTEGER,
+        limit: 10,
+      });
+
+    expect(plan.map((row) => row.detail).join("\n")).toContain(
+      "idx_committed_events_project_committed_id",
+    );
+
+    db.close();
+  });
+
+  it("allows different projects to commit the same event id independently", async () => {
+    const db = createSqliteDb(":memory:");
+    const store = createSqliteSyncStore(db);
+    await store.init();
+
+    const first = await store.commitOrGetExisting(
+      makeSubmit({
+        id: "shared-id",
+        projectId: "proj-1",
+        partition: "P1",
+        payload: { n: 1 },
+        now: 1,
+      }),
+    );
+    const second = await store.commitOrGetExisting(
+      makeSubmit({
+        id: "shared-id",
+        projectId: "proj-2",
+        partition: "P2",
+        payload: { n: 2 },
+        now: 2,
+      }),
+    );
+
+    expect(first.deduped).toBe(false);
+    expect(second.deduped).toBe(false);
+    expect(second.committedEvent.committedId).toBeGreaterThan(
+      first.committedEvent.committedId,
+    );
+
+    db.close();
+  });
+
+  it("rejects same-project duplicate id with different payload", async () => {
+    const db = createSqliteDb(":memory:");
+    const store = createSqliteSyncStore(db);
+    await store.init();
+
+    await store.commitOrGetExisting(
+      makeSubmit({ id: "same-project-id", payload: { n: 1 }, now: 1 }),
+    );
+
+    await expect(
+      store.commitOrGetExisting(
+        makeSubmit({ id: "same-project-id", payload: { n: 2 }, now: 2 }),
+      ),
+    ).rejects.toMatchObject({ code: "validation_failed" });
+
+    db.close();
+  });
+
+  it("preserves top-level clientId on stored commits", async () => {
+    const db = createSqliteDb(":memory:");
+    const store = createSqliteSyncStore(db);
+    await store.init();
+
+    const result = await store.commitOrGetExisting(
+      makeSubmit({
+        clientId: "C-top",
+        meta: undefined,
+      }),
+    );
+
+    expect(result.committedEvent.client_id).toBe("C-top");
 
     db.close();
   });
@@ -179,6 +294,182 @@ describeSqlite("src createSqliteSyncStore", () => {
     db.close();
   });
 
+  it("uses a global upper bound for direct multi-partition listing", async () => {
+    const db = createSqliteDb(":memory:");
+    const store = createSqliteSyncStore(db);
+    await store.init();
+
+    await store.commitOrGetExisting(
+      makeSubmit({
+        id: "evt-a",
+        projectId: "proj-1",
+        partition: "A",
+        payload: { n: 1 },
+        now: 1,
+      }),
+    );
+    await store.commitOrGetExisting(
+      makeSubmit({
+        id: "evt-b",
+        projectId: "proj-1",
+        partition: "B",
+        payload: { n: 2 },
+        now: 2,
+      }),
+    );
+
+    const page = await store.listCommittedSince({
+      projectId: "proj-1",
+      partitions: ["A", "B"],
+      sinceCommittedId: 0,
+      limit: 10,
+    });
+
+    expect(page.events.map((event) => event.id)).toEqual(["evt-a", "evt-b"]);
+
+    db.close();
+  });
+
+  it("migrates a legacy flat RouteVN sync database without data loss", async () => {
+    const db = createSqliteDb(":memory:");
+    db.exec(`
+      CREATE TABLE committed_events (
+        committed_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT NOT NULL UNIQUE,
+        project_id TEXT NOT NULL,
+        user_id TEXT,
+        partition TEXT NOT NULL,
+        type TEXT NOT NULL,
+        schema_version INTEGER NOT NULL,
+        payload TEXT NOT NULL,
+        payload_compression TEXT DEFAULT NULL,
+        client_ts INTEGER NOT NULL,
+        server_ts INTEGER NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+    `);
+    db._raw
+      .prepare(
+        `INSERT INTO committed_events(
+          committed_id,
+          id,
+          project_id,
+          user_id,
+          partition,
+          type,
+          schema_version,
+          payload,
+          client_ts,
+          server_ts,
+          created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        7,
+        "routevn-legacy-1",
+        "proj-1",
+        "user-1",
+        "project:proj-1:story",
+        "scene.create",
+        2,
+        JSON.stringify({ sceneId: "s1" }),
+        101,
+        202,
+        203,
+      );
+    db.exec("PRAGMA user_version=4;");
+
+    const store = createSqliteSyncStore(db);
+    await store.init();
+
+    expect(db._raw.prepare("PRAGMA user_version").get().user_version).toBe(5);
+    expect(
+      db._raw
+        .prepare(
+          "SELECT name FROM pragma_table_info('committed_events') WHERE name = 'project_id'",
+        )
+        .get(),
+    ).toBeUndefined();
+
+    const page = await store.listCommittedSince({
+      projectId: "proj-1",
+      sinceCommittedId: 0,
+      limit: 10,
+    });
+
+    expect(page.events).toEqual([
+      expect.objectContaining({
+        committedId: 7,
+        id: "routevn-legacy-1",
+        partition: "project:proj-1:story",
+        userId: "user-1",
+        type: "scene.create",
+        schemaVersion: 2,
+        payload: { sceneId: "s1" },
+        serverTs: 202,
+      }),
+    ]);
+
+    db.close();
+  });
+
+  it("reads existing legacy rows with configured project metadata", async () => {
+    const db = createSqliteDb(":memory:");
+    const store = createSqliteSyncStore(db);
+    await store.init();
+
+    db._raw
+      .prepare(
+        `
+          INSERT INTO committed_events(
+            id,
+            project_key,
+            client_id,
+            partitions,
+            event,
+            canonical,
+            status_updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        `,
+      )
+      .run(
+        "legacy-1",
+        "proj-1",
+        "C1",
+        JSON.stringify(["proj-1", "P1"]),
+        JSON.stringify({
+          type: "event",
+          payload: {
+            schema: "x",
+            schemaVersion: 1,
+            data: { n: 1 },
+          },
+        }),
+        "legacy-canonical",
+        10,
+      );
+
+    const page = await store.listCommittedSince({
+      projectId: "proj-1",
+      sinceCommittedId: 0,
+      limit: 10,
+    });
+
+    expect(page.events).toEqual([
+      expect.objectContaining({
+        id: "legacy-1",
+        partition: "P1",
+        type: "x",
+        schemaVersion: 1,
+        payload: { n: 1 },
+        committedId: 1,
+        serverTs: 10,
+      }),
+    ]);
+
+    db.close();
+  });
+
   it("fails fast on unsupported future schema version", async () => {
     const db = createSqliteDb(":memory:");
     db.exec("PRAGMA user_version=999;");
@@ -191,13 +482,13 @@ describeSqlite("src createSqliteSyncStore", () => {
     db.close();
   });
 
-  it("fails fast on older on-disk schema versions", async () => {
+  it("fails fast on incompatible future on-disk schema versions", async () => {
     const db = createSqliteDb(":memory:");
-    db.exec("PRAGMA user_version=3;");
+    db.exec("PRAGMA user_version=8;");
     const store = createSqliteSyncStore(db);
 
     await expect(store.init()).rejects.toThrow(
-      "Sync store requires reset for schema version 3; runtime expects 4",
+      "Unsupported schema version 8; runtime supports up to 5",
     );
 
     db.close();

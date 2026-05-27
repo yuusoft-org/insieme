@@ -10,6 +10,48 @@ const createDbName = () =>
 
 const createdDbNames = [];
 
+const seedVersion8Database = (dbName) =>
+  new Promise((resolve, reject) => {
+    const request = indexedDB.open(dbName, 8);
+    request.onerror = () => reject(request.error);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      const meta = db.createObjectStore("meta", { keyPath: "key" });
+      meta.put({ key: "cursor_committed_id", value: 12 });
+      const drafts = db.createObjectStore("drafts", { keyPath: "id" });
+      drafts.createIndex("by_draft_clock", "draft_clock", { unique: false });
+      drafts.put({
+        id: "draft-v8-1",
+        draft_clock: 1,
+        client_id: "C1",
+        partition: "P1",
+        type: "x",
+        schema_version: 1,
+        payload: { n: 1 },
+        created_at: 100,
+      });
+      const committed = db.createObjectStore("committed", { keyPath: "id" });
+      committed.createIndex("by_committed_id", "committed_id", { unique: true });
+      committed.put({
+        id: "committed-v8-1",
+        committed_id: 12,
+        client_id: "C2",
+        partition: "P1",
+        type: "x",
+        schema_version: 1,
+        payload: { n: 2 },
+        status_updated_at: 200,
+      });
+      db.createObjectStore("materialized_view_state", {
+        keyPath: ["view_name", "partition"],
+      });
+    };
+    request.onsuccess = () => {
+      request.result.close();
+      resolve();
+    };
+  });
+
 afterEach(async () => {
   for (const dbName of createdDbNames.splice(0)) {
     await new Promise((resolve) => {
@@ -119,8 +161,18 @@ describe("src createIndexedDbClientStore", () => {
       expect(committed).toHaveLength(1);
       expect(committed[0]).toMatchObject({
         id: "evt-1",
-        committedId: 5,
-        clientTs: 100,
+        committed_id: 5,
+        client_id: "C1",
+        partitions: ["P1", "proj-1"],
+        status_updated_at: 500,
+        event: {
+          type: "event",
+          payload: {
+            schema: "x",
+            schemaVersion: 1,
+            data: { n: 1 },
+          },
+        },
       });
     }
 
@@ -136,10 +188,36 @@ describe("src createIndexedDbClientStore", () => {
       expect(committed).toHaveLength(1);
       expect(committed[0]).toMatchObject({
         id: "evt-1",
-        committedId: 5,
-        clientTs: 100,
+        committed_id: 5,
+        client_id: "C1",
+        partitions: ["P1", "proj-1"],
+        status_updated_at: 500,
+        event: {
+          type: "event",
+          payload: {
+            schema: "x",
+            schemaVersion: 1,
+            data: { n: 1 },
+          },
+        },
       });
     }
+  });
+
+  it("bumps version 8 databases and clears incompatible old row shapes", async () => {
+    const dbName = createDbName();
+    createdDbNames.push(dbName);
+    await seedVersion8Database(dbName);
+
+    const store = createIndexedDbClientStore({
+      indexedDB,
+      dbName,
+    });
+    await store.init();
+
+    expect(await store.loadCursor()).toBe(0);
+    expect(await store.loadDraftsOrdered()).toEqual([]);
+    expect(await store._debug.getCommitted()).toEqual([]);
   });
 
   it("orders drafts by draftClock then id", async () => {
@@ -280,6 +358,180 @@ describe("src createIndexedDbClientStore", () => {
         partition: "P1",
       }),
     ).toEqual({ count: 2 });
+  });
+
+  it("exposes batch draft APIs, aliases, debug inspectors, and close behavior", async () => {
+    const dbName = createDbName();
+    createdDbNames.push(dbName);
+    const store = createIndexedDbClientStore({
+      indexedDB,
+      dbName,
+    });
+    await store.init();
+
+    await store.insertDrafts([
+      makeDraft({
+        id: "evt-a",
+        createdAt: 100,
+        payload: { n: 1 },
+      }),
+      makeDraft({
+        id: "evt-b",
+        createdAt: 101,
+        payload: { n: 2 },
+      }),
+      makeDraft({
+        id: "evt-r",
+        createdAt: 102,
+        payload: { n: 3 },
+      }),
+    ]);
+
+    expect((await store.listDraftsOrdered()).map((draft) => draft.id)).toEqual([
+      "evt-a",
+      "evt-b",
+      "evt-r",
+    ]);
+
+    await store.applySubmitResult({
+      result: {
+        id: "evt-a",
+        status: "committed",
+        committedId: 1,
+        serverTs: 1000,
+      },
+    });
+    await store.applySubmitResult({
+      result: {
+        id: "evt-r",
+        status: "rejected",
+        reason: "validation_failed",
+      },
+    });
+
+    expect((await store.listDraftsOrdered()).map((draft) => draft.id)).toEqual([
+      "evt-b",
+    ]);
+    expect((await store._debug.getDrafts()).map((draft) => draft.id)).toEqual([
+      "evt-b",
+    ]);
+    expect((await store.listCommitted()).map((event) => event.id)).toEqual([
+      "evt-a",
+    ]);
+    expect(
+      (
+        await store.listCommittedAfter({
+          sinceCommittedId: 0,
+          limit: 1,
+        })
+      ).map((event) => event.id),
+    ).toEqual(["evt-a"]);
+    expect(await store.getCursor()).toBe(0);
+    expect(await store._debug.getCursor()).toBe(0);
+
+    await store.close();
+    await store.close();
+
+    await expect(store.loadCursor()).rejects.toMatchObject({
+      code: "client_store_closed",
+    });
+  });
+
+  it("notifies materialized view subscribers through commit, evict, and invalidate", async () => {
+    const dbName = createDbName();
+    createdDbNames.push(dbName);
+    const store = createIndexedDbClientStore({
+      indexedDB,
+      dbName,
+      materializedViews: [
+        {
+          name: "counter",
+          checkpoint: { mode: "manual" },
+          initialState: () => ({ count: 0 }),
+          reduce: ({ state, event }) => ({
+            count: state.count + (event.type === "increment" ? 1 : 0),
+          }),
+        },
+      ],
+    });
+    await store.init();
+
+    const notifications = [];
+    const unsubscribe = await store.subscribeMaterializedView({
+      viewName: "counter",
+      partition: "P1",
+      onChange: (payload) => {
+        notifications.push(payload);
+      },
+    });
+
+    await store.applyCommittedBatch({
+      events: [
+        makeCommitted({
+          id: "evt-1",
+          committedId: 1,
+          type: "increment",
+          payload: {},
+          serverTs: 10,
+        }),
+      ],
+      nextCursor: 1,
+    });
+    await store.flushMaterializedViews();
+    await store.evictMaterializedView({
+      viewName: "counter",
+      partition: "P1",
+    });
+    await store.invalidateMaterializedView({
+      viewName: "counter",
+      partition: "P1",
+    });
+
+    expect(notifications).toEqual([
+      {
+        viewName: "counter",
+        partition: "P1",
+        value: { count: 0 },
+        lastCommittedId: 0,
+        updatedAt: 0,
+      },
+      {
+        viewName: "counter",
+        partition: "P1",
+        value: { count: 1 },
+        lastCommittedId: 1,
+        updatedAt: 10,
+      },
+      {
+        viewName: "counter",
+        partition: "P1",
+        value: { count: 1 },
+        lastCommittedId: 1,
+        updatedAt: 10,
+      },
+      {
+        viewName: "counter",
+        partition: "P1",
+        value: { count: 1 },
+        lastCommittedId: 1,
+        updatedAt: 10,
+      },
+    ]);
+
+    unsubscribe();
+    await store.applyCommittedBatch({
+      events: [
+        makeCommitted({
+          id: "evt-2",
+          committedId: 2,
+          type: "increment",
+          payload: {},
+          serverTs: 11,
+        }),
+      ],
+      nextCursor: 2,
+    });
+    expect(notifications).toHaveLength(4);
   });
 
   it("rebuilds exact materialized views after restart without a flushed checkpoint", async () => {

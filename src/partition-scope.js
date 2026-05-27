@@ -85,3 +85,46 @@ export const buildScopePartition = ({ scope, scopeId, path = [] }) => {
     : [];
   return [scope, scopeId, ...suffix].join(":");
 };
+
+export const PROJECT_SCOPE = "project";
+
+/**
+ * @param {string} projectId
+ * @returns {string}
+ */
+export const buildProjectScopePartition = (projectId) =>
+  buildScopePartition({ scope: PROJECT_SCOPE, scopeId: projectId });
+
+/**
+ * @param {string[]} partitions
+ * @returns {string[]}
+ */
+export const extractProjectScopeIds = (partitions) =>
+  extractScopeIds(partitions, PROJECT_SCOPE);
+
+/**
+ * The raw project id is retained for old SQLite rows. The scoped partition is
+ * authoritative for newly written rows because raw partition names can collide
+ * with another project's id.
+ *
+ * @param {string} projectId
+ * @returns {string[]}
+ */
+export const getProjectPartitions = (projectId) => {
+  if (!isNonEmptyString(projectId)) return [];
+  return [projectId, buildProjectScopePartition(projectId)];
+};
+
+/**
+ * @param {string[]} partitions
+ * @param {string} projectId
+ * @returns {boolean}
+ */
+export const partitionSetBelongsToProject = (partitions, projectId) => {
+  if (!Array.isArray(partitions) || !isNonEmptyString(projectId)) return false;
+  const scopedProjectIds = extractProjectScopeIds(partitions);
+  if (scopedProjectIds.length > 0) {
+    return scopedProjectIds.length === 1 && scopedProjectIds[0] === projectId;
+  }
+  return partitions.includes(projectId);
+};

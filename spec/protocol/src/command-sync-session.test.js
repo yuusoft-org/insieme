@@ -138,6 +138,86 @@ describe("src createCommandSyncSession", () => {
     });
   });
 
+  it("maps JSON-serialized stored sync events to commands", async () => {
+    const committedCalls = [];
+    const session = createCommandSyncSession({
+      token: "t1",
+      actor: {
+        userId: "u1",
+        clientId: "c1",
+      },
+      projectId: "p1",
+      transport,
+      store,
+      onCommittedCommand: (payload) => {
+        committedCalls.push(payload);
+      },
+    });
+
+    await session.start();
+
+    transport.emit({
+      type: "connected",
+      payload: { clientId: "c1", projectId: "p1", projectLastCommittedId: 0 },
+    });
+    await tick();
+
+    const storedEvent = JSON.parse(
+      JSON.stringify({
+        committed_id: 1,
+        id: "cmd-json-1",
+        client_id: "c2",
+        partitions: ["p1", "project:p1:story"],
+        event: {
+          type: "event",
+          payload: {
+            schema: "scene.create",
+            schemaVersion: 1,
+            data: { sceneId: "s1" },
+          },
+        },
+        status_updated_at: 1,
+      }),
+    );
+
+    transport.emit({
+      type: "sync_response",
+      payload: {
+        projectId: "p1",
+        events: [storedEvent],
+        nextSinceCommittedId: 1,
+        hasMore: false,
+      },
+    });
+    await tick();
+
+    expect(committedCalls).toHaveLength(1);
+    expect(committedCalls[0].command).toMatchObject({
+      id: "cmd-json-1",
+      projectId: "p1",
+      partition: "project:p1:story",
+      type: "scene.create",
+      payload: { sceneId: "s1" },
+      actor: { clientId: "c2" },
+      clientTs: 1,
+    });
+
+    expect(Object.keys(committedCalls[0].committedEvent)).toEqual(
+      expect.arrayContaining(["committedId", "projectId", "type", "payload"]),
+    );
+    expect(committedCalls[0].committedEvent).toMatchObject({
+      committedId: 1,
+      committed_id: 1,
+      projectId: "p1",
+      partition: "project:p1:story",
+      type: "scene.create",
+      schemaVersion: 1,
+      payload: { sceneId: "s1" },
+      serverTs: 1,
+      status_updated_at: 1,
+    });
+  });
+
   it("submits a single command through the batch API with command id as submit id", async () => {
     const session = createCommandSyncSession({
       token: "t1",
@@ -190,12 +270,16 @@ describe("src createCommandSyncSession", () => {
     expect(submit).toBeTruthy();
     expect(submit.payload.events[0]).toMatchObject({
       id: "cmd-local-1",
-      projectId: "p1",
-      userId: "u1",
-      type: "scene.create",
-      payload: { sceneId: "s1" },
-      schemaVersion: 1,
-      meta: { clientId: "c1", clientTs: 5 },
+      clientId: "c1",
+      partitions: ["p1", "project:p1:story"],
+      event: {
+        type: "event",
+        payload: {
+          schema: "scene.create",
+          schemaVersion: 1,
+          data: { sceneId: "s1" },
+        },
+      },
     });
   });
 
@@ -306,9 +390,16 @@ describe("src createCommandSyncSession", () => {
     const submit = transport.sent.find((entry) => entry.type === "submit_events");
     expect(submit.payload.events[0]).toMatchObject({
       id: "evt-wrapper-1",
-      projectId: "p1",
-      userId: "u1",
-      partition: "project:p1:story",
+      clientId: "c1",
+      partitions: ["p1", "project:p1:story"],
+      event: {
+        type: "event",
+        payload: {
+          schema: "scene.create",
+          schemaVersion: 1,
+          data: { sceneId: "s3" },
+        },
+      },
     });
   });
 
@@ -478,6 +569,230 @@ describe("src createCommandSyncSession", () => {
     expect(session.getStatus()).toMatchObject({
       started: false,
       connected: false,
+    });
+  });
+
+  it("validates session and command inputs before submitting", async () => {
+    expect(() =>
+      createCommandSyncSession({
+        token: "t1",
+        actor: { userId: "", clientId: "c1" },
+        projectId: "p1",
+        transport,
+        store,
+      }),
+    ).toThrow("actor.userId and actor.clientId are required");
+
+    expect(() =>
+      createCommandSyncSession({
+        token: "t1",
+        actor: { userId: "u1", clientId: "c1" },
+        projectId: "",
+        transport,
+        store,
+      }),
+    ).toThrow("projectId is required");
+
+    const session = createCommandSyncSession({
+      token: "t1",
+      actor: { userId: "u1", clientId: "c1" },
+      projectId: "p1",
+      transport,
+      store,
+    });
+
+    await expect(session.submitCommands([])).rejects.toThrow(
+      "submitCommands requires at least one command",
+    );
+    await expect(
+      session.submitCommands([{ id: "cmd-no-partition", type: "x" }]),
+    ).rejects.toThrow("Command must include a partition");
+  });
+
+  it("swallows transport disconnects during command submit when configured", async () => {
+    const session = createCommandSyncSession({
+      token: "t1",
+      actor: { userId: "u1", clientId: "c1" },
+      projectId: "p1",
+      transport,
+      store,
+    });
+
+    await session.start();
+    transport.emit({
+      type: "connected",
+      payload: { clientId: "c1", projectId: "p1", projectLastCommittedId: 0 },
+    });
+    await tick();
+    transport.emit({
+      type: "sync_response",
+      payload: {
+        projectId: "p1",
+        events: [],
+        nextSinceCommittedId: 0,
+        hasMore: false,
+      },
+    });
+    await tick();
+
+    transport.send.mockImplementation(async (message) => {
+      if (message.type === "submit_events") {
+        const error = new Error("websocket is not connected");
+        error.code = "transport_disconnected";
+        throw error;
+      }
+      transport.sent.push(message);
+    });
+
+    await expect(
+      session.submitCommands([
+        {
+          id: "cmd-disconnect",
+          partition: "project:p1:story",
+          type: "scene.create",
+          payload: {},
+        },
+      ]),
+    ).resolves.toEqual(["cmd-disconnect"]);
+    expect(session.getLastError()).toMatchObject({
+      code: "transport_disconnected",
+    });
+  });
+
+  it("tracks rejected and not_processed command outcomes from the server", async () => {
+    const forwardedEvents = [];
+    const session = createCommandSyncSession({
+      token: "t1",
+      actor: { userId: "u1", clientId: "c1" },
+      projectId: "p1",
+      transport,
+      store,
+      onEvent: (entry) => forwardedEvents.push(entry),
+    });
+
+    await session.start();
+    transport.emit({
+      type: "connected",
+      payload: { clientId: "c1", projectId: "p1", projectLastCommittedId: 0 },
+    });
+    await tick();
+    transport.emit({
+      type: "sync_response",
+      payload: {
+        projectId: "p1",
+        events: [],
+        nextSinceCommittedId: 0,
+        hasMore: false,
+      },
+    });
+    await tick();
+
+    await session.submitCommands([
+      {
+        id: "cmd-rejected",
+        partition: "project:p1:story",
+        type: "scene.create",
+        payload: {},
+      },
+      {
+        id: "cmd-not-processed",
+        partition: "project:p1:story",
+        type: "scene.rename",
+        payload: {},
+      },
+    ]);
+
+    transport.emit({
+      type: "submit_events_result",
+      payload: {
+        results: [
+          {
+            id: "cmd-rejected",
+            status: "rejected",
+            reason: "validation_failed",
+          },
+          {
+            id: "cmd-not-processed",
+            status: "not_processed",
+            reason: "prior_item_failed",
+            blockedById: "cmd-rejected",
+          },
+        ],
+      },
+    });
+    await tick();
+
+    expect(forwardedEvents.map((entry) => entry.type)).toEqual(
+      expect.arrayContaining(["rejected", "not_processed"]),
+    );
+    expect(session.getLastError()).toMatchObject({
+      code: "prior_item_failed",
+      payload: expect.objectContaining({
+        id: "cmd-not-processed",
+      }),
+    });
+  });
+
+  it("dedupes committed command callbacks and ignores unmapped events", async () => {
+    const committedCalls = [];
+    const session = createCommandSyncSession({
+      token: "t1",
+      actor: { userId: "u1", clientId: "c1" },
+      projectId: "p1",
+      transport,
+      store,
+      mapCommittedToCommand: (event) => {
+        if (event.id === "ignored") return null;
+        return {
+          id: event.id,
+          partition: event.partition,
+          type: event.type,
+          payload: event.payload,
+          actor: { userId: "u2", clientId: event.meta?.clientId },
+        };
+      },
+      onCommittedCommand: (payload) => committedCalls.push(payload),
+    });
+
+    await session.start();
+    transport.emit({
+      type: "connected",
+      payload: { clientId: "c1", projectId: "p1", projectLastCommittedId: 0 },
+    });
+    await tick();
+
+    const committedEvent = {
+      id: "cmd-dedupe",
+      projectId: "p1",
+      userId: "u2",
+      partition: "project:p1:story",
+      committedId: 1,
+      type: "scene.create",
+      schemaVersion: 1,
+      payload: { sceneId: "s1" },
+      meta: { clientId: "c2", clientTs: 1 },
+      serverTs: 1,
+    };
+    transport.emit({
+      type: "sync_response",
+      payload: {
+        projectId: "p1",
+        events: [
+          { ...committedEvent, id: "ignored" },
+          committedEvent,
+          structuredClone(committedEvent),
+        ],
+        nextSinceCommittedId: 1,
+        hasMore: false,
+      },
+    });
+    await tick();
+
+    expect(committedCalls).toHaveLength(1);
+    expect(committedCalls[0]).toMatchObject({
+      sourceType: "sync_page",
+      isFromCurrentActor: false,
+      command: { id: "cmd-dedupe" },
     });
   });
 });

@@ -1,0 +1,14 @@
+export function commandToSyncEvent(...args: unknown[]): unknown;
+export function committedSyncEventToCommand(...args: unknown[]): unknown;
+export function createAsyncSqliteClientStore(...args: unknown[]): unknown;
+export function createBrowserWebSocketTransport(...args: unknown[]): unknown;
+export function createCommandSyncSession(...args: unknown[]): unknown;
+export function createIndexedDBClientStore(...args: unknown[]): unknown;
+export function createIndexedDbClientStore(...args: unknown[]): unknown;
+export function createInMemoryClientStore(...args: unknown[]): unknown;
+export function createLibsqlClientStore(...args: unknown[]): unknown;
+export function createMaterializedViewRuntime(...args: unknown[]): unknown;
+export function createOfflineTransport(...args: unknown[]): unknown;
+export function createReducer(...args: unknown[]): unknown;
+export function createSyncClient(...args: unknown[]): unknown;
+export function validateCommandSubmitItem(...args: unknown[]): unknown;

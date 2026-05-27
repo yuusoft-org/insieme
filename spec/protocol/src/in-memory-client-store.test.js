@@ -75,9 +75,18 @@ describe("src createInMemoryClientStore", () => {
     expect(committed).toHaveLength(1);
     expect(committed[0]).toMatchObject({
       id: "evt-1",
-      committedId: 10,
-      clientTs: 100,
-      serverTs: 111,
+      committed_id: 10,
+      client_id: "C1",
+      partitions: ["P1"],
+      status_updated_at: 111,
+      event: {
+        type: "event",
+        payload: {
+          schema: "x",
+          schemaVersion: 1,
+          data: { n: 1 },
+        },
+      },
     });
   });
 
@@ -125,6 +134,38 @@ describe("src createInMemoryClientStore", () => {
     expect(committed).toHaveLength(2);
     expect(committed.map((event) => event.id)).toEqual(["evt-1", "evt-2"]);
     expect(await store.loadCursor()).toBe(2);
+  });
+
+  it("infers the domain partition after stored context is serialized away", async () => {
+    const store = createInMemoryClientStore();
+
+    await store.applyCommittedBatch({
+      events: [
+        {
+          committed_id: 1,
+          id: "evt-scoped-1",
+          client_id: "C1",
+          partitions: ["a", "project:a", "z"],
+          event: {
+            type: "event",
+            payload: {
+              schema: "x",
+              schemaVersion: 1,
+              data: {},
+            },
+          },
+          status_updated_at: 10,
+        },
+      ],
+      nextCursor: 1,
+    });
+
+    expect(await store.listCommitted()).toEqual([
+      expect.objectContaining({
+        id: "evt-scoped-1",
+        partition: "z",
+      }),
+    ]);
   });
 
   it("keeps cursor monotonic when an older nextCursor is received", async () => {

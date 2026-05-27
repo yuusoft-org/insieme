@@ -118,34 +118,25 @@ describeLibsql("src createLibsqlClientStore", () => {
     await store.init();
 
     const row = db._raw.prepare("PRAGMA user_version").get();
-    expect(row.user_version).toBe(6);
-    const draftProject = db._raw
-      .prepare("SELECT type FROM pragma_table_info('local_drafts') WHERE name = 'project_id'")
+    expect(row.user_version).toBe(7);
+    const draftClient = db._raw
+      .prepare("SELECT type FROM pragma_table_info('local_drafts') WHERE name = 'client_id'")
       .get();
-    const draftUser = db._raw
-      .prepare("SELECT type FROM pragma_table_info('local_drafts') WHERE name = 'user_id'")
+    const draftPartitions = db._raw
+      .prepare("SELECT type FROM pragma_table_info('local_drafts') WHERE name = 'partitions'")
       .get();
-    const draftPayload = db._raw
-      .prepare("SELECT type FROM pragma_table_info('local_drafts') WHERE name = 'payload'")
+    const draftEvent = db._raw
+      .prepare("SELECT type FROM pragma_table_info('local_drafts') WHERE name = 'event'")
       .get();
-    const draftMeta = db._raw
-      .prepare("SELECT type FROM pragma_table_info('local_drafts') WHERE name = 'meta'")
-      .get();
-    const committedPayload = db._raw
+    const committedStatus = db._raw
       .prepare(
-        "SELECT type FROM pragma_table_info('committed_events') WHERE name = 'payload'",
+        "SELECT type FROM pragma_table_info('committed_events') WHERE name = 'status_updated_at'",
       )
       .get();
-    expect(draftProject).toBe(undefined);
-    expect(draftUser).toBe(undefined);
-    expect(draftPayload.type).toBe("BLOB");
-    expect(draftMeta).toBe(undefined);
-    expect(committedPayload.type).toBe("BLOB");
-    expect(
-      db._raw
-        .prepare("SELECT type FROM pragma_table_info('committed_events') WHERE name = 'meta'")
-        .get(),
-    ).toBe(undefined);
+    expect(draftClient.type).toBe("TEXT");
+    expect(draftPartitions.type).toBe("TEXT");
+    expect(draftEvent.type).toBe("TEXT");
+    expect(committedStatus.type).toBe("INTEGER");
 
     db.close();
   });
@@ -160,7 +151,7 @@ describeLibsql("src createLibsqlClientStore", () => {
     await Promise.all([store.init(), store.init()]);
 
     const row = db._raw.prepare("PRAGMA user_version").get();
-    expect(row.user_version).toBe(6);
+    expect(row.user_version).toBe(7);
 
     db.close();
   });
@@ -197,8 +188,18 @@ describeLibsql("src createLibsqlClientStore", () => {
       expect(await store._debug.getCommitted()).toEqual([
         expect.objectContaining({
           id: "evt-1",
-          committedId: 5,
-          clientTs: 100,
+          committed_id: 5,
+          client_id: "C1",
+          partitions: ["P1", "proj-1"],
+          status_updated_at: 500,
+          event: {
+            type: "event",
+            payload: {
+              schema: "x",
+              schemaVersion: 1,
+              data: { n: 1 },
+            },
+          },
         }),
       ]);
       db.close();
@@ -214,8 +215,18 @@ describeLibsql("src createLibsqlClientStore", () => {
       expect(await store._debug.getCommitted()).toEqual([
         expect.objectContaining({
           id: "evt-1",
-          committedId: 5,
-          clientTs: 100,
+          committed_id: 5,
+          client_id: "C1",
+          partitions: ["P1", "proj-1"],
+          status_updated_at: 500,
+          event: {
+            type: "event",
+            payload: {
+              schema: "x",
+              schemaVersion: 1,
+              data: { n: 1 },
+            },
+          },
         }),
       ]);
 
@@ -223,10 +234,9 @@ describeLibsql("src createLibsqlClientStore", () => {
     }
   });
 
-  it("fails fast on older on-disk schema versions", async () => {
+  it("migrates legacy flat libSQL project stores without losing drafts or commits", async () => {
     const db = createLibsqlClient(":memory:");
-    await db.execute(`
-      PRAGMA user_version=5;
+    db._raw.exec(`
       CREATE TABLE local_drafts (
         draft_clock INTEGER PRIMARY KEY AUTOINCREMENT,
         id TEXT NOT NULL UNIQUE,
@@ -238,6 +248,7 @@ describeLibsql("src createLibsqlClientStore", () => {
         client_ts INTEGER NOT NULL,
         created_at INTEGER NOT NULL
       );
+
       CREATE TABLE committed_events (
         committed_id INTEGER PRIMARY KEY,
         id TEXT NOT NULL UNIQUE,
@@ -252,25 +263,147 @@ describeLibsql("src createLibsqlClientStore", () => {
         server_ts INTEGER NOT NULL,
         created_at INTEGER NOT NULL
       );
+
       CREATE TABLE app_state (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
       );
-      CREATE TABLE materialized_view_state (
-        view_name TEXT NOT NULL,
-        partition TEXT NOT NULL,
-        view_version TEXT NOT NULL,
-        last_committed_id INTEGER NOT NULL,
-        value TEXT NOT NULL,
-        updated_at INTEGER NOT NULL,
-        PRIMARY KEY(view_name, partition)
-      );
+
+      PRAGMA user_version=6;
     `);
+    db._raw
+      .prepare(
+        "INSERT INTO local_drafts(draft_clock, id, partition, type, schema_version, payload, client_ts, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        3,
+        "draft-routevn-1",
+        "project:proj-1:story",
+        "scene.rename",
+        2,
+        JSON.stringify({ sceneId: "s1", title: "Intro" }),
+        101,
+        102,
+      );
+    db._raw
+      .prepare(
+        "INSERT INTO committed_events(committed_id, id, project_id, user_id, partition, type, schema_version, payload, client_ts, server_ts, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        7,
+        "committed-routevn-1",
+        "proj-1",
+        "user-1",
+        "project:proj-1:story",
+        "scene.create",
+        1,
+        JSON.stringify({ sceneId: "s1" }),
+        201,
+        202,
+        203,
+      );
+    db._raw
+      .prepare("INSERT INTO app_state(key, value) VALUES (?, ?)")
+      .run("cursor_committed_id", "7");
+
+    const store = createLibsqlClientStore(db);
+    await store.init();
+
+    expect(db._raw.prepare("PRAGMA user_version").get().user_version).toBe(7);
+    expect(await store.loadCursor()).toBe(7);
+    expect(await store.loadDraftsOrdered()).toEqual([
+      expect.objectContaining({
+        draftClock: 3,
+        id: "draft-routevn-1",
+        partition: "project:proj-1:story",
+        type: "scene.rename",
+        schemaVersion: 2,
+        payload: { sceneId: "s1", title: "Intro" },
+      }),
+    ]);
+    expect(await store.listCommitted()).toEqual([
+      expect.objectContaining({
+        committedId: 7,
+        id: "committed-routevn-1",
+        partition: "project:proj-1:story",
+        type: "scene.create",
+        schemaVersion: 1,
+        payload: { sceneId: "s1" },
+        serverTs: 202,
+      }),
+    ]);
+
+    await store.close();
+  });
+
+  it("fails fast on incompatible lower on-disk schema versions", async () => {
+    const db = createLibsqlClient(":memory:");
+    await db.execute("PRAGMA user_version=6;");
     const store = createLibsqlClientStore(db);
 
     await expect(store.init()).rejects.toThrow(
-      "Client store requires reset for schema version 5; runtime expects 6",
+      "Client store requires reset for schema version 6; runtime expects 7",
     );
+
+    db.close();
+  });
+
+  it("opens an existing compatible version 6 libSQL store", async () => {
+    const db = createLibsqlClient(":memory:");
+    db._raw.exec(`
+      CREATE TABLE local_drafts (
+        draft_clock INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT NOT NULL UNIQUE,
+        client_id TEXT NOT NULL,
+        partitions TEXT NOT NULL,
+        event TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE committed_events (
+        committed_id INTEGER PRIMARY KEY,
+        id TEXT NOT NULL UNIQUE,
+        client_id TEXT NOT NULL,
+        partitions TEXT NOT NULL,
+        event TEXT NOT NULL,
+        status_updated_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE app_state (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+
+      PRAGMA user_version=6;
+    `);
+    db._raw
+      .prepare(
+        "INSERT INTO committed_events(committed_id, id, client_id, partitions, event, status_updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        1,
+        "evt-v6-1",
+        "C1",
+        JSON.stringify(["P1", "proj-1"]),
+        JSON.stringify({
+          type: "event",
+          payload: { schema: "x", schemaVersion: 1, data: { n: 1 } },
+        }),
+        100,
+      );
+
+    const store = createLibsqlClientStore(db);
+    await store.init();
+
+    expect(db._raw.prepare("PRAGMA user_version").get().user_version).toBe(7);
+    expect(await store.listCommitted()).toEqual([
+      expect.objectContaining({
+        id: "evt-v6-1",
+        partition: "P1",
+        type: "x",
+        payload: { n: 1 },
+      }),
+    ]);
 
     db.close();
   });
@@ -461,6 +594,168 @@ describeLibsql("src createLibsqlClientStore", () => {
 
       db.close();
     }
+  });
+
+  it("stores materialized-view checkpoint offsets per partition", async () => {
+    const dbPath = createDbPath();
+
+    {
+      const db = createLibsqlClient(dbPath);
+      const store = createLibsqlClientStore(db, {
+        materializedViews: [createCounterView()],
+      });
+      await store.init();
+
+      await store.applyCommittedBatch({
+        events: [
+          makeCommitted({
+            id: "evt-p2-1",
+            committedId: 1,
+            partition: "P2",
+            type: "increment",
+            payload: {},
+            serverTs: 10,
+          }),
+        ],
+        nextCursor: 1,
+      });
+      expect(
+        await store.loadMaterializedView({ viewName: "counter", partition: "P2" }),
+      ).toEqual({ count: 1 });
+      await store.flushMaterializedViews();
+      await store.evictMaterializedView({ viewName: "counter", partition: "P2" });
+
+      await store.applyCommittedBatch({
+        events: [
+          makeCommitted({
+            id: "evt-p2-2",
+            committedId: 2,
+            partition: "P2",
+            type: "increment",
+            payload: {},
+            serverTs: 11,
+          }),
+          makeCommitted({
+            id: "evt-p1-1",
+            committedId: 3,
+            partition: "P1",
+            type: "increment",
+            payload: {},
+            serverTs: 12,
+          }),
+        ],
+        nextCursor: 3,
+      });
+      expect(
+        await store.loadMaterializedView({ viewName: "counter", partition: "P1" }),
+      ).toEqual({ count: 1 });
+      await store.flushMaterializedViews();
+      db.close();
+    }
+
+    {
+      const db = createLibsqlClient(dbPath);
+      const store = createLibsqlClientStore(db, {
+        materializedViews: [createCounterView()],
+      });
+      await store.init();
+
+      expect(
+        await store.loadMaterializedView({ viewName: "counter", partition: "P2" }),
+      ).toEqual({ count: 2 });
+
+      db.close();
+    }
+  });
+
+  it("rebuilds legacy materialized checkpoints that lack per-partition offsets", async () => {
+    const db = createLibsqlClient(":memory:");
+    db._raw.exec(`
+      CREATE TABLE local_drafts (
+        draft_clock INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT NOT NULL UNIQUE,
+        client_id TEXT NOT NULL,
+        partitions TEXT NOT NULL,
+        event TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE committed_events (
+        committed_id INTEGER PRIMARY KEY,
+        id TEXT NOT NULL UNIQUE,
+        client_id TEXT NOT NULL,
+        partitions TEXT NOT NULL,
+        event TEXT NOT NULL,
+        status_updated_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE app_state (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+
+      CREATE TABLE materialized_view_state (
+        view_name TEXT NOT NULL,
+        partition TEXT NOT NULL,
+        value TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY(view_name, partition)
+      );
+
+      CREATE TABLE materialized_view_offsets (
+        view_name TEXT PRIMARY KEY,
+        view_version TEXT NOT NULL,
+        last_committed_id INTEGER NOT NULL
+      );
+
+      PRAGMA user_version=2;
+    `);
+    const insertCommitted = db._raw.prepare(
+      "INSERT INTO committed_events(committed_id, id, client_id, partitions, event, status_updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+    );
+    insertCommitted.run(
+      1,
+      "evt-p2-1",
+      "C1",
+      JSON.stringify(["P2", "proj-1"]),
+      JSON.stringify({
+        type: "event",
+        payload: { schema: "increment", schemaVersion: 1, data: {} },
+      }),
+      10,
+    );
+    insertCommitted.run(
+      2,
+      "evt-p2-2",
+      "C1",
+      JSON.stringify(["P2", "proj-1"]),
+      JSON.stringify({
+        type: "event",
+        payload: { schema: "increment", schemaVersion: 1, data: {} },
+      }),
+      11,
+    );
+    db._raw
+      .prepare(
+        "INSERT INTO materialized_view_state(view_name, partition, value, updated_at) VALUES (?, ?, ?, ?)",
+      )
+      .run("counter", "P2", JSON.stringify({ count: 999 }), 999);
+    db._raw
+      .prepare(
+        "INSERT INTO materialized_view_offsets(view_name, view_version, last_committed_id) VALUES (?, ?, ?)",
+      )
+      .run("counter", "1", 99);
+
+    const store = createLibsqlClientStore(db, {
+      materializedViews: [createCounterView()],
+    });
+    await store.init();
+
+    expect(
+      await store.loadMaterializedView({ viewName: "counter", partition: "P2" }),
+    ).toEqual({ count: 2 });
+
+    db.close();
   });
 
   it("supports the alias export plus flush, invalidate, and eviction", async () => {

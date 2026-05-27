@@ -21,6 +21,74 @@ afterEach(() => {
 });
 
 const describeLibsql = hasNodeLibsqlShim ? describe : describe.skip;
+const getTableNames = (db) =>
+  db._raw
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
+    .all()
+    .map((row) => row.name);
+
+const createLegacyFlatSyncDatabase = (db) => {
+  db._raw.exec(`
+    CREATE TABLE committed_events (
+      committed_id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id TEXT NOT NULL UNIQUE,
+      project_id TEXT NOT NULL,
+      user_id TEXT,
+      partition TEXT NOT NULL,
+      type TEXT NOT NULL,
+      schema_version INTEGER NOT NULL,
+      payload TEXT NOT NULL,
+      payload_compression TEXT DEFAULT NULL,
+      client_ts INTEGER NOT NULL,
+      server_ts INTEGER NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+
+    PRAGMA user_version=4;
+  `);
+  db._raw
+    .prepare(
+      `INSERT INTO committed_events(
+        committed_id,
+        id,
+        project_id,
+        user_id,
+        partition,
+        type,
+        schema_version,
+        payload,
+        client_ts,
+        server_ts,
+        created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      7,
+      "routevn-legacy-1",
+      "proj-1",
+      "user-1",
+      "project:proj-1:story",
+      "scene.create",
+      2,
+      JSON.stringify({ sceneId: "s1" }),
+      101,
+      202,
+      203,
+    );
+};
+
+const createFailingMigrationClient = (client, shouldFail) => ({
+  ...client,
+  execute: async (statement) => {
+    const sql = typeof statement === "string" ? statement : statement?.sql || "";
+    const result = await client.execute(statement);
+    if (shouldFail(sql)) {
+      throw new Error("injected migration failure");
+    }
+    return result;
+  },
+});
+
 const makeSubmit = (overrides = {}) => ({
   id: "evt-1",
   partition: "P1",
@@ -62,13 +130,93 @@ describeLibsql("src createLibsqlSyncStore", () => {
     expect(second.committedEvent.committedId).toBe(1);
 
     const schema = db._raw.prepare("PRAGMA user_version").get();
-    expect(schema.user_version).toBe(4);
-    const payload = db._raw
+    expect(schema.user_version).toBe(5);
+    const event = db._raw
       .prepare(
-        "SELECT type FROM pragma_table_info('committed_events') WHERE name = 'payload'",
+        "SELECT type FROM pragma_table_info('committed_events') WHERE name = 'event'",
       )
       .get();
-    expect(payload.type).toBe("BLOB");
+    const canonical = db._raw
+      .prepare(
+        "SELECT type FROM pragma_table_info('committed_events') WHERE name = 'canonical'",
+      )
+      .get();
+    const statusUpdatedAt = db._raw
+      .prepare(
+        "SELECT type FROM pragma_table_info('committed_events') WHERE name = 'status_updated_at'",
+      )
+      .get();
+    expect(event.type).toBe("TEXT");
+    expect(canonical.type).toBe("TEXT");
+    expect(statusUpdatedAt.type).toBe("INTEGER");
+
+    db.close();
+  });
+
+  it("allows different projects to commit the same event id independently", async () => {
+    const db = createLibsqlClient(":memory:");
+    const store = createLibsqlSyncStore(db);
+    await store.init();
+
+    const first = await store.commitOrGetExisting(
+      makeSubmit({
+        id: "shared-id",
+        projectId: "proj-1",
+        partition: "P1",
+        payload: { n: 1 },
+        now: 1,
+      }),
+    );
+    const second = await store.commitOrGetExisting(
+      makeSubmit({
+        id: "shared-id",
+        projectId: "proj-2",
+        partition: "P2",
+        payload: { n: 2 },
+        now: 2,
+      }),
+    );
+
+    expect(first.deduped).toBe(false);
+    expect(second.deduped).toBe(false);
+    expect(second.committedEvent.committedId).toBeGreaterThan(
+      first.committedEvent.committedId,
+    );
+
+    db.close();
+  });
+
+  it("rejects same-project duplicate id with different payload", async () => {
+    const db = createLibsqlClient(":memory:");
+    const store = createLibsqlSyncStore(db);
+    await store.init();
+
+    await store.commitOrGetExisting(
+      makeSubmit({ id: "same-project-id", payload: { n: 1 }, now: 1 }),
+    );
+
+    await expect(
+      store.commitOrGetExisting(
+        makeSubmit({ id: "same-project-id", payload: { n: 2 }, now: 2 }),
+      ),
+    ).rejects.toMatchObject({ code: "validation_failed" });
+
+    db.close();
+  });
+
+  it("preserves top-level clientId on stored commits", async () => {
+    const db = createLibsqlClient(":memory:");
+    const store = createLibsqlSyncStore(db);
+    await store.init();
+
+    const result = await store.commitOrGetExisting(
+      makeSubmit({
+        clientId: "C-top",
+        meta: undefined,
+      }),
+    );
+
+    expect(result.committedEvent.client_id).toBe("C-top");
 
     db.close();
   });
@@ -179,6 +327,141 @@ describeLibsql("src createLibsqlSyncStore", () => {
     db.close();
   });
 
+  it("uses a global upper bound for direct multi-partition listing", async () => {
+    const db = createLibsqlClient(":memory:");
+    const store = createLibsqlSyncStore(db);
+    await store.init();
+
+    await store.commitOrGetExisting(
+      makeSubmit({
+        id: "evt-a",
+        projectId: "proj-1",
+        partition: "A",
+        payload: { n: 1 },
+        now: 1,
+      }),
+    );
+    await store.commitOrGetExisting(
+      makeSubmit({
+        id: "evt-b",
+        projectId: "proj-1",
+        partition: "B",
+        payload: { n: 2 },
+        now: 2,
+      }),
+    );
+
+    const page = await store.listCommittedSince({
+      projectId: "proj-1",
+      partitions: ["A", "B"],
+      sinceCommittedId: 0,
+      limit: 10,
+    });
+
+    expect(page.events.map((event) => event.id)).toEqual(["evt-a", "evt-b"]);
+
+    db.close();
+  });
+
+  it("migrates a legacy flat RouteVN sync database without data loss", async () => {
+    const db = createLibsqlClient(":memory:");
+    createLegacyFlatSyncDatabase(db);
+
+    const store = createLibsqlSyncStore(db);
+    await store.init();
+
+    expect(db._raw.prepare("PRAGMA user_version").get().user_version).toBe(5);
+    expect(
+      db._raw
+        .prepare(
+          "SELECT name FROM pragma_table_info('committed_events') WHERE name = 'project_id'",
+        )
+        .get(),
+    ).toBeUndefined();
+
+    const page = await store.listCommittedSince({
+      projectId: "proj-1",
+      sinceCommittedId: 0,
+      limit: 10,
+    });
+
+    expect(page.events[0].committedId).toBe(7);
+    expect(page.events[0].id).toBe("routevn-legacy-1");
+    expect(page.events[0].projectId).toBe("proj-1");
+    expect(page.events[0].userId).toBe("user-1");
+    expect(page.events[0].partition).toBe("project:proj-1:story");
+    expect(page.events[0].type).toBe("scene.create");
+    expect(page.events[0].schemaVersion).toBe(2);
+    expect(page.events[0].payload).toEqual({ sceneId: "s1" });
+    expect(page.events[0].serverTs).toBe(202);
+
+    db.close();
+  });
+
+  it("rolls back legacy migration failure after table rename and can retry", async () => {
+    const db = createLibsqlClient(":memory:");
+    createLegacyFlatSyncDatabase(db);
+    const failingClient = createFailingMigrationClient(db, (sql) =>
+      sql
+        .toUpperCase()
+        .includes("ALTER TABLE COMMITTED_EVENTS RENAME TO COMMITTED_EVENTS_LEGACY_V4"),
+    );
+
+    await expect(createLibsqlSyncStore(failingClient).init()).rejects.toThrow(
+      "injected migration failure",
+    );
+    expect(getTableNames(db)).toContain("committed_events");
+    expect(getTableNames(db)).not.toContain("committed_events_legacy_v4");
+
+    const store = createLibsqlSyncStore(db);
+    await store.init();
+    const page = await store.listCommittedSince({
+      projectId: "proj-1",
+      sinceCommittedId: 0,
+      limit: 10,
+    });
+    expect(page.events.map((event) => event.id)).toEqual(["routevn-legacy-1"]);
+    expect(db._raw.prepare("PRAGMA user_version").get().user_version).toBe(5);
+
+    db.close();
+  });
+
+  it("rolls back legacy migration failure during migrated insert and can retry", async () => {
+    const db = createLibsqlClient(":memory:");
+    createLegacyFlatSyncDatabase(db);
+    let failedInsert = false;
+    const failingClient = createFailingMigrationClient(db, (sql) => {
+      if (
+        !failedInsert &&
+        sql.toUpperCase().includes("INSERT INTO COMMITTED_EVENTS(")
+      ) {
+        failedInsert = true;
+        return true;
+      }
+      return false;
+    });
+
+    await expect(createLibsqlSyncStore(failingClient).init()).rejects.toThrow(
+      "injected migration failure",
+    );
+    expect(getTableNames(db)).toContain("committed_events");
+    expect(getTableNames(db)).not.toContain("committed_events_legacy_v4");
+
+    const store = createLibsqlSyncStore(db);
+    await store.init();
+    const page = await store.listCommittedSince({
+      projectId: "proj-1",
+      sinceCommittedId: 0,
+      limit: 10,
+    });
+    expect(page.events).toHaveLength(1);
+    expect(page.events[0].id).toBe("routevn-legacy-1");
+    expect(page.events[0].payload).toEqual({ sceneId: "s1" });
+    expect(db._raw.prepare("PRAGMA user_version").get().user_version).toBe(5);
+
+    db.close();
+  });
+
   it("fails fast on unsupported future schema version", async () => {
     const db = createLibsqlClient(":memory:");
     await db.execute("PRAGMA user_version=999;");
@@ -191,13 +474,13 @@ describeLibsql("src createLibsqlSyncStore", () => {
     db.close();
   });
 
-  it("fails fast on older on-disk schema versions", async () => {
+  it("fails fast on incompatible nonzero schemas without sync tables", async () => {
     const db = createLibsqlClient(":memory:");
     await db.execute("PRAGMA user_version=3;");
     const store = createLibsqlSyncStore(db);
 
     await expect(store.init()).rejects.toThrow(
-      "Sync store requires reset for schema version 3; runtime expects 4",
+      "Sync store schema is incompatible; reset required",
     );
 
     db.close();

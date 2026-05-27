@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildProjectScopePartition,
   buildScopePartition,
+  extractProjectScopeIds,
   extractScopeId,
   extractScopeIds,
+  getProjectPartitions,
   parsePartitionScope,
+  partitionSetBelongsToProject,
   requireSingleScopeId,
 } from "../../../src/index.js";
 
@@ -67,5 +71,28 @@ describe("src partition-scope", () => {
         path: ["resources", "images"],
       }),
     ).toBe("project:proj-1:resources:images");
+  });
+
+  it("recognizes scoped project partitions before legacy raw project ids", () => {
+    expect(buildProjectScopePartition("proj-1")).toBe("project:proj-1");
+    expect(getProjectPartitions("proj-1")).toEqual([
+      "proj-1",
+      "project:proj-1",
+    ]);
+    expect(
+      extractProjectScopeIds(["proj-2", "project:proj-1", "tasks"]),
+    ).toEqual(["proj-1"]);
+    expect(
+      partitionSetBelongsToProject(["proj-2", "project:proj-1"], "proj-2"),
+    ).toBe(false);
+    expect(
+      partitionSetBelongsToProject(
+        ["project:proj-1", "project:proj-2"],
+        "proj-1",
+      ),
+    ).toBe(false);
+    expect(partitionSetBelongsToProject(["proj-2", "tasks"], "proj-2")).toBe(
+      true,
+    );
   });
 });

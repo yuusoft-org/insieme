@@ -15,6 +15,10 @@ export {
   extractScopeIds,
   requireSingleScopeId,
   buildScopePartition,
+  buildProjectScopePartition,
+  extractProjectScopeIds,
+  getProjectPartitions,
+  partitionSetBelongsToProject,
 } from "./partition-scope.js";
 export { authorizeProjectId, authorizeSingleScopeId } from "./authz-helpers.js";
 export { createInMemorySyncStore } from "./in-memory-sync-store.js";

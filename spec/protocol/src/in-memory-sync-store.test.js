@@ -39,6 +39,19 @@ describe("src createInMemorySyncStore", () => {
     expect(second.committedEvent.committedId).toBe(1);
   });
 
+  it("preserves top-level clientId on stored commits", async () => {
+    const store = createInMemorySyncStore();
+
+    const result = await store.commitOrGetExisting(
+      makeSubmit({
+        clientId: "C-top",
+        meta: undefined,
+      }),
+    );
+
+    expect(result.committedEvent.client_id).toBe("C-top");
+  });
+
   it("rejects same id with different normalized payload", async () => {
     const store = createInMemorySyncStore();
 

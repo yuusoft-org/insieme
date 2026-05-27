@@ -180,7 +180,7 @@ describe("src createSyncServer conformance", () => {
     expect(c1.closed).toBe(false);
   });
 
-  it("rejects unauthorized submit as forbidden result [SC-18]", async () => {
+  it("fails closed when submit authorization is revoked [SC-18]", async () => {
     let allowProject = true;
     const { server } = createServer({
       authorize: async () => allowProject,
@@ -193,15 +193,11 @@ describe("src createSyncServer conformance", () => {
     allowProject = false;
     await submitSession({ session: s1, id: "evt-1" });
 
-    const result = c1.sent.find(
-      (message) => message.type === "submit_events_result",
+    const forbidden = c1.sent.find(
+      (message) => message.type === "error" && message.payload.code === "forbidden",
     );
-    expect(result).toBeTruthy();
-    expect(result.payload.results[0]).toMatchObject({
-      id: "evt-1",
-      status: "rejected",
-      reason: "forbidden",
-    });
+    expect(forbidden).toBeTruthy();
+    expect(c1.closed).toBe(true);
   });
 
   it("rejects duplicate retry when same id has different canonical payload [SC-09]", async () => {
@@ -243,7 +239,7 @@ describe("src createSyncServer conformance", () => {
     });
   });
 
-  it("keeps sync cycle bounded and suppresses broadcasts until final page [SC-05]", async () => {
+  it("keeps sync cycle bounded and broadcasts new commits during paged sync [SC-05]", async () => {
     const { server } = createServer({
       verifyToken: async (token) => ({
         clientId: token === "jwt-c2" ? "C2" : "C1",
@@ -279,7 +275,8 @@ describe("src createSyncServer conformance", () => {
     const broadcastsDuringSync = c2.sent.filter(
       (message) => message.type === "event_broadcast",
     );
-    expect(broadcastsDuringSync).toHaveLength(0);
+    expect(broadcastsDuringSync).toHaveLength(1);
+    expect(broadcastsDuringSync[0].payload.id).toBe("evt-3");
 
     await syncSession({ session: s2, since: 1, limit: 1 });
 
