@@ -85,6 +85,92 @@ describeSqlite("src createSqliteSyncStore", () => {
     db.close();
   });
 
+  it("creates and uses a project-scoped committed-id index for sparse multi-project sync", async () => {
+    const db = createSqliteDb(":memory:");
+    const store = createSqliteSyncStore(db);
+    await store.init();
+
+    const indexes = db._raw.prepare("PRAGMA index_list('committed_events')").all();
+    expect(indexes.map((index) => index.name)).toContain(
+      "idx_committed_events_project_committed_id",
+    );
+
+    const plan = db._raw
+      .prepare(
+        `EXPLAIN QUERY PLAN
+         SELECT committed_id, id, client_id, partitions, event, status_updated_at
+         FROM committed_events
+         WHERE project_key = @project_key
+           AND committed_id > @since_committed_id
+           AND committed_id <= @upper_bound
+         ORDER BY committed_id ASC
+         LIMIT @limit`,
+      )
+      .all({
+        project_key: "proj-needle",
+        since_committed_id: 0,
+        upper_bound: Number.MAX_SAFE_INTEGER,
+        limit: 10,
+      });
+
+    expect(plan.map((row) => row.detail).join("\n")).toContain(
+      "idx_committed_events_project_committed_id",
+    );
+
+    db.close();
+  });
+
+  it("allows different projects to commit the same event id independently", async () => {
+    const db = createSqliteDb(":memory:");
+    const store = createSqliteSyncStore(db);
+    await store.init();
+
+    const first = await store.commitOrGetExisting(
+      makeSubmit({
+        id: "shared-id",
+        projectId: "proj-1",
+        partition: "P1",
+        payload: { n: 1 },
+        now: 1,
+      }),
+    );
+    const second = await store.commitOrGetExisting(
+      makeSubmit({
+        id: "shared-id",
+        projectId: "proj-2",
+        partition: "P2",
+        payload: { n: 2 },
+        now: 2,
+      }),
+    );
+
+    expect(first.deduped).toBe(false);
+    expect(second.deduped).toBe(false);
+    expect(second.committedEvent.committedId).toBeGreaterThan(
+      first.committedEvent.committedId,
+    );
+
+    db.close();
+  });
+
+  it("rejects same-project duplicate id with different payload", async () => {
+    const db = createSqliteDb(":memory:");
+    const store = createSqliteSyncStore(db);
+    await store.init();
+
+    await store.commitOrGetExisting(
+      makeSubmit({ id: "same-project-id", payload: { n: 1 }, now: 1 }),
+    );
+
+    await expect(
+      store.commitOrGetExisting(
+        makeSubmit({ id: "same-project-id", payload: { n: 2 }, now: 2 }),
+      ),
+    ).rejects.toMatchObject({ code: "validation_failed" });
+
+    db.close();
+  });
+
   it("preserves top-level clientId on stored commits", async () => {
     const db = createSqliteDb(":memory:");
     const store = createSqliteSyncStore(db);
@@ -337,16 +423,18 @@ describeSqlite("src createSqliteSyncStore", () => {
         `
           INSERT INTO committed_events(
             id,
+            project_key,
             client_id,
             partitions,
             event,
             canonical,
             status_updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)
         `,
       )
       .run(
         "legacy-1",
+        "proj-1",
         "C1",
         JSON.stringify(["proj-1", "P1"]),
         JSON.stringify({

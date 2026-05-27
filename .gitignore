@@ -15,4 +15,6 @@ package-lock.json
 coverage
 local.db
 .claude/
-types/
+types/*
+!types/
+!types/*.d.ts

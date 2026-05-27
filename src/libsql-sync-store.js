@@ -4,6 +4,7 @@ import {
 } from "./canonicalize.js";
 import {
   buildProjectScopePartition,
+  extractProjectScopeIds,
   getProjectPartitions,
   partitionSetBelongsToProject,
 } from "./partition-scope.js";
@@ -19,6 +20,13 @@ import {
 
 const SCHEMA_VERSION = 5;
 const DEFAULT_SCAN_CHUNK_SIZE = 512;
+const LEGACY_PROJECT_KEY = "__global__";
+
+const deriveProjectKey = ({ projectId, partitions = [] } = {}) => {
+  if (typeof projectId === "string" && projectId.length > 0) return projectId;
+  const projectIds = extractProjectScopeIds(normalizePartitionSet(partitions));
+  return projectIds[0] || LEGACY_PROJECT_KEY;
+};
 
 const toComparisonKey = (event) => toStoredComparisonKey(event);
 
@@ -41,7 +49,24 @@ const tableExists = async (db, tableName) => {
   return row !== null && row !== undefined;
 };
 
+const runTransaction = async (db, fn) => {
+  await db.execute("BEGIN IMMEDIATE");
+  try {
+    const result = await fn();
+    await db.execute("COMMIT");
+    return result;
+  } catch (error) {
+    try {
+      await db.execute("ROLLBACK");
+    } catch {
+      // Preserve the original migration failure.
+    }
+    throw error;
+  }
+};
+
 const hasCompatibleSchema = async (db) => {
+  const hasProjectKey = await tableHasColumn(db, "committed_events", "project_key");
   const hasClientId = await tableHasColumn(db, "committed_events", "client_id");
   const hasPartitions = await tableHasColumn(
     db,
@@ -57,6 +82,34 @@ const hasCompatibleSchema = async (db) => {
   );
   const eventType = await getTableColumnType(db, "committed_events", "event");
   return (
+    hasProjectKey &&
+    hasClientId &&
+    hasPartitions &&
+    hasEvent &&
+    hasCanonical &&
+    hasStatusUpdatedAt &&
+    eventType === "TEXT"
+  );
+};
+
+const hasLegacyCanonicalSchema = async (db) => {
+  const hasProjectKey = await tableHasColumn(db, "committed_events", "project_key");
+  const hasClientId = await tableHasColumn(db, "committed_events", "client_id");
+  const hasPartitions = await tableHasColumn(
+    db,
+    "committed_events",
+    "partitions",
+  );
+  const hasEvent = await tableHasColumn(db, "committed_events", "event");
+  const hasCanonical = await tableHasColumn(db, "committed_events", "canonical");
+  const hasStatusUpdatedAt = await tableHasColumn(
+    db,
+    "committed_events",
+    "status_updated_at",
+  );
+  const eventType = await getTableColumnType(db, "committed_events", "event");
+  return (
+    !hasProjectKey &&
     hasClientId &&
     hasPartitions &&
     hasEvent &&
@@ -121,13 +174,22 @@ export const createLibsqlSyncStore = (
     await db.execute(`
       CREATE TABLE IF NOT EXISTS committed_events (
         committed_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        id TEXT NOT NULL UNIQUE,
+        id TEXT NOT NULL,
+        project_key TEXT NOT NULL,
         client_id TEXT NOT NULL,
         partitions TEXT NOT NULL,
         event TEXT NOT NULL,
         canonical TEXT NOT NULL,
-        status_updated_at INTEGER NOT NULL
+        status_updated_at INTEGER NOT NULL,
+        UNIQUE(project_key, id)
       );
+    `);
+  };
+
+  const createProjectScanIndex = async () => {
+    await db.execute(`
+      CREATE INDEX IF NOT EXISTS idx_committed_events_project_committed_id
+      ON committed_events(project_key, committed_id);
     `);
   };
 
@@ -135,6 +197,54 @@ export const createLibsqlSyncStore = (
     if (!(await hasCompatibleSchema(db))) {
       throw new Error("Sync store schema is incompatible; reset required");
     }
+  };
+
+  const migrateLegacyCanonicalSchema = async () => {
+    await db.execute("ALTER TABLE committed_events RENAME TO committed_events_legacy_v5;");
+    await createSchema();
+
+    const rows = await db.queryAll(`
+      SELECT
+        committed_id,
+        id,
+        client_id,
+        partitions,
+        event,
+        canonical,
+        status_updated_at
+      FROM committed_events_legacy_v5
+      ORDER BY committed_id ASC
+    `);
+
+    for (const row of rows) {
+      await db.execute(
+        `
+          INSERT INTO committed_events(
+            committed_id,
+            id,
+            project_key,
+            client_id,
+            partitions,
+            event,
+            canonical,
+            status_updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        [
+          row.committed_id,
+          row.id,
+          deriveProjectKey({ partitions: parseStoredPartitions(row.partitions) }),
+          row.client_id || "",
+          row.partitions,
+          row.event,
+          row.canonical,
+          row.status_updated_at,
+        ],
+      );
+    }
+
+    await db.execute("DROP TABLE committed_events_legacy_v5;");
+    await validateSchema();
   };
 
   const migrateLegacyFlatSchema = async () => {
@@ -188,16 +298,21 @@ export const createLibsqlSyncStore = (
           INSERT INTO committed_events(
             committed_id,
             id,
+            project_key,
             client_id,
             partitions,
             event,
             canonical,
             status_updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `,
         [
           committed.committed_id,
           committed.id,
+          deriveProjectKey({
+            projectId,
+            partitions: committed.partitions,
+          }),
           committed.client_id || "",
           JSON.stringify(committed.partitions),
           JSON.stringify(committed.event),
@@ -222,15 +337,19 @@ export const createLibsqlSyncStore = (
     const hasCommittedEventsTable = await tableExists(db, "committed_events");
     if (!hasCommittedEventsTable) {
       if (current === 0) {
-        await createSchema();
-        await validateSchema();
-        await setUserVersion(SCHEMA_VERSION);
+        await runTransaction(db, async () => {
+          await createSchema();
+          await createProjectScanIndex();
+          await validateSchema();
+          await setUserVersion(SCHEMA_VERSION);
+        });
         return;
       }
       throw new Error("Sync store schema is incompatible; reset required");
     }
 
     if (await hasCompatibleSchema(db)) {
+      await createProjectScanIndex();
       await validateSchema();
       if (current !== SCHEMA_VERSION) {
         await setUserVersion(SCHEMA_VERSION);
@@ -238,16 +357,28 @@ export const createLibsqlSyncStore = (
       return;
     }
 
+    if (await hasLegacyCanonicalSchema(db)) {
+      await runTransaction(db, async () => {
+        await migrateLegacyCanonicalSchema();
+        await createProjectScanIndex();
+        await setUserVersion(SCHEMA_VERSION);
+      });
+      return;
+    }
+
     if (await hasLegacyFlatSchema(db)) {
-      await migrateLegacyFlatSchema();
-      await setUserVersion(SCHEMA_VERSION);
+      await runTransaction(db, async () => {
+        await migrateLegacyFlatSchema();
+        await createProjectScanIndex();
+        await setUserVersion(SCHEMA_VERSION);
+      });
       return;
     }
 
     throw new Error("Sync store schema is incompatible; reset required");
   };
 
-  const getById = async (id) =>
+  const getByProjectAndId = async (projectKey, id) =>
     db.queryOne(
       `
         SELECT
@@ -259,9 +390,10 @@ export const createLibsqlSyncStore = (
           canonical,
           status_updated_at
         FROM committed_events
-        WHERE id = ?
+        WHERE project_key = ?
+          AND id = ?
       `,
-      [id],
+      [projectKey, id],
     );
 
   const getMaxCommittedIdInternal = async () => {
@@ -292,11 +424,12 @@ export const createLibsqlSyncStore = (
             event,
             status_updated_at
           FROM committed_events
-          WHERE committed_id > ?
+          WHERE project_key = ?
+            AND committed_id > ?
           ORDER BY committed_id ASC
           LIMIT ?
         `,
-        [cursor, pageSize],
+        [projectId, cursor, pageSize],
       );
       if (rows.length === 0) break;
       cursor = parseIntSafe(rows[rows.length - 1].committed_id, 0);
@@ -369,21 +502,27 @@ export const createLibsqlSyncStore = (
         serverTs: now,
       });
       const comparisonKey = toComparisonKey(storedEvent);
+      const projectKey = deriveProjectKey({
+        projectId,
+        partitions: storedEvent.partitions,
+      });
 
       const insertResult = await db.execute(
         `
           INSERT INTO committed_events(
             id,
+            project_key,
             client_id,
             partitions,
             event,
             canonical,
             status_updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?)
-          ON CONFLICT(id) DO NOTHING
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(project_key, id) DO NOTHING
         `,
         [
           storedEvent.id,
+          projectKey,
           storedEvent.client_id || "unknown",
           JSON.stringify(storedEvent.partitions),
           JSON.stringify(storedEvent.event),
@@ -392,7 +531,7 @@ export const createLibsqlSyncStore = (
         ],
       );
 
-      const insertedOrExisting = await getById(id);
+      const insertedOrExisting = await getByProjectAndId(projectKey, id);
       if (!insertedOrExisting) {
         throw new Error("commit insert succeeded but row was not readable");
       }
@@ -463,12 +602,13 @@ export const createLibsqlSyncStore = (
               event,
               status_updated_at
             FROM committed_events
-            WHERE committed_id > ?
+            WHERE project_key = ?
+              AND committed_id > ?
               AND committed_id <= ?
             ORDER BY committed_id ASC
             LIMIT ?
           `,
-          [cursor, upperBound, pageSize],
+          [projectId, cursor, upperBound, pageSize],
         );
 
         if (rows.length === 0) {

@@ -110,6 +110,50 @@ describe("src attachWsConnection", () => {
     expect(closeReasons).toContain("socket_closed");
   });
 
+  it("does not reject session sends when a socket closes during send", async () => {
+    const ws = new MockWsSocket();
+    const logs = [];
+    let attachedTransport = null;
+    const syncServer = {
+      attachConnection: (transport) => {
+        attachedTransport = transport;
+        return {
+          receive: async () => {},
+          close: async () => {},
+        };
+      },
+    };
+
+    attachWsConnection({
+      syncServer,
+      ws,
+      connectionId: "conn-send-close-race",
+      logger: (entry) => logs.push(entry),
+      keepAliveIntervalMs: 0,
+    });
+
+    ws.send = () => {
+      ws.readyState = 3;
+      throw new Error("WebSocket is not open: readyState 3 (CLOSED)");
+    };
+
+    await expect(
+      attachedTransport.send({
+        type: "event_broadcast",
+        payload: { id: "evt-race" },
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(
+      logs.some(
+        (entry) =>
+          entry.event === "send_failed" &&
+          entry.messageType === "event_broadcast" &&
+          entry.message.includes("readyState 3"),
+      ),
+    ).toBe(true);
+  });
+
   it("closes ws with invalid_message on bad JSON payload", async () => {
     const ws = new MockWsSocket();
     const syncServer = {
