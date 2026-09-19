@@ -1,3 +1,7 @@
+import {
+  attachRawSchemaVersion,
+  validateNewSchemaVersion,
+} from "./schema-version.js";
 import { canonicalizeSubmitItem } from "./canonicalize.js";
 import {
   buildCommittedEventFromDraft,
@@ -28,7 +32,7 @@ const createTransaction = async (db, fn) => {
   }
 };
 
-const parseDraft = (row) => ({
+const parseDraftLegacy = (row) => ({
   draftClock: parseIntSafe(row.draft_clock, 0),
   id: row.id,
   partition: row.partition,
@@ -40,7 +44,7 @@ const parseDraft = (row) => ({
   createdAt: parseIntSafe(row.created_at, 0),
 });
 
-const parseCommittedRow = (row) => ({
+const parseCommittedRowLegacy = (row) => ({
   committedId: parseIntSafe(row.committed_id, 0),
   id: row.id,
   projectId: row.project_id || undefined,
@@ -95,8 +99,22 @@ export const createLibsqlClientStore = (
     busyTimeoutMs = 5000,
     materializedViews,
     materializedBackfillChunkSize = DEFAULT_MATERIALIZED_BACKFILL_CHUNK_SIZE,
+    includeRawSchemaVersion = false,
   } = {},
 ) => {
+  const parseDraft = (row) =>
+    attachRawSchemaVersion(
+      parseDraftLegacy(row),
+      row.schema_version,
+      includeRawSchemaVersion,
+    );
+  const parseCommittedRow = (row) =>
+    attachRawSchemaVersion(
+      parseCommittedRowLegacy(row),
+      row.schema_version,
+      includeRawSchemaVersion,
+    );
+
   const db = createLibsqlDriver(client);
   let initialized = false;
   let closed = false;
@@ -179,7 +197,11 @@ export const createLibsqlClientStore = (
   };
 
   const validateSchema = async () => {
-    const hasDraftPartition = await tableHasColumn(db, "local_drafts", "partition");
+    const hasDraftPartition = await tableHasColumn(
+      db,
+      "local_drafts",
+      "partition",
+    );
     const hasDraftProjectId = await tableHasColumn(
       db,
       "local_drafts",
@@ -472,6 +494,7 @@ export const createLibsqlClientStore = (
       payloadCompression,
       createdAt,
     }) => {
+      validateNewSchemaVersion(schemaVersion);
       await ensureInitialized();
       await db.execute(
         `
@@ -506,6 +529,7 @@ export const createLibsqlClientStore = (
     },
 
     insertDrafts: async (items) => {
+      for (const item of items) validateNewSchemaVersion(item.schemaVersion);
       await ensureInitialized();
       await createTransaction(db, async () => {
         for (const item of items) {
@@ -587,6 +611,11 @@ export const createLibsqlClientStore = (
                 serverTs: result.serverTs,
               }),
             );
+            attachRawSchemaVersion(
+              normalizedCommittedEvent,
+              draft.schema_version,
+              includeRawSchemaVersion,
+            );
             const insertResult = await db.execute(
               `
                 INSERT OR IGNORE INTO committed_events(
@@ -611,7 +640,7 @@ export const createLibsqlClientStore = (
                 normalizedCommittedEvent.userId ?? null,
                 normalizedCommittedEvent.partition,
                 normalizedCommittedEvent.type,
-                normalizedCommittedEvent.schemaVersion,
+                draft.schema_version,
                 serializePayload(normalizedCommittedEvent.payload),
                 normalizedCommittedEvent.payloadCompression ?? null,
                 parseIntSafe(normalizedCommittedEvent.clientTs, 0),
@@ -627,9 +656,13 @@ export const createLibsqlClientStore = (
             }
           }
 
-          await db.execute(`DELETE FROM local_drafts WHERE id = ?`, [result.id]);
+          await db.execute(`DELETE FROM local_drafts WHERE id = ?`, [
+            result.id,
+          ]);
         } else if (result.status === "rejected") {
-          await db.execute(`DELETE FROM local_drafts WHERE id = ?`, [result.id]);
+          await db.execute(`DELETE FROM local_drafts WHERE id = ?`, [
+            result.id,
+          ]);
         }
 
         return nextCommittedEvent;

@@ -120,6 +120,26 @@ const clientStore = createLibsqlClientStore(clientDb);
 const syncStore = createLibsqlSyncStore(serverDb);
 ```
 
+## Exact event-version inspection
+
+All four persistent client stores accept `includeRawSchemaVersion: true` in their
+options. Draft and committed readers then include `rawSchemaVersion`, preserving
+the original database/driver value (including strings and bigints), alongside the
+unchanged historical `schemaVersion` interpretation. Applications enforcing exact
+version contracts must inspect that raw value before dispatching a versioned
+payload. A stored `"2junk"` must not be treated as a valid version 2 merely because
+its historical numeric interpretation is 2.
+
+The option does not select an authoring format. `insertDraft` and `insertDrafts`
+always require numeric positive safe integers for newly authored schema versions;
+invalid batches fail before inserting any rows. Existing database rows remain
+readable with the default reader. Acknowledgment promotion preserves their
+original stored version. Applications remain responsible for supported-version
+policy and validation of imported or received committed history.
+
+No database migration, payload format, timestamp parsing, or server change is
+required. `rawSchemaVersion` is read metadata, not a protocol field.
+
 ## Materialized Views
 
 Built-in client stores support optional partition-scoped materialized views.
