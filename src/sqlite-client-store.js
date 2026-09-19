@@ -628,6 +628,7 @@ export const createSqliteClientStore = (
   };
 
   return {
+    rawSchemaVersionAvailable: includeRawSchemaVersion,
     init: async () => {
       ensureInitialized();
     },

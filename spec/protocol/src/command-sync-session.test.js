@@ -138,6 +138,25 @@ describe("src createCommandSyncSession", () => {
     });
   });
 
+  it("forwards an explicit submit byte limit for large project bootstrap commands", async () => {
+    const session = createCommandSyncSession({
+      token: "token-one", actor: { userId: "user-one", clientId: "client-one" },
+      projectId: "project-one", transport, store,
+      submitBatch: { maxBytes: 128 * 1024 },
+    });
+    await session.start();
+    transport.emit({ type: "connected", payload: { clientId: "client-one", projectId: "project-one", projectLastCommittedId: 0 } });
+    await tick();
+    transport.emit({ type: "sync_response", payload: { projectId: "project-one", events: [], nextSinceCommittedId: 0, hasMore: false } });
+    await tick();
+    await session.submitCommands([{ id: "command-one", partition: "main", type: "project.create", payload: { text: "x".repeat(72 * 1024) } }]);
+    await tick();
+    const submitted = transport.sent.find((message) => message.type === "submit_events");
+    expect(submitted.payload.events[0].id).toBe("command-one");
+    expect(await store.loadDraftsOrdered()).toHaveLength(1);
+    await session.stop();
+  });
+
   it("submits a single command through the batch API with command id as submit id", async () => {
     const session = createCommandSyncSession({
       token: "t1",

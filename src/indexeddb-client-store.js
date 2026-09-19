@@ -456,6 +456,7 @@ export const createIndexedDbClientStore = ({
   };
 
   return {
+    rawSchemaVersionAvailable: includeRawSchemaVersion,
     init: async () => {
       await ensureInitialized();
     },

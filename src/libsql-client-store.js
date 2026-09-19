@@ -443,6 +443,7 @@ export const createLibsqlClientStore = (
   };
 
   return {
+    rawSchemaVersionAvailable: includeRawSchemaVersion,
     init: async () => {
       await ensureInitialized();
     },

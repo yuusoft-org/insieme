@@ -120,6 +120,11 @@ const clientStore = createLibsqlClientStore(clientDb);
 const syncStore = createLibsqlSyncStore(serverDb);
 ```
 
+`createCommandSyncSession` accepts `submitBatch: { maxEvents, maxBytes }` and
+forwards it to `createSyncClient`. Configure this when a validated project
+bootstrap exceeds the default 64 KiB batch ceiling. The default remains unchanged;
+client and server transport limits must agree.
+
 ## Exact event-version inspection
 
 All four persistent client stores accept `includeRawSchemaVersion: true` in their
@@ -218,3 +223,7 @@ Run SQLite integrity checks:
 ```bash
 bun run ops:sqlite:integrity -- /path/to/client.db /path/to/server.db
 ```
+
+Stores expose `rawSchemaVersionAvailable` so compatibility-aware callers can
+require lossless version reads before enabling a new writer. It is true only
+when `includeRawSchemaVersion` was enabled.

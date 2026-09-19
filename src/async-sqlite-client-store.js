@@ -571,6 +571,7 @@ export const createAsyncSqliteClientStore = ({
   };
 
   return {
+    rawSchemaVersionAvailable: includeRawSchemaVersion,
     init: async () => {
       await ensureInitialized();
     },
