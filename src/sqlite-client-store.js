@@ -531,7 +531,11 @@ export const createSqliteClientStore = (
     applyCommittedBatchTxn = createTransaction(db, ({ events, nextCursor }) => {
       const insertedEvents = [];
       for (const event of events) {
-        const committedRecord = normalizeCommittedEvent(event);
+        const committedRecord = attachRawSchemaVersion(
+          normalizeCommittedEvent(event),
+          event.schemaVersion,
+          includeRawSchemaVersion,
+        );
         const insertResult = insertCommittedStmt.run({
           committed_id: committedRecord.committedId,
           id: committedRecord.id,

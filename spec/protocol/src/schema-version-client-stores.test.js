@@ -7,6 +7,7 @@ import { createIndexedDbClientStore } from "../../../src/indexeddb-client-store.
 import {
   createSqliteDb,
   createAsyncSqliteDriver,
+  hasNodeSqlite,
 } from "./helpers/sqlite-db.js";
 import { createLibsqlClient } from "./helpers/libsql-db.js";
 
@@ -126,7 +127,7 @@ const browserFixture = async () => {
   };
 };
 for (const adapter of ["sqlite", "libsql", "async-sqlite", "indexeddb"])
-  describe(adapter, () => {
+  describe.skipIf(adapter !== "indexeddb" && !hasNodeSqlite)(adapter, () => {
     const fixture = () =>
       adapter === "indexeddb" ? browserFixture() : sqlFixture(adapter);
     test.each([1.5, "1junk", 2.9, "2junk", 0, -1, 2, 999, "not-a-version"])(
@@ -243,30 +244,33 @@ for (const adapter of ["sqlite", "libsql", "async-sqlite", "indexeddb"])
 
 for (const adapter of ["sqlite", "libsql", "async-sqlite"])
   for (const representation of [String, BigInt])
-    test(`${adapter} preserves ${representation.name} driver versions losslessly`, async () => {
-      const f = sqlFixture(adapter, representation),
-        store = f.create(true);
-      try {
-        await store.init();
-        await store.insertDraft(draft("one"));
-        expect((await store.loadDraftsOrdered())[0]).toMatchObject({
-          schemaVersion: 2,
-          rawSchemaVersion: representation(2),
-        });
-        await store.applySubmitResult({
-          result: {
-            id: "one",
-            status: "committed",
-            committedId: 1,
-            serverTs: 789,
-          },
-        });
-        expect((await store.listCommitted())[0]).toMatchObject({
-          schemaVersion: 2,
-          rawSchemaVersion: representation(2),
-        });
-      } finally {
-        await store.close();
-        await f.close();
-      }
-    });
+    test.skipIf(!hasNodeSqlite)(
+      `${adapter} preserves ${representation.name} driver versions losslessly`,
+      async () => {
+        const f = sqlFixture(adapter, representation),
+          store = f.create(true);
+        try {
+          await store.init();
+          await store.insertDraft(draft("one"));
+          expect((await store.loadDraftsOrdered())[0]).toMatchObject({
+            schemaVersion: 2,
+            rawSchemaVersion: representation(2),
+          });
+          await store.applySubmitResult({
+            result: {
+              id: "one",
+              status: "committed",
+              committedId: 1,
+              serverTs: 789,
+            },
+          });
+          expect((await store.listCommitted())[0]).toMatchObject({
+            schemaVersion: 2,
+            rawSchemaVersion: representation(2),
+          });
+        } finally {
+          await store.close();
+          await f.close();
+        }
+      },
+    );

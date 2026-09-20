@@ -663,7 +663,11 @@ export const createIndexedDbClientStore = ({
           const inserted = [];
 
           for (const event of events) {
-            const committed = normalizeCommittedEvent(event);
+            const committed = attachRawSchemaVersion(
+              normalizeCommittedEvent(event),
+              event.schemaVersion,
+              includeRawSchemaVersion,
+            );
             const wasInserted = await assertCommittedInvariant(
               committedStore,
               committedIdIndex,

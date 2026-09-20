@@ -679,7 +679,11 @@ export const createLibsqlClientStore = (
       const insertedEvents = await createTransaction(db, async () => {
         const nextInsertedEvents = [];
         for (const event of events) {
-          const committedRecord = normalizeCommittedEvent(event);
+          const committedRecord = attachRawSchemaVersion(
+            normalizeCommittedEvent(event),
+            event.schemaVersion,
+            includeRawSchemaVersion,
+          );
           const insertResult = await db.execute(
             `
               INSERT OR IGNORE INTO committed_events(

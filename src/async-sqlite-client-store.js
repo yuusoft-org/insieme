@@ -839,7 +839,11 @@ export const createAsyncSqliteClientStore = ({
       const insertedEvents = await runWrite(async (tx) => {
         const nextInsertedEvents = [];
         for (const event of events) {
-          const committedRecord = normalizeCommittedEvent(event);
+          const committedRecord = attachRawSchemaVersion(
+            normalizeCommittedEvent(event),
+            event.schemaVersion,
+            includeRawSchemaVersion,
+          );
           const insertResult = await tx.execute(
             `
               INSERT OR IGNORE INTO committed_events(
