@@ -1,7 +1,4 @@
-import {
-  attachRawSchemaVersion,
-  validateNewSchemaVersion,
-} from "./schema-version.js";
+import { parseStoredSchemaVersion, validateNewSchemaVersion } from "./schema-version.js";
 import { canonicalizeSubmitItem } from "./canonicalize.js";
 import {
   buildCommittedEventFromDraft,
@@ -11,31 +8,34 @@ import { parseIntSafe } from "./libsql-driver.js";
 import { normalizeMaterializedViewDefinitions } from "./materialized-view.js";
 import { createMaterializedViewRuntime } from "./materialized-view-runtime.js";
 import { deserializePayload, serializePayload } from "./payload-codec.js";
-import { createClosedResourceError, throwIfClosed } from "./store-errors.js";
+import {
+  createClosedResourceError,
+  throwIfClosed,
+} from "./store-errors.js";
 
 const SCHEMA_VERSION = 6;
 const DEFAULT_MATERIALIZED_BACKFILL_CHUNK_SIZE = 512;
 
-const parseDraftLegacy = (row) => ({
+const parseDraft = (row) => ({
   draftClock: parseIntSafe(row.draft_clock, 0),
   id: row.id,
   partition: row.partition,
   type: row.type,
-  schemaVersion: parseIntSafe(row.schema_version, 0),
+  schemaVersion: parseStoredSchemaVersion(row.schema_version),
   payload: deserializePayload(row.payload),
   payloadCompression: row.payload_compression || undefined,
   clientTs: parseIntSafe(row.client_ts, 0),
   createdAt: parseIntSafe(row.created_at, 0),
 });
 
-const parseCommittedRowLegacy = (row) => ({
+const parseCommittedRow = (row) => ({
   committedId: parseIntSafe(row.committed_id, 0),
   id: row.id,
   projectId: row.project_id || undefined,
   userId: row.user_id || undefined,
   partition: row.partition,
   type: row.type,
-  schemaVersion: parseIntSafe(row.schema_version, 0),
+  schemaVersion: parseStoredSchemaVersion(row.schema_version),
   payload: deserializePayload(row.payload),
   payloadCompression: row.payload_compression || undefined,
   clientTs: parseIntSafe(row.client_ts, 0),
@@ -83,9 +83,7 @@ const normalizeTransaction = (transaction) => {
     query: async (sql, args = []) => {
       const rows = await transaction.query(sql, args);
       if (!Array.isArray(rows)) {
-        throw new Error(
-          "async sqlite driver query must return an array of rows",
-        );
+        throw new Error("async sqlite driver query must return an array of rows");
       }
       return rows;
     },
@@ -127,7 +125,6 @@ const getTableColumnType = async (tx, tableName, columnName) => {
  *   busyTimeoutMs?: number,
  *   materializedViews?: object[],
  *   materializedBackfillChunkSize?: number,
- *   includeRawSchemaVersion?: boolean,
  * }} input
  */
 export const createAsyncSqliteClientStore = ({
@@ -138,21 +135,7 @@ export const createAsyncSqliteClientStore = ({
   busyTimeoutMs = 5000,
   materializedViews,
   materializedBackfillChunkSize = DEFAULT_MATERIALIZED_BACKFILL_CHUNK_SIZE,
-  includeRawSchemaVersion = false,
 } = {}) => {
-  const parseDraft = (row) =>
-    attachRawSchemaVersion(
-      parseDraftLegacy(row),
-      row.schema_version,
-      includeRawSchemaVersion,
-    );
-  const parseCommittedRow = (row) =>
-    attachRawSchemaVersion(
-      parseCommittedRowLegacy(row),
-      row.schema_version,
-      includeRawSchemaVersion,
-    );
-
   if (!driver || typeof driver.transaction !== "function") {
     throw new Error(
       "createAsyncSqliteClientStore requires a driver with transaction(mode, run)",
@@ -223,9 +206,7 @@ export const createAsyncSqliteClientStore = ({
   const runInternalRead = async (run) => runTransaction("read", run);
 
   const runInternalWrite = async (run) => {
-    const operation = writeTail
-      .catch(() => {})
-      .then(() => runTransaction("write", run));
+    const operation = writeTail.catch(() => {}).then(() => runTransaction("write", run));
     writeTail = operation.catch(() => {});
     return operation;
   };
@@ -308,11 +289,7 @@ export const createAsyncSqliteClientStore = ({
   };
 
   const validateSchema = async (tx) => {
-    const hasDraftPartition = await tableHasColumn(
-      tx,
-      "local_drafts",
-      "partition",
-    );
+    const hasDraftPartition = await tableHasColumn(tx, "local_drafts", "partition");
     const hasDraftProjectId = await tableHasColumn(
       tx,
       "local_drafts",
@@ -571,7 +548,6 @@ export const createAsyncSqliteClientStore = ({
   };
 
   return {
-    rawSchemaVersionAvailable: includeRawSchemaVersion,
     init: async () => {
       await ensureInitialized();
     },
@@ -772,11 +748,6 @@ export const createAsyncSqliteClientStore = ({
                 serverTs: result.serverTs,
               }),
             );
-            attachRawSchemaVersion(
-              normalizedCommittedEvent,
-              draftRow.schema_version,
-              includeRawSchemaVersion,
-            );
             const insertResult = await tx.execute(
               `
                 INSERT OR IGNORE INTO committed_events(
@@ -801,7 +772,7 @@ export const createAsyncSqliteClientStore = ({
                 normalizedCommittedEvent.userId ?? null,
                 normalizedCommittedEvent.partition,
                 normalizedCommittedEvent.type,
-                draftRow.schema_version,
+                normalizedCommittedEvent.schemaVersion,
                 serializePayload(normalizedCommittedEvent.payload),
                 normalizedCommittedEvent.payloadCompression ?? null,
                 parseIntSafe(normalizedCommittedEvent.clientTs, 0),
@@ -817,13 +788,9 @@ export const createAsyncSqliteClientStore = ({
             }
           }
 
-          await tx.execute(`DELETE FROM local_drafts WHERE id = ?`, [
-            result.id,
-          ]);
+          await tx.execute(`DELETE FROM local_drafts WHERE id = ?`, [result.id]);
         } else if (result.status === "rejected") {
-          await tx.execute(`DELETE FROM local_drafts WHERE id = ?`, [
-            result.id,
-          ]);
+          await tx.execute(`DELETE FROM local_drafts WHERE id = ?`, [result.id]);
         }
 
         return nextCommittedEvent;
@@ -835,6 +802,7 @@ export const createAsyncSqliteClientStore = ({
     },
 
     applyCommittedBatch: async ({ events, nextCursor }) => {
+      for (const event of events) validateNewSchemaVersion(event.schemaVersion);
       await ensureInitialized();
       const insertedEvents = await runWrite(async (tx) => {
         const nextInsertedEvents = [];
@@ -876,14 +844,6 @@ export const createAsyncSqliteClientStore = ({
           if (insertResult.rowsAffected === 0) {
             await assertCommittedInvariant(tx, committedRecord);
           } else {
-            if (includeRawSchemaVersion) {
-              const [row] = await tx.query(
-                "SELECT schema_version FROM committed_events WHERE id = ?",
-                [committedRecord.id],
-              );
-              // Match the driver's representation used by replay.
-              attachRawSchemaVersion(committedRecord, row.schema_version, true);
-            }
             nextInsertedEvents.push(committedRecord);
           }
 

@@ -125,25 +125,23 @@ forwards it to `createSyncClient`. Configure this when a validated project
 bootstrap exceeds the default 64 KiB batch ceiling. The default remains unchanged;
 client and server transport limits must agree.
 
-## Exact event-version inspection
+## Event schema versions
 
-All four persistent client stores accept `includeRawSchemaVersion: true` in their
-options. Draft and committed readers then include `rawSchemaVersion`, preserving
-the original database/driver value (including strings and bigints), alongside the
-unchanged historical `schemaVersion` interpretation. Applications enforcing exact
-version contracts must inspect that raw value before dispatching a versioned
-payload. A stored `"2junk"` must not be treated as a valid version 2 merely because
-its historical numeric interpretation is 2.
+SQLite, async SQLite, libSQL, and IndexedDB client stores expose one
+`schemaVersion`: a positive safe integer number. Stored integer representations
+such as `2`, `"2"`, and `2n` all read as `schemaVersion: 2`, including during
+materialized-view replay. Decimal strings must use the canonical integer spelling;
+whitespace, leading zeros, fractions, and exponent notation are rejected.
 
-The option does not select an authoring format. `insertDraft` and `insertDrafts`
-always require numeric positive safe integers for newly authored schema versions;
-invalid batches fail before inserting any rows. Existing database rows remain
-readable with the default reader. Acknowledgment promotion preserves their
-original stored version. Applications remain responsible for supported-version
-policy and validation of imported or received committed history.
+`insertDraft`, `insertDrafts`, and `applyCommittedBatch` require numeric positive
+safe integers. Invalid batches fail with `invalid_schema_version` before writing
+rows, deleting drafts, or advancing the cursor. Applications decide which valid
+versions they support; for example, version `999` is structurally valid.
 
-No database migration, payload format, timestamp parsing, or server change is
-required. `rawSchemaVersion` is read metadata, not a protocol field.
+This tightens historical reads: malformed stored versions such as `"2junk"` or
+`2.9` now throw `invalid_schema_version` when read or promoted to committed events,
+instead of silently becoming `2`. Malformed rows must be repaired or migrated
+before they can be read or replayed. Valid existing rows need no migration.
 
 ## Materialized Views
 
@@ -223,7 +221,3 @@ Run SQLite integrity checks:
 ```bash
 bun run ops:sqlite:integrity -- /path/to/client.db /path/to/server.db
 ```
-
-Stores expose `rawSchemaVersionAvailable` so compatibility-aware callers can
-require lossless version reads before enabling a new writer. It is true only
-when `includeRawSchemaVersion` was enabled.

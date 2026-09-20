@@ -1,7 +1,4 @@
-import {
-  attachRawSchemaVersion,
-  validateNewSchemaVersion,
-} from "./schema-version.js";
+import { parseStoredSchemaVersion, validateNewSchemaVersion } from "./schema-version.js";
 import { canonicalizeSubmitItem } from "./canonicalize.js";
 import {
   buildCommittedEventFromDraft,
@@ -154,12 +151,12 @@ const openDatabase = ({ indexedDB, dbName }) =>
     request.onsuccess = () => resolve(request.result);
   });
 
-const parseDraftRowLegacy = (row) => ({
+const parseDraftRow = (row) => ({
   draftClock: parseIntSafe(row.draft_clock, 0),
   id: row.id,
   partition: row.partition,
   type: row.type,
-  schemaVersion: parseIntSafe(row.schema_version, 0),
+  schemaVersion: parseStoredSchemaVersion(row.schema_version),
   payload: structuredClone(row.payload),
   payloadCompression: row.payload_compression || undefined,
   clientTs: parseIntSafe(row.client_ts, 0),
@@ -188,14 +185,14 @@ const serializeDraftRow = ({
   created_at: createdAt,
 });
 
-const parseCommittedRowLegacy = (row) => ({
+const parseCommittedRow = (row) => ({
   committedId: parseIntSafe(row.committed_id, 0),
   id: row.id,
   projectId: row.project_id || undefined,
   userId: row.user_id || undefined,
   partition: row.partition,
   type: row.type,
-  schemaVersion: parseIntSafe(row.schema_version, 0),
+  schemaVersion: parseStoredSchemaVersion(row.schema_version),
   payload: structuredClone(row.payload),
   payloadCompression: row.payload_compression || undefined,
   clientTs: parseIntSafe(row.client_ts, 0),
@@ -254,21 +251,7 @@ export const createIndexedDbClientStore = ({
   dbName = DEFAULT_DB_NAME,
   materializedViews,
   materializedBackfillChunkSize = DEFAULT_MATERIALIZED_BACKFILL_CHUNK_SIZE,
-  includeRawSchemaVersion = false,
 } = {}) => {
-  const parseDraftRow = (row) =>
-    attachRawSchemaVersion(
-      parseDraftRowLegacy(row),
-      row.schema_version,
-      includeRawSchemaVersion,
-    );
-  const parseCommittedRow = (row) =>
-    attachRawSchemaVersion(
-      parseCommittedRowLegacy(row),
-      row.schema_version,
-      includeRawSchemaVersion,
-    );
-
   if (!indexedDB || typeof indexedDB.open !== "function") {
     throw new Error(
       "createIndexedDbClientStore requires a valid indexedDB implementation",
@@ -327,22 +310,18 @@ export const createIndexedDbClientStore = ({
             return rows.map(parseCommittedRow);
           }),
         loadCheckpoint: async ({ viewName, partition }) =>
-          withTransaction(
-            [MATERIALIZED_VIEW_STORE],
-            "readonly",
-            async (stores) => {
-              const row = await requestToPromise(
-                stores[MATERIALIZED_VIEW_STORE].get([viewName, partition]),
-              );
-              if (!row) return undefined;
-              return {
-                viewVersion: row.view_version,
-                lastCommittedId: parseIntSafe(row.last_committed_id, 0),
-                value: row.value,
-                updatedAt: parseIntSafe(row.updated_at, 0),
-              };
-            },
-          ),
+          withTransaction([MATERIALIZED_VIEW_STORE], "readonly", async (stores) => {
+            const row = await requestToPromise(
+              stores[MATERIALIZED_VIEW_STORE].get([viewName, partition]),
+            );
+            if (!row) return undefined;
+            return {
+              viewVersion: row.view_version,
+              lastCommittedId: parseIntSafe(row.last_committed_id, 0),
+              value: row.value,
+              updatedAt: parseIntSafe(row.updated_at, 0),
+            };
+          }),
         saveCheckpoint: async ({
           viewName,
           viewVersion,
@@ -420,7 +399,6 @@ export const createIndexedDbClientStore = ({
     committedStore,
     committedIdIndex,
     event,
-    storedSchemaVersion = event.schemaVersion,
   ) => {
     const existingById = await requestToPromise(committedStore.get(event.id));
     if (existingById) {
@@ -448,7 +426,6 @@ export const createIndexedDbClientStore = ({
     committedStore.add(
       serializeCommittedRow({
         ...event,
-        schemaVersion: storedSchemaVersion,
         createdAt: event.createdAt ?? Date.now(),
       }),
     );
@@ -456,7 +433,6 @@ export const createIndexedDbClientStore = ({
   };
 
   return {
-    rawSchemaVersionAvailable: includeRawSchemaVersion,
     init: async () => {
       await ensureInitialized();
     },
@@ -495,11 +471,7 @@ export const createIndexedDbClientStore = ({
         async (stores) => {
           const metaStore = stores[META_STORE];
           const draftStore = stores[DRAFT_STORE];
-          let draftClock = await loadMetaInt(
-            metaStore,
-            NEXT_DRAFT_CLOCK_KEY,
-            1,
-          );
+          let draftClock = await loadMetaInt(metaStore, NEXT_DRAFT_CLOCK_KEY, 1);
 
           for (const item of items) {
             const existing = await requestToPromise(draftStore.get(item.id));
@@ -507,21 +479,19 @@ export const createIndexedDbClientStore = ({
               throw new Error(`draft with id ${item.id} already exists`);
             }
 
-            draftStore.add(
-              serializeDraftRow({
-                id: item.id,
-                draftClock,
-                partition: item.partition,
-                type: item.type,
-                schemaVersion: item.schemaVersion,
-                payload: structuredClone(item.payload),
-                payloadCompression: item.payloadCompression ?? null,
-                clientTs: normalizeClientTs(item.clientTs, {
-                  defaultClientTs: item.meta?.clientTs,
-                }),
-                createdAt: item.createdAt,
+            draftStore.add(serializeDraftRow({
+              id: item.id,
+              draftClock,
+              partition: item.partition,
+              type: item.type,
+              schemaVersion: item.schemaVersion,
+              payload: structuredClone(item.payload),
+              payloadCompression: item.payloadCompression ?? null,
+              clientTs: normalizeClientTs(item.clientTs, {
+                defaultClientTs: item.meta?.clientTs,
               }),
-            );
+              createdAt: item.createdAt,
+            }));
             draftClock += 1;
           }
 
@@ -553,26 +523,20 @@ export const createIndexedDbClientStore = ({
             throw new Error(`draft with id ${id} already exists`);
           }
 
-          const draftClock = await loadMetaInt(
-            metaStore,
-            NEXT_DRAFT_CLOCK_KEY,
-            1,
-          );
-          draftStore.add(
-            serializeDraftRow({
-              id,
-              draftClock,
-              partition,
-              type,
-              schemaVersion,
-              payload: structuredClone(payload),
-              payloadCompression: payloadCompression ?? null,
-              clientTs: normalizeClientTs(clientTs, {
-                defaultClientTs: meta?.clientTs,
-              }),
-              createdAt,
+          const draftClock = await loadMetaInt(metaStore, NEXT_DRAFT_CLOCK_KEY, 1);
+          draftStore.add(serializeDraftRow({
+            id,
+            draftClock,
+            partition,
+            type,
+            schemaVersion,
+            payload: structuredClone(payload),
+            payloadCompression: payloadCompression ?? null,
+            clientTs: normalizeClientTs(clientTs, {
+              defaultClientTs: meta?.clientTs,
             }),
-          );
+            createdAt,
+          }));
           await saveMetaInt(metaStore, NEXT_DRAFT_CLOCK_KEY, draftClock + 1);
         },
       );
@@ -622,17 +586,11 @@ export const createIndexedDbClientStore = ({
                 serverTs: result.serverTs,
               }),
             );
-            attachRawSchemaVersion(
-              committed,
-              storedDraft.schema_version,
-              includeRawSchemaVersion,
-            );
             committed.createdAt = Date.now();
             const inserted = await assertCommittedInvariant(
               committedStore,
               committedIdIndex,
               committed,
-              storedDraft.schema_version,
             );
             if (inserted) {
               insertedEvent = committed;
@@ -652,6 +610,7 @@ export const createIndexedDbClientStore = ({
     },
 
     applyCommittedBatch: async ({ events, nextCursor }) => {
+      for (const event of events) validateNewSchemaVersion(event.schemaVersion);
       const insertedEvents = await withTransaction(
         [META_STORE, DRAFT_STORE, COMMITTED_STORE],
         "readwrite",
@@ -663,11 +622,7 @@ export const createIndexedDbClientStore = ({
           const inserted = [];
 
           for (const event of events) {
-            const committed = attachRawSchemaVersion(
-              normalizeCommittedEvent(event),
-              event.schemaVersion,
-              includeRawSchemaVersion,
-            );
+            const committed = normalizeCommittedEvent(event);
             const wasInserted = await assertCommittedInvariant(
               committedStore,
               committedIdIndex,
@@ -775,7 +730,9 @@ export const createIndexedDbClientStore = ({
           const committed = (await listAll(stores[COMMITTED_STORE])).map(
             parseCommittedRow,
           );
-          committed.sort((left, right) => left.committedId - right.committedId);
+          committed.sort(
+            (left, right) => left.committedId - right.committedId,
+          );
           return committed;
         }),
       getCursor: async () =>

@@ -1,7 +1,4 @@
-import {
-  attachRawSchemaVersion,
-  validateNewSchemaVersion,
-} from "./schema-version.js";
+import { parseStoredSchemaVersion, validateNewSchemaVersion } from "./schema-version.js";
 // SQLite adapter for the simplified client store interface.
 // Expects a better-sqlite3 style DB object (exec/prepare/transaction APIs).
 
@@ -74,7 +71,6 @@ export const createSqliteClientStore = (
     busyTimeoutMs = 5000,
     materializedViews,
     materializedBackfillChunkSize = DEFAULT_MATERIALIZED_BACKFILL_CHUNK_SIZE,
-    includeRawSchemaVersion = false,
   } = {},
 ) => {
   let initialized = false;
@@ -250,42 +246,32 @@ export const createSqliteClientStore = (
     validateSchema();
   };
 
-  const parseDraft = (row) =>
-    attachRawSchemaVersion(
-      {
-        draftClock: row.draft_clock,
-        id: row.id,
-        partition: row.partition,
-        type: row.type,
-        schemaVersion: parseIntSafe(row.schema_version),
-        payload: deserializePayload(row.payload),
-        payloadCompression: row.payload_compression || undefined,
-        clientTs: parseIntSafe(row.client_ts),
-        createdAt: row.created_at,
-      },
-      row.schema_version,
-      includeRawSchemaVersion,
-    );
+  const parseDraft = (row) => ({
+    draftClock: row.draft_clock,
+    id: row.id,
+    partition: row.partition,
+    type: row.type,
+    schemaVersion: parseStoredSchemaVersion(row.schema_version),
+    payload: deserializePayload(row.payload),
+    payloadCompression: row.payload_compression || undefined,
+    clientTs: parseIntSafe(row.client_ts),
+    createdAt: row.created_at,
+  });
 
-  const parseCommittedRow = (row) =>
-    attachRawSchemaVersion(
-      {
-        committedId: row.committed_id,
-        id: row.id,
-        projectId: row.project_id || undefined,
-        userId: row.user_id || undefined,
-        partition: row.partition,
-        type: row.type,
-        schemaVersion: parseIntSafe(row.schema_version),
-        payload: deserializePayload(row.payload),
-        payloadCompression: row.payload_compression || undefined,
-        clientTs: parseIntSafe(row.client_ts),
-        serverTs: row.server_ts,
-        createdAt: row.created_at,
-      },
-      row.schema_version,
-      includeRawSchemaVersion,
-    );
+  const parseCommittedRow = (row) => ({
+    committedId: row.committed_id,
+    id: row.id,
+    projectId: row.project_id || undefined,
+    userId: row.user_id || undefined,
+    partition: row.partition,
+    type: row.type,
+    schemaVersion: parseStoredSchemaVersion(row.schema_version),
+    payload: deserializePayload(row.payload),
+    payloadCompression: row.payload_compression || undefined,
+    clientTs: parseIntSafe(row.client_ts),
+    serverTs: row.server_ts,
+    createdAt: row.created_at,
+  });
 
   const normalizeCommittedEvent = (event) => ({
     ...event,
@@ -492,11 +478,6 @@ export const createSqliteClientStore = (
               serverTs: result.serverTs,
             }),
           );
-          attachRawSchemaVersion(
-            nextCommittedEvent,
-            draft.schema_version,
-            includeRawSchemaVersion,
-          );
           const insertResult = insertCommittedStmt.run({
             committed_id: nextCommittedEvent.committedId,
             id: nextCommittedEvent.id,
@@ -504,7 +485,7 @@ export const createSqliteClientStore = (
             user_id: nextCommittedEvent.userId ?? null,
             partition: nextCommittedEvent.partition,
             type: nextCommittedEvent.type,
-            schema_version: draft.schema_version,
+            schema_version: nextCommittedEvent.schemaVersion,
             payload: serializePayload(nextCommittedEvent.payload),
             payload_compression: nextCommittedEvent.payloadCompression ?? null,
             client_ts: parseIntSafe(nextCommittedEvent.clientTs),
@@ -550,11 +531,6 @@ export const createSqliteClientStore = (
         if (insertResult.changes === 0) {
           assertCommittedInvariant(committedRecord);
         } else {
-          if (includeRawSchemaVersion) {
-            const row = getCommittedByIdStmt.get({ id: committedRecord.id });
-            // Match the driver's representation used by replay.
-            attachRawSchemaVersion(committedRecord, row.schema_version, true);
-          }
           insertedEvents.push(committedRecord);
         }
 
@@ -633,7 +609,6 @@ export const createSqliteClientStore = (
   };
 
   return {
-    rawSchemaVersionAvailable: includeRawSchemaVersion,
     init: async () => {
       ensureInitialized();
     },
@@ -716,6 +691,7 @@ export const createSqliteClientStore = (
     },
 
     applyCommittedBatch: async ({ events, nextCursor }) => {
+      for (const event of events) validateNewSchemaVersion(event.schemaVersion);
       ensureInitialized();
       const insertedEvents = applyCommittedBatchTxn({ events, nextCursor });
       for (const event of insertedEvents) {

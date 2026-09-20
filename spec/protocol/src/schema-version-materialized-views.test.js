@@ -76,38 +76,23 @@ for (const adapter of ["sqlite", "libsql", "async-sqlite", "indexeddb"]) {
     const representations =
       adapter === "indexeddb" ? [Number] : [Number, String, BigInt];
     const cases = representations.flatMap((representation) =>
-      [false, true].map((includeRawSchemaVersion) => ({
+      ["batch", "acknowledgment"].map((path) => ({
         representation,
         representationName: representation.name,
-        includeRawSchemaVersion,
+        path,
       })),
     );
     test.each(cases)(
-      "live and rebuilt views agree for $representationName with includeRawSchemaVersion=$includeRawSchemaVersion",
-      async ({ representation, includeRawSchemaVersion }) => {
+      "live and rebuilt views use numeric versions for $representationName drivers via $path",
+      async ({ representation, path }) => {
         const store = createStore(adapter, {
-          includeRawSchemaVersion,
           materializedViews: [{
             name: "versions",
             initialState: () => [],
             reduce: ({ state, event }) => {
-              expect(Object.hasOwn(event, "rawSchemaVersion")).toBe(
-                includeRawSchemaVersion,
-              );
-              if (includeRawSchemaVersion) {
-                expect(event.rawSchemaVersion).toBe(
-                  representation(event.schemaVersion),
-                );
-              }
-              // Preserve the raw representation in JSON-compatible view state.
-              return [
-                ...state,
-                {
-                  version: event.schemaVersion,
-                  rawType: typeof event.rawSchemaVersion,
-                  rawValue: String(event.rawSchemaVersion),
-                },
-              ];
+              expect(typeof event.schemaVersion).toBe("number");
+              expect(Object.hasOwn(event, "rawSchemaVersion")).toBe(false);
+              return [...state, event.schemaVersion];
             },
           }],
         }, representation);
@@ -128,17 +113,21 @@ for (const adapter of ["sqlite", "libsql", "async-sqlite", "indexeddb"]) {
           await store.init();
           // Warm the view so the batch reaches the live reducer path.
           expect(await store.loadMaterializedView(view)).toEqual([]);
-          await store.applyCommittedBatch({ events, nextCursor: 2 });
+          if (path === "batch") {
+            await store.applyCommittedBatch({ events, nextCursor: 2 });
+          } else {
+            for (const event of events) {
+              await store.insertDraft({ ...event, createdAt: 123 });
+              await store.applySubmitResult({ result: {
+                id: event.id,
+                committedId: event.committedId,
+                serverTs: event.serverTs,
+                status: "committed",
+              } });
+            }
+          }
           const live = await store.loadMaterializedView(view);
-          expect(live).toEqual(
-            [1, 2].map((version) => ({
-              version,
-              rawType: includeRawSchemaVersion
-                ? typeof representation(version) : "undefined",
-              rawValue: includeRawSchemaVersion
-                ? String(representation(version)) : "undefined",
-            })),
-          );
+          expect(live).toEqual([1, 2]);
           expect(events).toEqual(originalEvents);
 
           await store.applyCommittedBatch({ events, nextCursor: 2 });

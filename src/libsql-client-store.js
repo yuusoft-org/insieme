@@ -1,7 +1,4 @@
-import {
-  attachRawSchemaVersion,
-  validateNewSchemaVersion,
-} from "./schema-version.js";
+import { parseStoredSchemaVersion, validateNewSchemaVersion } from "./schema-version.js";
 import { canonicalizeSubmitItem } from "./canonicalize.js";
 import {
   buildCommittedEventFromDraft,
@@ -32,26 +29,26 @@ const createTransaction = async (db, fn) => {
   }
 };
 
-const parseDraftLegacy = (row) => ({
+const parseDraft = (row) => ({
   draftClock: parseIntSafe(row.draft_clock, 0),
   id: row.id,
   partition: row.partition,
   type: row.type,
-  schemaVersion: parseIntSafe(row.schema_version, 0),
+  schemaVersion: parseStoredSchemaVersion(row.schema_version),
   payload: deserializePayload(row.payload),
   payloadCompression: row.payload_compression || undefined,
   clientTs: parseIntSafe(row.client_ts, 0),
   createdAt: parseIntSafe(row.created_at, 0),
 });
 
-const parseCommittedRowLegacy = (row) => ({
+const parseCommittedRow = (row) => ({
   committedId: parseIntSafe(row.committed_id, 0),
   id: row.id,
   projectId: row.project_id || undefined,
   userId: row.user_id || undefined,
   partition: row.partition,
   type: row.type,
-  schemaVersion: parseIntSafe(row.schema_version, 0),
+  schemaVersion: parseStoredSchemaVersion(row.schema_version),
   payload: deserializePayload(row.payload),
   payloadCompression: row.payload_compression || undefined,
   clientTs: parseIntSafe(row.client_ts, 0),
@@ -99,22 +96,8 @@ export const createLibsqlClientStore = (
     busyTimeoutMs = 5000,
     materializedViews,
     materializedBackfillChunkSize = DEFAULT_MATERIALIZED_BACKFILL_CHUNK_SIZE,
-    includeRawSchemaVersion = false,
   } = {},
 ) => {
-  const parseDraft = (row) =>
-    attachRawSchemaVersion(
-      parseDraftLegacy(row),
-      row.schema_version,
-      includeRawSchemaVersion,
-    );
-  const parseCommittedRow = (row) =>
-    attachRawSchemaVersion(
-      parseCommittedRowLegacy(row),
-      row.schema_version,
-      includeRawSchemaVersion,
-    );
-
   const db = createLibsqlDriver(client);
   let initialized = false;
   let closed = false;
@@ -197,11 +180,7 @@ export const createLibsqlClientStore = (
   };
 
   const validateSchema = async () => {
-    const hasDraftPartition = await tableHasColumn(
-      db,
-      "local_drafts",
-      "partition",
-    );
+    const hasDraftPartition = await tableHasColumn(db, "local_drafts", "partition");
     const hasDraftProjectId = await tableHasColumn(
       db,
       "local_drafts",
@@ -443,7 +422,6 @@ export const createLibsqlClientStore = (
   };
 
   return {
-    rawSchemaVersionAvailable: includeRawSchemaVersion,
     init: async () => {
       await ensureInitialized();
     },
@@ -612,11 +590,6 @@ export const createLibsqlClientStore = (
                 serverTs: result.serverTs,
               }),
             );
-            attachRawSchemaVersion(
-              normalizedCommittedEvent,
-              draft.schema_version,
-              includeRawSchemaVersion,
-            );
             const insertResult = await db.execute(
               `
                 INSERT OR IGNORE INTO committed_events(
@@ -641,7 +614,7 @@ export const createLibsqlClientStore = (
                 normalizedCommittedEvent.userId ?? null,
                 normalizedCommittedEvent.partition,
                 normalizedCommittedEvent.type,
-                draft.schema_version,
+                normalizedCommittedEvent.schemaVersion,
                 serializePayload(normalizedCommittedEvent.payload),
                 normalizedCommittedEvent.payloadCompression ?? null,
                 parseIntSafe(normalizedCommittedEvent.clientTs, 0),
@@ -657,13 +630,9 @@ export const createLibsqlClientStore = (
             }
           }
 
-          await db.execute(`DELETE FROM local_drafts WHERE id = ?`, [
-            result.id,
-          ]);
+          await db.execute(`DELETE FROM local_drafts WHERE id = ?`, [result.id]);
         } else if (result.status === "rejected") {
-          await db.execute(`DELETE FROM local_drafts WHERE id = ?`, [
-            result.id,
-          ]);
+          await db.execute(`DELETE FROM local_drafts WHERE id = ?`, [result.id]);
         }
 
         return nextCommittedEvent;
@@ -675,6 +644,7 @@ export const createLibsqlClientStore = (
     },
 
     applyCommittedBatch: async ({ events, nextCursor }) => {
+      for (const event of events) validateNewSchemaVersion(event.schemaVersion);
       await ensureInitialized();
       const insertedEvents = await createTransaction(db, async () => {
         const nextInsertedEvents = [];
@@ -716,14 +686,6 @@ export const createLibsqlClientStore = (
           if (db.rowsAffected(insertResult) === 0) {
             await assertCommittedInvariant(committedRecord);
           } else {
-            if (includeRawSchemaVersion) {
-              const row = await db.queryOne(
-                "SELECT schema_version FROM committed_events WHERE id = ?",
-                [committedRecord.id],
-              );
-              // Match the driver's representation used by replay.
-              attachRawSchemaVersion(committedRecord, row.schema_version, true);
-            }
             nextInsertedEvents.push(committedRecord);
           }
 
