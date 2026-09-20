@@ -1,3 +1,4 @@
+import { parseStoredSchemaVersion, validateNewSchemaVersion } from "./schema-version.js";
 import { canonicalizeSubmitItem } from "./canonicalize.js";
 import {
   buildCommittedEventFromDraft,
@@ -155,7 +156,7 @@ const parseDraftRow = (row) => ({
   id: row.id,
   partition: row.partition,
   type: row.type,
-  schemaVersion: parseIntSafe(row.schema_version, 0),
+  schemaVersion: parseStoredSchemaVersion(row.schema_version),
   payload: structuredClone(row.payload),
   payloadCompression: row.payload_compression || undefined,
   clientTs: parseIntSafe(row.client_ts, 0),
@@ -191,7 +192,7 @@ const parseCommittedRow = (row) => ({
   userId: row.user_id || undefined,
   partition: row.partition,
   type: row.type,
-  schemaVersion: parseIntSafe(row.schema_version, 0),
+  schemaVersion: parseStoredSchemaVersion(row.schema_version),
   payload: structuredClone(row.payload),
   payloadCompression: row.payload_compression || undefined,
   clientTs: parseIntSafe(row.client_ts, 0),
@@ -463,6 +464,7 @@ export const createIndexedDbClientStore = ({
       ),
 
     insertDrafts: async (items) => {
+      for (const item of items) validateNewSchemaVersion(item.schemaVersion);
       await withTransaction(
         [META_STORE, DRAFT_STORE],
         "readwrite",
@@ -509,6 +511,7 @@ export const createIndexedDbClientStore = ({
       payloadCompression,
       createdAt,
     }) => {
+      validateNewSchemaVersion(schemaVersion);
       await withTransaction(
         [META_STORE, DRAFT_STORE],
         "readwrite",
@@ -607,6 +610,7 @@ export const createIndexedDbClientStore = ({
     },
 
     applyCommittedBatch: async ({ events, nextCursor }) => {
+      for (const event of events) validateNewSchemaVersion(event.schemaVersion);
       const insertedEvents = await withTransaction(
         [META_STORE, DRAFT_STORE, COMMITTED_STORE],
         "readwrite",

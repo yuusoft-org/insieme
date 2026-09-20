@@ -30,6 +30,7 @@ const isTransportDisconnectedError = (error) => {
  *   store?: object,
  *   logger?: (entry: object) => void,
  *   reconnect?: object,
+ *   submitBatch?: { maxEvents?: number, maxBytes?: number },
  *   schemaVersion?: number,
  *   mapCommandToSyncEvent?: (command: object) => object,
  *   mapCommittedToCommand?: (committedEvent: object) => object | null,
@@ -51,6 +52,7 @@ export const createCommandSyncSession = ({
   store,
   logger = () => {},
   reconnect = {},
+  submitBatch,
   schemaVersion = 1,
   mapCommandToSyncEvent = (command) =>
     commandToSyncEvent(command, {
@@ -150,6 +152,7 @@ export const createCommandSyncSession = ({
     projectId,
     logger,
     reconnect,
+    submitBatch,
     onEvent: (entry) => {
       try {
         if (entry?.type === "broadcast") {

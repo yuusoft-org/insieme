@@ -1,3 +1,4 @@
+import { parseStoredSchemaVersion, validateNewSchemaVersion } from "./schema-version.js";
 // SQLite adapter for the simplified client store interface.
 // Expects a better-sqlite3 style DB object (exec/prepare/transaction APIs).
 
@@ -250,7 +251,7 @@ export const createSqliteClientStore = (
     id: row.id,
     partition: row.partition,
     type: row.type,
-    schemaVersion: parseIntSafe(row.schema_version),
+    schemaVersion: parseStoredSchemaVersion(row.schema_version),
     payload: deserializePayload(row.payload),
     payloadCompression: row.payload_compression || undefined,
     clientTs: parseIntSafe(row.client_ts),
@@ -264,7 +265,7 @@ export const createSqliteClientStore = (
     userId: row.user_id || undefined,
     partition: row.partition,
     type: row.type,
-    schemaVersion: parseIntSafe(row.schema_version),
+    schemaVersion: parseStoredSchemaVersion(row.schema_version),
     payload: deserializePayload(row.payload),
     payloadCompression: row.payload_compression || undefined,
     clientTs: parseIntSafe(row.client_ts),
@@ -637,6 +638,7 @@ export const createSqliteClientStore = (
     },
 
     insertDrafts: async (items) => {
+      for (const item of items) validateNewSchemaVersion(item.schemaVersion);
       ensureInitialized();
       insertDraftsTxn({ items });
     },
@@ -652,6 +654,7 @@ export const createSqliteClientStore = (
       payloadCompression,
       createdAt,
     }) => {
+      validateNewSchemaVersion(schemaVersion);
       ensureInitialized();
       insertDraftStmt.run({
         id,
@@ -688,6 +691,7 @@ export const createSqliteClientStore = (
     },
 
     applyCommittedBatch: async ({ events, nextCursor }) => {
+      for (const event of events) validateNewSchemaVersion(event.schemaVersion);
       ensureInitialized();
       const insertedEvents = applyCommittedBatchTxn({ events, nextCursor });
       for (const event of insertedEvents) {

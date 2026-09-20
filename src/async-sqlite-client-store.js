@@ -1,3 +1,4 @@
+import { parseStoredSchemaVersion, validateNewSchemaVersion } from "./schema-version.js";
 import { canonicalizeSubmitItem } from "./canonicalize.js";
 import {
   buildCommittedEventFromDraft,
@@ -20,7 +21,7 @@ const parseDraft = (row) => ({
   id: row.id,
   partition: row.partition,
   type: row.type,
-  schemaVersion: parseIntSafe(row.schema_version, 0),
+  schemaVersion: parseStoredSchemaVersion(row.schema_version),
   payload: deserializePayload(row.payload),
   payloadCompression: row.payload_compression || undefined,
   clientTs: parseIntSafe(row.client_ts, 0),
@@ -34,7 +35,7 @@ const parseCommittedRow = (row) => ({
   userId: row.user_id || undefined,
   partition: row.partition,
   type: row.type,
-  schemaVersion: parseIntSafe(row.schema_version, 0),
+  schemaVersion: parseStoredSchemaVersion(row.schema_version),
   payload: deserializePayload(row.payload),
   payloadCompression: row.payload_compression || undefined,
   clientTs: parseIntSafe(row.client_ts, 0),
@@ -623,6 +624,7 @@ export const createAsyncSqliteClientStore = ({
       payloadCompression,
       createdAt,
     }) => {
+      validateNewSchemaVersion(schemaVersion);
       await ensureInitialized();
       await runWrite(async (tx) => {
         await tx.execute(
@@ -659,6 +661,7 @@ export const createAsyncSqliteClientStore = ({
     },
 
     insertDrafts: async (items) => {
+      for (const item of items) validateNewSchemaVersion(item.schemaVersion);
       await ensureInitialized();
       await runWrite(async (tx) => {
         for (const item of items) {
@@ -799,6 +802,7 @@ export const createAsyncSqliteClientStore = ({
     },
 
     applyCommittedBatch: async ({ events, nextCursor }) => {
+      for (const event of events) validateNewSchemaVersion(event.schemaVersion);
       await ensureInitialized();
       const insertedEvents = await runWrite(async (tx) => {
         const nextInsertedEvents = [];

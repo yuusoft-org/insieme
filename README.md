@@ -120,6 +120,29 @@ const clientStore = createLibsqlClientStore(clientDb);
 const syncStore = createLibsqlSyncStore(serverDb);
 ```
 
+`createCommandSyncSession` accepts `submitBatch: { maxEvents, maxBytes }` and
+forwards it to `createSyncClient`. Configure this when a validated project
+bootstrap exceeds the default 64 KiB batch ceiling. The default remains unchanged;
+client and server transport limits must agree.
+
+## Event schema versions
+
+SQLite, async SQLite, libSQL, and IndexedDB client stores expose one
+`schemaVersion`: a positive safe integer number. Stored integer representations
+such as `2`, `"2"`, and `2n` all read as `schemaVersion: 2`, including during
+materialized-view replay. Decimal strings must use the canonical integer spelling;
+whitespace, leading zeros, fractions, and exponent notation are rejected.
+
+`insertDraft`, `insertDrafts`, and `applyCommittedBatch` require numeric positive
+safe integers. Invalid batches fail with `invalid_schema_version` before writing
+rows, deleting drafts, or advancing the cursor. Applications decide which valid
+versions they support; for example, version `999` is structurally valid.
+
+This tightens historical reads: malformed stored versions such as `"2junk"` or
+`2.9` now throw `invalid_schema_version` when read or promoted to committed events,
+instead of silently becoming `2`. Malformed rows must be repaired or migrated
+before they can be read or replayed. Valid existing rows need no migration.
+
 ## Materialized Views
 
 Built-in client stores support optional partition-scoped materialized views.
