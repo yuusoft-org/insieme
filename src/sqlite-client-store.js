@@ -531,11 +531,7 @@ export const createSqliteClientStore = (
     applyCommittedBatchTxn = createTransaction(db, ({ events, nextCursor }) => {
       const insertedEvents = [];
       for (const event of events) {
-        const committedRecord = attachRawSchemaVersion(
-          normalizeCommittedEvent(event),
-          event.schemaVersion,
-          includeRawSchemaVersion,
-        );
+        const committedRecord = normalizeCommittedEvent(event);
         const insertResult = insertCommittedStmt.run({
           committed_id: committedRecord.committedId,
           id: committedRecord.id,
@@ -554,6 +550,11 @@ export const createSqliteClientStore = (
         if (insertResult.changes === 0) {
           assertCommittedInvariant(committedRecord);
         } else {
+          if (includeRawSchemaVersion) {
+            const row = getCommittedByIdStmt.get({ id: committedRecord.id });
+            // Match the driver's representation used by replay.
+            attachRawSchemaVersion(committedRecord, row.schema_version, true);
+          }
           insertedEvents.push(committedRecord);
         }
 

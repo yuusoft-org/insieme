@@ -679,11 +679,7 @@ export const createLibsqlClientStore = (
       const insertedEvents = await createTransaction(db, async () => {
         const nextInsertedEvents = [];
         for (const event of events) {
-          const committedRecord = attachRawSchemaVersion(
-            normalizeCommittedEvent(event),
-            event.schemaVersion,
-            includeRawSchemaVersion,
-          );
+          const committedRecord = normalizeCommittedEvent(event);
           const insertResult = await db.execute(
             `
               INSERT OR IGNORE INTO committed_events(
@@ -720,6 +716,14 @@ export const createLibsqlClientStore = (
           if (db.rowsAffected(insertResult) === 0) {
             await assertCommittedInvariant(committedRecord);
           } else {
+            if (includeRawSchemaVersion) {
+              const row = await db.queryOne(
+                "SELECT schema_version FROM committed_events WHERE id = ?",
+                [committedRecord.id],
+              );
+              // Match the driver's representation used by replay.
+              attachRawSchemaVersion(committedRecord, row.schema_version, true);
+            }
             nextInsertedEvents.push(committedRecord);
           }
 

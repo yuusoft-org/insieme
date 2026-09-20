@@ -11,15 +11,54 @@ import {
 } from "./helpers/sqlite-db.js";
 import { createLibsqlClient } from "./helpers/libsql-db.js";
 
-const createStore = (adapter, options) => {
+const withVersionRepresentation = (driver, adapter, representation) => {
+  const convert = (row) =>
+    row && Object.hasOwn(row, "schema_version")
+      ? { ...row, schema_version: representation(row.schema_version) }
+      : row;
+  if (adapter === "sqlite") {
+    return {
+      ...driver,
+      prepare: (sql) => {
+        const stmt = driver.prepare(sql);
+        return {
+          ...stmt,
+          get: (params) => convert(stmt.get(params)),
+          all: (params) => stmt.all(params).map(convert),
+        };
+      },
+    };
+  }
+  if (adapter === "libsql") {
+    return {
+      ...driver,
+      execute: async (statement) => {
+        const result = await driver.execute(statement);
+        return { ...result, rows: result.rows.map(convert) };
+      },
+    };
+  }
+  return {
+    ...driver,
+    transaction: (mode, run) =>
+      driver.transaction(mode, (tx) => run({
+        ...tx,
+        query: async (sql, args) => (await tx.query(sql, args)).map(convert),
+      })),
+  };
+};
+
+const createStore = (adapter, options, representation) => {
+  const wrap = (driver) =>
+    withVersionRepresentation(driver, adapter, representation);
   switch (adapter) {
     case "sqlite":
-      return createSqliteClientStore(createSqliteDb(), options);
+      return createSqliteClientStore(wrap(createSqliteDb()), options);
     case "libsql":
-      return createLibsqlClientStore(createLibsqlClient(), options);
+      return createLibsqlClientStore(wrap(createLibsqlClient()), options);
     case "async-sqlite":
       return createAsyncSqliteClientStore({
-        driver: createAsyncSqliteDriver(),
+        driver: wrap(createAsyncSqliteDriver()),
         ...options,
       });
     default:
@@ -34,9 +73,18 @@ const createStore = (adapter, options) => {
 
 for (const adapter of ["sqlite", "libsql", "async-sqlite", "indexeddb"]) {
   describe.skipIf(adapter !== "indexeddb" && !hasNodeSqlite)(adapter, () => {
-    test.each([false, true])(
-      "live and rebuilt views agree with includeRawSchemaVersion=%s",
-      async (includeRawSchemaVersion) => {
+    const representations =
+      adapter === "indexeddb" ? [Number] : [Number, String, BigInt];
+    const cases = representations.flatMap((representation) =>
+      [false, true].map((includeRawSchemaVersion) => ({
+        representation,
+        representationName: representation.name,
+        includeRawSchemaVersion,
+      })),
+    );
+    test.each(cases)(
+      "live and rebuilt views agree for $representationName with includeRawSchemaVersion=$includeRawSchemaVersion",
+      async ({ representation, includeRawSchemaVersion }) => {
         const store = createStore(adapter, {
           includeRawSchemaVersion,
           materializedViews: [{
@@ -47,12 +95,22 @@ for (const adapter of ["sqlite", "libsql", "async-sqlite", "indexeddb"]) {
                 includeRawSchemaVersion,
               );
               if (includeRawSchemaVersion) {
-                expect(event.rawSchemaVersion).toBe(event.schemaVersion);
+                expect(event.rawSchemaVersion).toBe(
+                  representation(event.schemaVersion),
+                );
               }
-              return [...state, event.schemaVersion];
+              // Preserve the raw representation in JSON-compatible view state.
+              return [
+                ...state,
+                {
+                  version: event.schemaVersion,
+                  rawType: typeof event.rawSchemaVersion,
+                  rawValue: String(event.rawSchemaVersion),
+                },
+              ];
             },
           }],
-        });
+        }, representation);
         const view = { viewName: "versions", partition: "main" };
         const events = [1, 2].map((schemaVersion) => ({
           id: `event-${schemaVersion}`,
@@ -72,7 +130,15 @@ for (const adapter of ["sqlite", "libsql", "async-sqlite", "indexeddb"]) {
           expect(await store.loadMaterializedView(view)).toEqual([]);
           await store.applyCommittedBatch({ events, nextCursor: 2 });
           const live = await store.loadMaterializedView(view);
-          expect(live).toEqual([1, 2]);
+          expect(live).toEqual(
+            [1, 2].map((version) => ({
+              version,
+              rawType: includeRawSchemaVersion
+                ? typeof representation(version) : "undefined",
+              rawValue: includeRawSchemaVersion
+                ? String(representation(version)) : "undefined",
+            })),
+          );
           expect(events).toEqual(originalEvents);
 
           await store.applyCommittedBatch({ events, nextCursor: 2 });

@@ -839,11 +839,7 @@ export const createAsyncSqliteClientStore = ({
       const insertedEvents = await runWrite(async (tx) => {
         const nextInsertedEvents = [];
         for (const event of events) {
-          const committedRecord = attachRawSchemaVersion(
-            normalizeCommittedEvent(event),
-            event.schemaVersion,
-            includeRawSchemaVersion,
-          );
+          const committedRecord = normalizeCommittedEvent(event);
           const insertResult = await tx.execute(
             `
               INSERT OR IGNORE INTO committed_events(
@@ -880,6 +876,14 @@ export const createAsyncSqliteClientStore = ({
           if (insertResult.rowsAffected === 0) {
             await assertCommittedInvariant(tx, committedRecord);
           } else {
+            if (includeRawSchemaVersion) {
+              const [row] = await tx.query(
+                "SELECT schema_version FROM committed_events WHERE id = ?",
+                [committedRecord.id],
+              );
+              // Match the driver's representation used by replay.
+              attachRawSchemaVersion(committedRecord, row.schema_version, true);
+            }
             nextInsertedEvents.push(committedRecord);
           }
 
